@@ -1,4 +1,4 @@
-import { App, normalizePath, Notice, TFile } from "obsidian";
+import { App, normalizePath, Notice, Platform, TFile } from "obsidian";
 import type { CharinfoSettings } from "../settings";
 import { folderExists } from "../ui/SettingTab";
 
@@ -59,6 +59,16 @@ export class MediaService {
     }
 
     // External: desktop-only absolute path write
+    if (!Platform.isDesktop) {
+      new Notice(
+        "바깥 폴더는 데스크톱에서만 쓸 수 있어요. 보관함 그림 폴더로 저장합니다.",
+      );
+      const folder = await this.ensureVaultMediaFolder();
+      const vaultPath = normalizePath(`${folder}/${safeName}`);
+      await this.app.vault.createBinary(vaultPath, data);
+      return { vaultPath, link: `![[${vaultPath}]]` };
+    }
+
     try {
       const fs = await import("fs/promises");
       const pathMod = await import("path");

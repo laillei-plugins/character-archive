@@ -1,53 +1,64 @@
 # Character Archive
 
-Obsidian 보관함 안의 캐릭터 노트를 **카드 갤러리**로 보여 줍니다. 데이터는 전부 로컬 노트입니다.
+Card gallery for character notes in your vault. Notes stay local.
 
-캐릭터마다 표지, 상태, 관계, 본문, 프롬프트를 한 장에서 훑고, 노트에서 깊게 고칩니다.
+Each card shows a cover, status, relationships, body text, and prompts. Open the note when you want to edit in depth.
 
-## 하는 일
+## What it does
 
-- **갤러리** — 카드를 묶음(아카이브)과 줄 제목(그룹)으로 나눠 봅니다.
-- **카드** — 표지와 속성이 한눈에 보입니다. 누르면 미리보기(peek)가 열립니다.
-- **속성** — 상태, 관계, 인연, 소속, 태그. 보이는 이름은 갤러리 편집 → **속성 관리**(책)에서 바꿉니다.
-- **필터** — 맨 위 칩으로 On/Off 같은 값을 거릅니다.
-- **표지** — 노트에 넣은 **첫 그림**이 카드 표지가 됩니다. 갤러리 편집에서 표지를 누르면 바꿀 수 있습니다.
-- **새 카드** — 기본 양식: 신상 표, 외형 / 성격 / 능력, 프롬프트(기본외형 · 의상 · 성격 및 말투). 안내 문구만 있고 그림은 없습니다.
-- **여러 창** — 같은 카드를 다른 탭으로 나눠 볼 수 있습니다. 작은 묶음을 새로 만들지 않습니다.
-- **웹 공유** (선택) — 지금 보이는 갤러리를 HTML로 올립니다. 보관함은 그대로 두고, 호스트는 직접 둡니다.
+- **Gallery** — cards grouped by archive (top name) and group (row title).
+- **Cards** — cover and properties at a glance. Click a card to open the peek panel.
+- **Properties** — status, relation, bond, affiliation, tags. Visible labels are renamed in gallery edit → **속성 관리** (book icon).
+- **Filters** — chips at the top (On / Off and other values).
+- **Cover** — the first image in the note becomes the card cover. In gallery edit, tap the cover to change it.
+- **New card** — starter sheet with a 신상 table, 외형 / 성격 / 능력, and prompt blocks. Guide text only. No images.
+- **Extra windows** — the same cards in another tab. This does not create a new subgroup.
+- **Web share** (optional) — publish the current gallery as HTML. You host it. The vault stays the source.
 
-## 시작
+## Usage
 
-1. 플러그인을 켠 뒤 `Character Archive/Character Archive.md` 를 엽니다. 그 노트가 갤러리로 바뀝니다.
-2. 리본의 **격자** 아이콘, 또는 명령 **갤러리 열기** / **기본 갤러리 열기**로도 같습니다.
-3. 처음이면 예시 카드 한 장이 생깁니다. `예시` 묶음의 **첫 카드**. 지워도 됩니다.
+1. Enable the plugin.
+2. Open `Character Archive/Character Archive.md`. That note becomes the gallery.
+3. Or use the ribbon **grid** icon, or the commands **갤러리 열기** / **기본 갤러리 열기**.
 
-캐릭터는 보관함 폴더 아래 `kind: character` 인 노트입니다.
+The first time, one sample card is created: **첫 카드** in the **예시** archive. You can delete it.
 
-연필을 켜면 카드를 옮기고, 새 캐릭터를 만들고, 속성을 고칩니다. 끈 상태는 읽기만 합니다.
+A character is a note with `kind: character` under the library folder.
 
-## 노트 양식
+Turn on the pencil to move cards, add a character, and edit properties. With the pencil off, the gallery is read-only.
 
-새 카드는 플러그인 기본 템플릿을 씁니다. 설정에서 양식 경로를 비워 두면 이 양식입니다.
+`##` headings and tables are read by the gallery. `## 메모` stays note-only.
 
-`##` 제목과 표는 갤러리가 읽습니다. `## 메모` 는 시트에 안 나옵니다.
-
-다른 노트에 갤러리를 붙이려면:
+Embed the gallery on any note:
 
 ````md
 ```charinfo
 ```
 ````
 
-## 웹 공유
+## Install
 
-지구본으로 지금 고른 카드만 링크로 올립니다. Cloudflare Worker 또는 GitHub Pages를 직접 두고, 설정에 주소와 업로드 열쇠를 넣습니다. 플러그인은 공개 호스트를 심지 않습니다.
+### Community plugins
 
-## 설치
+1. Open **Settings → Community plugins**.
+2. Browse for **Character Archive**.
+3. Install, then enable.
 
-Obsidian → 설정 → 커뮤니티 플러그인에서 **Character Archive** 를 켭니다.
+### Manual
 
-아직 목록에 없으면 [Release](https://github.com/laillei-plugins/character-archive/releases) 의 `main.js`, `manifest.json`, `styles.css` 를
+1. Download `main.js`, `manifest.json`, and `styles.css` from [Releases](https://github.com/laillei-plugins/character-archive/releases).
+2. Put them in `<vault>/.obsidian/plugins/character-archive/`.
+3. Enable **Character Archive** in Community plugins.
 
-`<보관함>/.obsidian/plugins/character-archive/`
+## Web share
 
-에 넣고 커뮤니티 플러그인에서 활성화합니다.
+The globe button uploads the cards you selected. Host the page yourself (Cloudflare Worker or GitHub Pages) and put the origin plus upload key in settings. This plugin does not ship a public host.
+
+## 한국어
+
+보관함 안의 캐릭터 노트를 카드 갤러리로 봅니다. 데이터는 로컬 노트입니다.
+
+- 리본 격자 또는 `Character Archive/Character Archive.md` 로 갤러리를 엽니다.
+- 연필을 켜면 카드 이동·새 캐릭터·속성 편집을 합니다.
+- 첫 그림이 표지입니다. 갤러리 편집에서 표지를 누르면 바꿉니다.
+- 설치: 커뮤니티 플러그인에서 Character Archive를 켜거나, Release의 세 파일을 `.obsidian/plugins/character-archive/`에 넣습니다.
