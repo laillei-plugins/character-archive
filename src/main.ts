@@ -284,15 +284,13 @@ export default class CharinfoPlugin extends Plugin {
         const w = img.getAttribute("width");
         if (w === "0" || img.width === 0) {
           img.removeAttribute("width");
-          img.style.width = "";
-          img.style.maxWidth = "100%";
+          img.setCssStyles({ width: "", maxWidth: "100%" });
         }
       });
       el.querySelectorAll(".internal-embed, .image-embed").forEach((node) => {
         if (!(node instanceof HTMLElement)) return;
         if (node.style.width === "0px" || node.style.width === "0") {
-          node.style.width = "";
-          node.style.maxWidth = "100%";
+          node.setCssStyles({ width: "", maxWidth: "100%" });
         }
       });
     });
@@ -378,7 +376,7 @@ export default class CharinfoPlugin extends Plugin {
 
     const proto = WorkspaceLeaf.prototype;
     const original = proto.openFile;
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- leaf hook needs the plugin instance
     const plugin = this;
 
     proto.openFile = async function (

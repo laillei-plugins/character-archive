@@ -576,9 +576,7 @@ async function writeClipboard(value: string): Promise<boolean> {
     const ta = document.createElement("textarea");
     ta.value = value;
     ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.left = "-9999px";
-    ta.style.top = "0";
+    ta.addClass("charinfo-offscreen-clip");
     document.body.appendChild(ta);
     ta.select();
     ta.setSelectionRange(0, value.length);

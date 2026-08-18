@@ -34,7 +34,7 @@ export class CharinfoSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "Character Archive" });
+    new Setting(containerEl).setName("Character Archive").setHeading();
 
     const glossary = containerEl.createDiv({
       cls: "setting-item-description charinfo-settings__glossary",
@@ -129,7 +129,7 @@ export class CharinfoSettingTab extends PluginSettingTab {
 
     this.renderFilterSettings(containerEl);
 
-    containerEl.createEl("h3", { text: "그림" });
+    new Setting(containerEl).setName("그림").setHeading();
     containerEl.createEl("p", {
       text: "이미 넣은 그림은 그대로 둡니다. 새로 올리는 파일만 아래 위치에 저장됩니다.",
       cls: "setting-item-description",
@@ -224,7 +224,7 @@ export class CharinfoSettingTab extends PluginSettingTab {
         }),
       );
 
-    containerEl.createEl("h3", { text: "웹 공유" });
+    new Setting(containerEl).setName("웹 공유").setHeading();
     containerEl.createEl("p", {
       text: "갤러리와 카드 옆의 지구본은 같은 주소를 씁니다. 주소를 넣어야 링크가 나와요.",
       cls: "setting-item-description",
@@ -315,7 +315,7 @@ export class CharinfoSettingTab extends PluginSettingTab {
   }
 
   private renderFilterSettings(containerEl: HTMLElement): void {
-    containerEl.createEl("h3", { text: "필터" });
+    new Setting(containerEl).setName("필터").setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "상태·관계 같은 이름과 값은 갤러리에서 연필을 켠 뒤 책 아이콘으로 바꿉니다. 여기는 기본값만 둡니다.",
