@@ -34,8 +34,6 @@ export class CharinfoSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    new Setting(containerEl).setName("Character Archive").setHeading();
-
     const glossary = containerEl.createDiv({
       cls: "setting-item-description charinfo-settings__glossary",
     });
