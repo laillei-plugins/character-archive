@@ -79,7 +79,7 @@ export function restoreNaiEmphasisInPromptFences(markdown: string): {
   text: string;
   changed: boolean;
 } {
-  const lines = markdown.split(/(?<=\n)/);
+  const lines = markdown.split("\n");
   let inPrompt = false;
   let inFence = false;
   let changed = false;
@@ -107,7 +107,7 @@ export function restoreNaiEmphasisInPromptFences(markdown: string): {
     }
     out.push(line);
   }
-  return { text: out.join(""), changed };
+  return { text: out.join("\n"), changed };
 }
 
 export async function healNaiPromptEmphasis(

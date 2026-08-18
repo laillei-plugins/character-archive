@@ -77,7 +77,6 @@ export function attachHoldDrag(
     cachedTargets = [];
     gridEl = null;
     el.classList.remove("is-dragging");
-    el.style.display = "";
     if (raf) {
       cancelAnimationFrame(raf);
       raf = 0;
@@ -99,8 +98,7 @@ export function attachHoldDrag(
     const p = document.createElement("div");
     p.className = slotClass;
     p.setAttribute("aria-hidden", "true");
-    p.style.width = `${w}px`;
-    p.style.height = `${h}px`;
+    p.setCssStyles({ width: `${w}px`, height: `${h}px` });
     return p;
   };
 
@@ -110,7 +108,16 @@ export function attachHoldDrag(
     g.className = ghostClass.includes("thumb") || ghostClass.includes("genre")
       ? ghostClass
       : `charinfo-card ${ghostClass}`;
-    g.style.cssText = `width:${w}px;height:${h}px;pointer-events:none;position:fixed;left:0;top:0;margin:0;z-index:100000;`;
+    g.setCssStyles({
+      width: `${w}px`,
+      height: `${h}px`,
+      pointerEvents: "none",
+      position: "fixed",
+      left: "0px",
+      top: "0px",
+      margin: "0px",
+      zIndex: "100000",
+    });
     g.setAttribute("aria-hidden", "true");
 
     if (ghostClass.includes("genre")) {
@@ -119,7 +126,7 @@ export function attachHoldDrag(
         el.dataset.id ||
         "";
       g.textContent = title;
-      g.style.height = "2.5rem";
+      g.setCssStyles({ height: "2.5rem" });
       return g;
     }
 
@@ -142,7 +149,9 @@ export function attachHoldDrag(
       img.src = srcImg.currentSrc || srcImg.src;
       img.alt = "";
       img.draggable = false;
-      img.style.objectPosition = srcImg.style.objectPosition || "50% 50%";
+      img.setCssStyles({
+        objectPosition: srcImg.style.objectPosition || "50% 50%",
+      });
       cover.appendChild(img);
     } else {
       const empty = document.createElement("span");
@@ -170,7 +179,9 @@ export function attachHoldDrag(
   const moveGhost = (x: number, y: number) => {
     if (!ghost) return;
     // Compositor-only path.
-    ghost.style.transform = `translate3d(${x - grabOffsetX}px, ${y - grabOffsetY}px, 0) scale(1.04)`;
+    ghost.setCssStyles({
+      transform: `translate3d(${x - grabOffsetX}px, ${y - grabOffsetY}px, 0) scale(1.04)`,
+    });
   };
 
   const refreshCache = (force = false) => {
@@ -338,7 +349,6 @@ export function attachHoldDrag(
     }
     placeholder?.remove();
     placeholder = null;
-    el.style.display = "";
     el.classList.remove("is-dragging");
 
     ghost?.remove();
@@ -390,7 +400,6 @@ export function attachHoldDrag(
     placeholder = makePlaceholder(w, h);
     ghost = makeGhost(w, h);
     parent?.insertBefore(placeholder, el);
-    el.style.display = "none";
     el.classList.add("is-dragging");
 
     document.body.appendChild(ghost);

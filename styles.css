@@ -1,3 +1,9 @@
+.charinfo-offscreen-clip {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+}
+
 /* Cover modal — compact, card-proportioned (not a stretched empty tray). */
 .modal.charinfo-cover-modal {
   width: min(92vw, 28rem) !important;
@@ -1799,7 +1805,7 @@
 }
 
 .charinfo-genre.is-dragging {
-  opacity: 0.35;
+  display: none;
 }
 
 .charinfo-genre-slot {
@@ -1899,7 +1905,7 @@
 }
 
 .charinfo-card.is-dragging {
-  opacity: 0;
+  display: none;
 }
 
 /* Open slot — where the card will land */
@@ -1962,7 +1968,7 @@ body.charinfo-dragging .charinfo-card-slot {
 }
 
 body.charinfo-dragging .charinfo-card.is-dragging {
-  opacity: 0 !important;
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2678,7 +2684,7 @@ span.charinfo-status.is-static {
 }
 
 .charinfo-thumb.is-dragging {
-  opacity: 0;
+  display: none;
 }
 
 .charinfo-thumb-slot {
