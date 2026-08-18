@@ -1,0 +1,16 @@
+{
+  "name": "charinfo-share-host",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cloudflare Worker + R2 host for Character Archive gallery shares",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250813.0",
+    "typescript": "^5.8.3",
+    "wrangler": "4.28.0"
+  }
+}

@@ -1,0 +1,15 @@
+node_modules/
+main.js
+main.js.map
+styles.css.map
+*.tsbuildinfo
+.DS_Store
+data.json
+.orch/
+.tmp/
+dist/
+.vault-plugin-dir
+.claude/
+.codex/
+share-host/node_modules/
+share-host/.wrangler/
