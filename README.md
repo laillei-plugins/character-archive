@@ -1,95 +1,53 @@
 # Character Archive
 
-Card-view character archive for Obsidian. Notes stay in your vault. Optional web share.
+Obsidian 보관함 안의 캐릭터 노트를 **카드 갤러리**로 보여 줍니다. 데이터는 전부 로컬 노트입니다.
 
-## Install
+캐릭터마다 표지, 상태, 관계, 본문, 프롬프트를 한 장에서 훑고, 노트에서 깊게 고칩니다.
 
-The plugin is these three files:
+## 하는 일
 
-- `manifest.json`
-- `main.js`
-- `styles.css`
+- **갤러리** — 카드를 묶음(아카이브)과 줄 제목(그룹)으로 나눠 봅니다.
+- **카드** — 표지와 속성이 한눈에 보입니다. 누르면 미리보기(peek)가 열립니다.
+- **속성** — 상태, 관계, 인연, 소속, 태그. 보이는 이름은 갤러리 편집 → **속성 관리**(책)에서 바꿉니다.
+- **필터** — 맨 위 칩으로 On/Off 같은 값을 거릅니다.
+- **표지** — 노트에 넣은 **첫 그림**이 카드 표지가 됩니다. 갤러리 편집에서 표지를 누르면 바꿀 수 있습니다.
+- **새 카드** — 기본 양식: 신상 표, 외형 / 성격 / 능력, 프롬프트(기본외형 · 의상 · 성격 및 말투). 안내 문구만 있고 그림은 없습니다.
+- **여러 창** — 같은 카드를 다른 탭으로 나눠 볼 수 있습니다. 작은 묶음을 새로 만들지 않습니다.
+- **웹 공유** (선택) — 지금 보이는 갤러리를 HTML로 올립니다. 보관함은 그대로 두고, 호스트는 직접 둡니다.
 
-Copy them into:
+## 시작
 
-`<your vault>/.obsidian/plugins/character-archive/`
+1. 플러그인을 켠 뒤 `Character Archive/Character Archive.md` 를 엽니다. 그 노트가 갤러리로 바뀝니다.
+2. 리본의 **격자** 아이콘, 또는 명령 **갤러리 열기** / **기본 갤러리 열기**로도 같습니다.
+3. 처음이면 예시 카드 한 장이 생깁니다. `예시` 묶음의 **첫 카드**. 지워도 됩니다.
 
-Then enable **Character Archive** in Settings → Community plugins.
+캐릭터는 보관함 폴더 아래 `kind: character` 인 노트입니다.
 
-### Pack (what you send other people)
+연필을 켜면 카드를 옮기고, 새 캐릭터를 만들고, 속성을 고칩니다. 끈 상태는 읽기만 합니다.
 
-```bash
-npm install
-npm run pack
-```
+## 노트 양식
 
-That writes `dist/character-archive/` and `dist/character-archive.zip`. Unzip into the `character-archive` plugin folder above.
+새 카드는 플러그인 기본 템플릿을 씁니다. 설정에서 양식 경로를 비워 두면 이 양식입니다.
 
-### From source
+`##` 제목과 표는 갤러리가 읽습니다. `## 메모` 는 시트에 안 나옵니다.
 
-```bash
-npm install
-npm run build
-```
-
-Then copy the same three files from the repo root, or run `npm run pack`.
-
-## Open the gallery
-
-**Entry note:** `Character Archive/Character Archive.md`
-
-Opening that note switches it to the gallery. Tab title is **Character Archive**.
-
-| Method | What it does |
-|--------|----------------|
-| Click the entry note | Open gallery |
-| Ribbon **grid** icon | Open the entry note as gallery |
-| Command **갤러리 열기** | Same |
-| Command **기본 갤러리 열기** | Create the folder and entry note if missing, then open |
-| Click the library folder title | Open gallery |
-
-Optional embed on any note:
+다른 노트에 갤러리를 붙이려면:
 
 ````md
 ```charinfo
 ```
 ````
 
-**Characters** are notes with `kind: character` under the library folder.
+## 웹 공유
 
-## Starter pack
+지구본으로 지금 고른 카드만 링크로 올립니다. Cloudflare Worker 또는 GitHub Pages를 직접 두고, 설정에 주소와 업로드 열쇠를 넣습니다. 플러그인은 공개 호스트를 심지 않습니다.
 
-A new install uses the bundled sheet: basic properties, empty 신상 table, 외형 / 성격 / 능력, and a 프롬프트 block (기본외형 · 의상 · 성격 및 말투). Guide text only. No images.
+## 설치
 
-The first time the default gallery note is created, if that folder has no characters yet, one sample card is written:
+Obsidian → 설정 → 커뮤니티 플러그인에서 **Character Archive** 를 켭니다.
 
-`Character Archive/_starter/첫 카드/첫 카드.md`
+아직 목록에 없으면 [Release](https://github.com/laillei-plugins/character-archive/releases) 의 `main.js`, `manifest.json`, `styles.css` 를
 
-Archive and group are both **예시**. Delete it anytime.
+`<보관함>/.obsidian/plugins/character-archive/`
 
-Copies of the same files live under [`examples/`](./examples/).
-
-Empty template path in settings = bundled starter. Existing vault settings stay as saved.
-
-## Web share
-
-Optional public HTML snapshot. You host it (Cloudflare Worker or GitHub Pages). The vault stays the source.
-
-The plugin does not ship a public host URL. If you deploy `share-host/`, set `UPLOAD_KEY` and put that origin + key in settings.
-
-## Dev
-
-```bash
-npm install
-npm run build
-npm run pack
-```
-
-To copy into your own vault:
-
-```bash
-# one-time: echo '<vault>/.obsidian/plugins/character-archive' > .vault-plugin-dir
-npm run deploy
-```
-
-Plugin **id** is `character-archive`. Display name is **Character Archive**. The note embed is still ` ```charinfo `.
+에 넣고 커뮤니티 플러그인에서 활성화합니다.
