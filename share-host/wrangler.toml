@@ -1,0 +1,7 @@
+name = "character-archive"
+compatibility_date = "2025-08-01"
+pages_build_output_dir = "public"
+
+[[kv_namespaces]]
+binding = "GALLERIES"
+id = "YOUR_KV_NAMESPACE_ID"
