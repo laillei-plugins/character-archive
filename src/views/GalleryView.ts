@@ -2137,6 +2137,7 @@ export class GalleryView extends FileView {
         : "노트 첫 이미지를 커버로 쓸게요",
     );
     if (refresh) this.render();
+    else this.syncCoverPreview(record);
   }
 
   private async changeCoverRemote(
@@ -2154,6 +2155,7 @@ export class GalleryView extends FileView {
     }
     new Notice("원격 이미지로 커버를 바꿨어요");
     if (refresh) this.render();
+    else this.syncCoverPreview(record);
   }
 
   private async handleImageReorder(
@@ -2203,27 +2205,76 @@ export class GalleryView extends FileView {
     this.suppressClick = true;
   }
 
-  private syncCoverPreview(record: CharacterRecord, orderedPaths: string[]): void {
+  /**
+   * After a cover change without full `render()` (peek strip / reorder):
+   * keep card face + strip badge in sync every time — not only the first write.
+   */
+  private syncCoverPreview(
+    record: CharacterRecord,
+    orderedPaths?: string[],
+  ): void {
+    const resolved = resolveCover(this.app, record);
+    const resolvedVaultPath =
+      resolved?.kind === "vault" ? resolved.file.path : null;
+
     const strip = this.contentEl.querySelector(".charinfo-image-strip__row");
     if (strip) {
       strip.querySelectorAll(".charinfo-thumb").forEach((thumb) => {
-        thumb.classList.remove("is-cover");
+        if (!(thumb instanceof HTMLElement)) return;
+        const id = thumb.dataset.id ?? "";
+        const isCover =
+          !!resolvedVaultPath &&
+          (id === resolvedVaultPath ||
+            resolvedVaultPath.endsWith(`/${id}`) ||
+            id.endsWith(`/${resolvedVaultPath}`));
+        thumb.classList.toggle("is-cover", isCover);
         thumb.querySelector(".charinfo-thumb__badge")?.remove();
+        if (isCover) {
+          thumb.setAttribute("title", "현재 커버");
+        } else {
+          thumb.removeAttribute("title");
+        }
       });
     }
 
-    const resolved = resolveCover(this.app, record);
-    // Update card cover image without re-rendering the whole grid.
-    const cardImg = this.contentEl.querySelector(
-      `.charinfo-card[data-path="${CSS.escape(record.path)}"] .charinfo-card__cover img`,
+    const coverEl = this.contentEl.querySelector(
+      `.charinfo-card[data-path="${CSS.escape(record.path)}"] .charinfo-card__cover`,
     );
-    if (cardImg instanceof HTMLImageElement && resolved) {
-      cardImg.src = coverDisplaySrc(this.app, resolved);
-    } else if (!record.cover && orderedPaths[0]) {
-      const file = this.app.vault.getAbstractFileByPath(orderedPaths[0]);
-      if (file instanceof TFile && cardImg instanceof HTMLImageElement) {
-        cardImg.src = this.app.vault.getResourcePath(file);
+    if (!(coverEl instanceof HTMLElement)) return;
+
+    let cardImg = coverEl.querySelector("img");
+    const applySrc = (src: string) => {
+      if (!(cardImg instanceof HTMLImageElement)) {
+        coverEl.querySelector(".charinfo-card__cover-empty")?.remove();
+        cardImg = coverEl.createEl("img", {
+          attr: { alt: record.title || record.이름 || "", draggable: "false" },
+        });
+        cardImg.draggable = false;
       }
+      // Bust cached resource URLs so a second swap always paints.
+      const joiner = src.includes("?") ? "&" : "?";
+      cardImg.src = `${src}${joiner}v=${Date.now()}`;
+      cardImg.style.objectPosition = record.coverPosition || "50% 50%";
+    };
+
+    if (resolved) {
+      applySrc(coverDisplaySrc(this.app, resolved));
+      return;
+    }
+
+    if (orderedPaths?.[0]) {
+      const file = this.app.vault.getAbstractFileByPath(orderedPaths[0]);
+      if (file instanceof TFile) {
+        applySrc(this.app.vault.getResourcePath(file));
+        return;
+      }
+    }
+
+    if (cardImg instanceof HTMLImageElement) {
+      cardImg.remove();
+    }
+    if (!coverEl.querySelector(".charinfo-card__cover-empty")) {
+      coverEl.createSpan({ text: "커버 없음", cls: "charinfo-card__cover-empty" });
     }
   }
 
@@ -2462,14 +2513,8 @@ export class GalleryView extends FileView {
       thumb.addEventListener("click", (event) => {
         event.stopPropagation();
         if (!this.editMode) return;
-        void this.changeCover(record, image, false).then(() => {
-          row.querySelectorAll(".charinfo-thumb").forEach((el) => {
-            el.classList.toggle(
-              "is-cover",
-              el instanceof HTMLElement && el.dataset.id === image.path,
-            );
-          });
-        });
+        // changeCover → syncCoverPreview updates card + strip every tap.
+        void this.changeCover(record, image, false);
       });
 
       if (this.editMode && images.length > 1) {
