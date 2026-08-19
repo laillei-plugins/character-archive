@@ -17,6 +17,8 @@ import {
   axisLabel,
   getFilterAxis,
   resetChipFilters,
+  DEFAULT_WEB_SHARE_HOSTED_BASE_URL,
+  normalizeWebShareHostedBaseUrl,
 } from "../settings";
 import { copyTextToClipboard } from "../page/galleryPage";
 import { isImgurPluginAvailable } from "../media/imgurAdapter";
@@ -224,28 +226,29 @@ export class CharinfoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName("웹 공유").setHeading();
     containerEl.createEl("p", {
-      text: "갤러리와 카드 옆의 지구본은 같은 주소를 씁니다. 주소를 넣어야 링크가 나와요.",
+      text: "기본 공유 주소로 바로 링크를 만들 수 있어요. 다른 서버를 쓸 때만 주소를 바꾸세요. GitHub는 선택이에요.",
       cls: "setting-item-description",
     });
 
     new Setting(containerEl)
       .setName("공유 주소")
-      .setDesc("한 번만 넣으면 됩니다. 끝의 / 는 빼 주세요.")
+      .setDesc("비우면 기본 공유 서버로 돌아가요. 끝의 / 는 빼 주세요.")
       .addText((text) =>
         text
-          .setPlaceholder("https://….workers.dev")
+          .setPlaceholder(DEFAULT_WEB_SHARE_HOSTED_BASE_URL)
           .setValue(this.plugin.settings.webShareHostedBaseUrl)
           .onChange(async (value) => {
-            this.plugin.settings.webShareHostedBaseUrl = value
-              .trim()
-              .replace(/\/+$/, "");
+            this.plugin.settings.webShareHostedBaseUrl =
+              normalizeWebShareHostedBaseUrl(value);
             await this.plugin.saveSettings();
+            // Reflect restored default in the field if user cleared it.
+            text.setValue(this.plugin.settings.webShareHostedBaseUrl);
           }),
       );
 
     new Setting(containerEl)
       .setName("업로드 열쇠 (선택)")
-      .setDesc("주소를 만든 쪽에 열쇠가 있으면 여기에도 같은 값을 넣으세요.")
+      .setDesc("직접 운영한 공유 서버가 열쇠를 요구할 때만 입력하세요.")
       .addText((text) => {
         text
           .setPlaceholder("optional")

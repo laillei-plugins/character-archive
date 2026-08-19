@@ -105,6 +105,16 @@ export class GalleryView extends FileView {
   private isNarrow = false;
   private peekOpen = false;
   private tipTimer: number | null = null;
+  /** Serialize cover writes per character so rapid strip taps don't race. */
+  private coverWriteChain = new Map<string, Promise<void>>();
+  /** Latest cover intent per path (coalesce while a write is in flight). */
+  private coverLatest = new Map<
+    string,
+    | { kind: "vault"; file: TFile }
+    | { kind: "remote"; url: string }
+    | { kind: "default" }
+    | { kind: "none" }
+  >();
 
   constructor(leaf: WorkspaceLeaf, plugin: CharinfoPlugin) {
     super(leaf);
@@ -2106,43 +2116,135 @@ export class GalleryView extends FileView {
       images,
       async (pick) => {
         if (pick.kind === "none") {
-          await this.clearCoverNone(record, false);
+          await this.applyCoverIntent(record, { kind: "none" }, { quiet: false });
         } else if (pick.kind === "default") {
-          await this.changeCover(record, null, false);
+          await this.applyCoverIntent(record, { kind: "default" }, { quiet: false });
         } else if (pick.kind === "remote") {
-          await this.changeCoverRemote(record, pick.url, false);
+          await this.applyCoverIntent(
+            record,
+            { kind: "remote", url: pick.url },
+            { quiet: false },
+          );
         } else {
-          await this.changeCover(record, pick.file, false);
+          await this.applyCoverIntent(
+            record,
+            { kind: "vault", file: pick.file },
+            { quiet: false },
+          );
         }
-        // Refresh after modal closes — sync render while Modal is open crashes UI.
+        // Peek strip only — avoid full gallery re-render while peek stays open.
         window.setTimeout(() => {
-          this.render();
-          this.selectByPath(record.path);
+          const detail = this.contentEl.querySelector(".charinfo-gallery__detail");
+          if (detail instanceof HTMLElement && this.selected?.path === record.path) {
+            void this.renderDetail(detail);
+          }
         }, 0);
       },
     ).open();
+  }
+
+  /**
+   * Optimistic cover paint + serialized vault write.
+   * Strip taps use `quiet` so every tap feels instant without Notice spam.
+   */
+  private async applyCoverIntent(
+    record: CharacterRecord,
+    intent:
+      | { kind: "vault"; file: TFile }
+      | { kind: "remote"; url: string }
+      | { kind: "default" }
+      | { kind: "none" },
+    opts?: { quiet?: boolean },
+  ): Promise<void> {
+    const quiet = opts?.quiet === true;
+    const path = record.path;
+    const snapshot = {
+      cover: record.cover,
+      coverPosition: record.coverPosition,
+    };
+
+    this.coverLatest.set(path, intent);
+    if (intent.kind === "vault") {
+      record.cover = intent.file.path;
+      record.coverPosition = "50% 50%";
+    } else if (intent.kind === "remote") {
+      record.cover = intent.url;
+      record.coverPosition = "50% 50%";
+    } else if (intent.kind === "none") {
+      record.cover = COVER_NONE;
+    } else {
+      record.cover = "";
+    }
+    this.syncCoverPreview(record);
+
+    if (!quiet) {
+      if (intent.kind === "vault") {
+        new Notice(`커버를 「${intent.file.basename}」으로 바꿨어요`);
+      } else if (intent.kind === "remote") {
+        new Notice("원격 이미지로 커버를 바꿨어요");
+      } else if (intent.kind === "none") {
+        new Notice("카드 커버를 숨겼어요");
+      } else {
+        new Notice("노트 첫 이미지를 커버로 쓸게요");
+      }
+    }
+
+    const prev = this.coverWriteChain.get(path) ?? Promise.resolve();
+    const chain = prev.catch(() => undefined).then(async () => {
+      // Drain until the latest intent is persisted (coalesce rapid taps).
+      for (;;) {
+        const latest = this.coverLatest.get(path);
+        if (!latest) return;
+        this.plugin.suppressGalleryRefresh = true;
+        try {
+          if (latest.kind === "vault") {
+            await setCharacterCover(this.app, record.file, latest.file);
+          } else if (latest.kind === "remote") {
+            await setCharacterCoverUrl(this.app, record.file, latest.url);
+          } else if (latest.kind === "none") {
+            await setCharacterCoverNone(this.app, record.file);
+          } else {
+            await setCharacterCover(this.app, record.file, null);
+          }
+        } catch (error) {
+          console.error("Cover write failed", error);
+          // Rollback only if this failed intent is still the latest.
+          if (this.coverLatest.get(path) === latest) {
+            record.cover = snapshot.cover;
+            record.coverPosition = snapshot.coverPosition;
+            this.syncCoverPreview(record);
+            new Notice("커버 변경에 실패했어요");
+            this.coverLatest.delete(path);
+          }
+          return;
+        } finally {
+          this.plugin.suppressGalleryRefresh = false;
+        }
+        if (this.coverLatest.get(path) === latest) {
+          this.coverLatest.delete(path);
+          return;
+        }
+        // Newer tap arrived while we wrote — loop with the new intent.
+      }
+    });
+    this.coverWriteChain.set(path, chain);
+    await chain;
+    if (this.coverWriteChain.get(path) === chain) {
+      this.coverWriteChain.delete(path);
+    }
   }
 
   private async changeCover(
     record: CharacterRecord,
     image: TFile | null,
     refresh = true,
+    opts?: { quiet?: boolean },
   ): Promise<void> {
-    this.plugin.suppressGalleryRefresh = true;
-    try {
-      await setCharacterCover(this.app, record.file, image);
-      record.cover = image ? image.path : "";
-      record.coverPosition = image ? "50% 50%" : record.coverPosition;
-    } finally {
-      this.plugin.suppressGalleryRefresh = false;
-    }
-    new Notice(
-      image
-        ? `커버를 「${image.basename}」으로 바꿨어요`
-        : "노트 첫 이미지를 커버로 쓸게요",
-    );
+    const intent = image
+      ? ({ kind: "vault" as const, file: image })
+      : ({ kind: "default" as const });
+    await this.applyCoverIntent(record, intent, { quiet: opts?.quiet ?? !refresh });
     if (refresh) this.render();
-    else this.syncCoverPreview(record);
   }
 
   /** Hide card cover; keep note images (`cover: __none__`). */
@@ -2150,16 +2252,8 @@ export class GalleryView extends FileView {
     record: CharacterRecord,
     refresh = true,
   ): Promise<void> {
-    this.plugin.suppressGalleryRefresh = true;
-    try {
-      await setCharacterCoverNone(this.app, record.file);
-      record.cover = COVER_NONE;
-    } finally {
-      this.plugin.suppressGalleryRefresh = false;
-    }
-    new Notice("카드 커버를 숨겼어요");
+    await this.applyCoverIntent(record, { kind: "none" }, { quiet: false });
     if (refresh) this.render();
-    else this.syncCoverPreview(record);
   }
 
   private async changeCoverRemote(
@@ -2167,17 +2261,12 @@ export class GalleryView extends FileView {
     url: string,
     refresh = true,
   ): Promise<void> {
-    this.plugin.suppressGalleryRefresh = true;
-    try {
-      await setCharacterCoverUrl(this.app, record.file, url);
-      record.cover = url;
-      record.coverPosition = "50% 50%";
-    } finally {
-      this.plugin.suppressGalleryRefresh = false;
-    }
-    new Notice("원격 이미지로 커버를 바꿨어요");
+    await this.applyCoverIntent(
+      record,
+      { kind: "remote", url },
+      { quiet: !refresh },
+    );
     if (refresh) this.render();
-    else this.syncCoverPreview(record);
   }
 
   private async handleImageReorder(
@@ -2517,6 +2606,7 @@ export class GalleryView extends FileView {
     for (const image of images) {
       const isCover =
         !!coverPath &&
+        !isCoverNone(coverPath) &&
         (image.path === coverPath ||
           image.path.endsWith("/" + coverPath) ||
           image.name === coverPath ||
@@ -2538,14 +2628,15 @@ export class GalleryView extends FileView {
       thumb.addEventListener("click", (event) => {
         event.stopPropagation();
         if (!this.editMode) return;
-        // changeCover → syncCoverPreview updates card + strip every tap.
-        void this.changeCover(record, image, false);
+        // Instant paint; quiet strip tap (no Notice spam).
+        void this.changeCover(record, image, false, { quiet: true });
       });
 
       if (this.editMode && images.length > 1) {
         attachHoldDrag(thumb, image.path, {
           canDrag: () => this.editMode,
           activation: "hold",
+          holdMs: 240,
           dropSelector: ".charinfo-thumb",
           ghostClass: "charinfo-thumb-ghost",
           slotClass: "charinfo-thumb-slot",

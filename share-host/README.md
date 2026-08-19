@@ -1,18 +1,23 @@
 # Character Archive — share host
 
-Optional Cloudflare host for public gallery HTML. Deploy your own. Do not point other people at an unlocked worker.
+Optional Cloudflare host for public gallery HTML.
 
-## Required secret
+## Upload auth
+
+- **No `UPLOAD_KEY` secret** → anyone can **create** a share (plugin default).
+- **`UPLOAD_KEY` set** → create requires `Authorization: Bearer <key>` (self-hosted lock).
+- Update/delete always need the per-share `manageKey` (or the upload key when set).
 
 ```bash
+# Optional — only if you want to lock creates on your own host
 npx wrangler secret put UPLOAD_KEY
 ```
 
-Uploads fail closed when this secret is missing. Put the same value in the plugin setting **업로드 열쇠**.
+Do not bake a shared secret into the distributed plugin.
 
 ## API
 
-- `POST /api/v1/share` — create (Bearer `UPLOAD_KEY`)
+- `POST /api/v1/share` — create
 - `GET /g/:id` — public HTML
 - Storage: Workers KV (`GALLERIES`)
 
@@ -22,4 +27,4 @@ TTL `permanent` is stored for one year (KV limit). Label it honestly in the UI a
 
 ## Deploy
 
-Point `wrangler.toml` at your own KV namespace, then deploy the Worker or Pages project you actually use. The plugin only needs the public origin + upload key.
+Point `wrangler.toml` at your own KV namespace, then deploy. The plugin default public origin is `https://character-archive.pages.dev`.

@@ -94,6 +94,19 @@ export function attachHoldDrag(
     removeDocListeners();
   };
 
+  /** After a real drag, ignore the synthetic click that would also fire. */
+  let swallowNextClick = false;
+  el.addEventListener(
+    "click",
+    (event) => {
+      if (!swallowNextClick) return;
+      swallowNextClick = false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    },
+    true,
+  );
+
   const makePlaceholder = (w: number, h: number) => {
     const p = document.createElement("div");
     p.className = slotClass;
@@ -373,6 +386,8 @@ export function attachHoldDrag(
 
     if (drop) {
       handlers.onReorder(id, drop.toId, drop.place);
+      // Reorder gesture — don't also treat the following click as a cover pick.
+      swallowNextClick = true;
     }
   };
 
