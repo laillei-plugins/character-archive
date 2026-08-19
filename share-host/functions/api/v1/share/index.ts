@@ -31,7 +31,8 @@ function randomToken(len = 12) {
  */
 function authorizeUpload(request, env) {
   const key = env.UPLOAD_KEY?.trim();
-  if (!key) return false;
+  // No server secret → public create (plugin ships without a shared key).
+  if (!key) return true;
   const header = request.headers.get("authorization") || "";
   const m = header.match(/^Bearer\s+(.+)$/i);
   return Boolean(m && m[1]?.trim() === key);

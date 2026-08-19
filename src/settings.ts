@@ -84,6 +84,10 @@ export {
  * github = fixed Pages URL (user PAT).
  */
 export type WebShareHostMode = "hosted" | "github";
+
+/** Public Character Archive share host — baked in so fresh vaults can make links. */
+export const DEFAULT_WEB_SHARE_HOSTED_BASE_URL =
+  "https://character-archive.pages.dev";
 export type HostedShareTtl = "7d" | "30d" | "permanent";
 /**
  * Side-panel property set when the 「속성」 header chip is on.
@@ -291,7 +295,7 @@ export const DEFAULT_SETTINGS: CharinfoSettings = {
   propertyDisplayNames: { ...DEFAULT_PROPERTY_DISPLAY_NAMES },
   chipFilter: "Off",
   webShareHost: "hosted",
-  webShareHostedBaseUrl: "",
+  webShareHostedBaseUrl: DEFAULT_WEB_SHARE_HOSTED_BASE_URL,
   webShareHostedUploadKey: "",
   webShareHostedTtl: "30d",
   webSharePanelHeaders: [SHARE_ATTR_HEADER, "프롬프트"],
@@ -416,6 +420,14 @@ function normalizeWebShareHost(raw: unknown): WebShareHostMode {
   if (raw === "github" || raw === "hosted") return raw;
   // Legacy catbox modes → hosted
   return "hosted";
+}
+
+/** Empty / missing → public default host; custom URL kept. */
+export function normalizeWebShareHostedBaseUrl(raw: unknown): string {
+  if (typeof raw !== "string") return DEFAULT_WEB_SHARE_HOSTED_BASE_URL;
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  if (!trimmed) return DEFAULT_WEB_SHARE_HOSTED_BASE_URL;
+  return trimmed;
 }
 
 function normalizeHostedTtl(raw: unknown): HostedShareTtl {
@@ -600,10 +612,9 @@ export function migrateSettings(
     webShareHost: normalizeWebShareHost(
       src.webShareHost ?? DEFAULT_SETTINGS.webShareHost,
     ),
-    webShareHostedBaseUrl:
-      typeof src.webShareHostedBaseUrl === "string"
-        ? src.webShareHostedBaseUrl.trim().replace(/\/+$/, "")
-        : "",
+    webShareHostedBaseUrl: normalizeWebShareHostedBaseUrl(
+      src.webShareHostedBaseUrl,
+    ),
     webShareHostedUploadKey:
       typeof src.webShareHostedUploadKey === "string"
         ? src.webShareHostedUploadKey.trim()

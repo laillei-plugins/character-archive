@@ -128,11 +128,17 @@ export class ShareGalleryModal extends Modal {
         ? plugin.settings.webSharePanelHeaders
         : [SHARE_ATTR_HEADER, "프롬프트"],
     );
-    this.hostMode = "hosted";
-    this.panel = "hosted";
+    // GitHub connected + last used → open that panel with the Pages link ready.
+    const ghReady = isGithubShareConfigured(plugin.settings);
+    const preferGithub =
+      ghReady && plugin.settings.webShareHost === "github";
+    this.hostMode = preferGithub ? "github" : "hosted";
+    this.panel = preferGithub ? "github" : "hosted";
     this.pageFile = opts.pageFile ?? null;
     this.characterShare = Boolean(opts.selectionLocked);
-    this.selectionLocked = this.characterShare || records.length <= 1;
+    // Only single-character share locks scope. Gallery share always keeps
+    // archive / group / panel-header chips selectable.
+    this.selectionLocked = this.characterShare;
     this.selectedArchives = new Set();
     this.selectedGroups = new Set();
     this.initScopeSelection(opts.defaultArchive?.trim() || "");
@@ -298,6 +304,7 @@ export class ShareGalleryModal extends Modal {
   /** Primary: our Cloudflare host — duration + one button. */
   private renderHosted(root: HTMLElement): void {
     this.setTitle(this.records.length === 1 ? "캐릭터 공유" : "갤러리 공유");
+    this.renderHostSwitcher(root);
     const configured = isHostedShareConfigured(
       this.plugin.settings.webShareHostedBaseUrl,
     );
@@ -305,7 +312,7 @@ export class ShareGalleryModal extends Modal {
     if (!configured) {
       root.createDiv({
         cls: "charinfo-share-modal__lead",
-        text: "설정에서 공유 주소만 넣으면 여기서 링크가 나와요.",
+        text: "공유 주소가 올바르지 않아요. 설정에서 확인하세요.",
       });
       this.statusEl = root.createDiv({ cls: "charinfo-share-modal__status" });
       this.renderAltMethods(root);
@@ -499,56 +506,20 @@ export class ShareGalleryModal extends Modal {
   }
 
   private renderAdvancedOptions(root: HTMLElement): void {
-    const wrap = root.createDiv({ cls: "charinfo-share-modal__advanced" });
-    const toggle = wrap.createEl("button", {
-      cls: "charinfo-share-modal__advanced-toggle",
-      attr: {
-        type: "button",
-        "aria-expanded": this.advancedOpen ? "true" : "false",
-      },
-    });
-    toggle.createSpan({
-      cls: "charinfo-share-modal__advanced-label",
-      text: "고급 옵션",
-    });
-    toggle.createSpan({
-      cls: "charinfo-share-modal__advanced-chevron",
-      text: this.advancedOpen ? "▾" : "▸",
-    });
-
-    const body = wrap.createDiv({
-      cls:
-        "charinfo-share-modal__advanced-body" +
-        (this.advancedOpen ? " is-open" : ""),
-    });
-    if (!this.advancedOpen) body.hide();
-    this.renderHostedTtl(body);
-
-    toggle.addEventListener("click", () => {
-      if (this.busy) return;
-      this.advancedOpen = !this.advancedOpen;
-      toggle.setAttribute(
-        "aria-expanded",
-        this.advancedOpen ? "true" : "false",
-      );
-      const chevron = toggle.querySelector(
-        ".charinfo-share-modal__advanced-chevron",
-      );
-      if (chevron) chevron.setText(this.advancedOpen ? "▾" : "▸");
-      body.toggleClass("is-open", this.advancedOpen);
-      if (this.advancedOpen) {
-        body.show();
-        void this.refreshHeaderChips();
-      } else body.hide();
-    });
-
-    const field = this.renderField(body, "옆 패널에 보일 정보");
+    // Panel header chips are always visible — not buried behind a toggle.
+    // (Users need to pick what the shared page shows on both hosted + GitHub.)
+    const field = this.renderField(root, "옆 패널에 보일 정보");
     this.headerChipsEl = field.createDiv({
       cls: "charinfo-share-modal__chip-groups",
       attr: { role: "group", "aria-label": "옆 패널 헤더" },
     });
     this.paintHeaderChips();
-    if (this.advancedOpen) void this.refreshHeaderChips();
+    void this.refreshHeaderChips();
+
+    // Hosted-only: link TTL. GitHub Pages keeps a fixed URL.
+    if (this.hostMode === "hosted") {
+      this.renderHostedTtl(root);
+    }
   }
 
   private async refreshHeaderChips(): Promise<void> {
@@ -788,11 +759,49 @@ export class ShareGalleryModal extends Modal {
     }
   }
 
+  /** When GitHub is connected, let the user pick hosted vs GitHub explicitly. */
+  private renderHostSwitcher(root: HTMLElement): void {
+    if (!isGithubShareConfigured(this.plugin.settings)) return;
+    const field = this.renderField(root, "공유 방식");
+    const row = field.createDiv({
+      cls: "charinfo-share-modal__seg",
+      attr: { role: "group", "aria-label": "공유 방식" },
+    });
+    const options: { id: Panel; label: string }[] = [
+      { id: "hosted", label: "기본 링크" },
+      { id: "github", label: "GitHub" },
+    ];
+    for (const opt of options) {
+      const selected = this.panel === opt.id;
+      const btn = row.createEl("button", {
+        cls:
+          "charinfo-share-modal__seg-btn" + (selected ? " is-active" : ""),
+        text: opt.label,
+        attr: {
+          type: "button",
+          "aria-pressed": selected ? "true" : "false",
+        },
+      });
+      btn.addEventListener("click", () => {
+        if (this.busy || this.panel === opt.id) return;
+        this.panel = opt.id;
+        this.hostMode = opt.id;
+        this.forceReconnect = false;
+        this.plugin.settings.webShareHost = opt.id;
+        void this.plugin.saveSettings();
+        this.onOpen();
+      });
+    }
+  }
+
   private renderAltMethods(root: HTMLElement): void {
+    // Connected users switch via 공유 방식 — don't duplicate as a second door.
+    if (isGithubShareConfigured(this.plugin.settings)) return;
+
     const other = root.createDiv({
       cls: "charinfo-share-modal__section charinfo-share-modal__section--ruled",
     });
-    const otherField = this.renderField(other, "다른 방법");
+    const otherField = this.renderField(other, "다른 방법 (선택)");
     const gh = otherField.createEl("button", {
       cls: "charinfo-share-modal__alt",
       attr: { type: "button" },
@@ -808,6 +817,7 @@ export class ShareGalleryModal extends Modal {
     gh.addEventListener("click", () => {
       this.sessionUrl = "";
       this.panel = "github";
+      this.hostMode = "github";
       this.onOpen();
     });
   }
@@ -947,6 +957,8 @@ export class ShareGalleryModal extends Modal {
           ? `연결됐어요. 공유용 저장소도 만들어 두었습니다.\n${setup.repo}`
           : `연결됐어요 · ${setup.repo}`,
       );
+      this.panel = "github";
+      this.hostMode = "github";
       this.onOpen();
     } catch (error) {
       this.setStatus(
@@ -961,29 +973,36 @@ export class ShareGalleryModal extends Modal {
 
   private renderGithubPublish(root: HTMLElement): void {
     this.setTitle("GitHub로 공유");
-    const lastUrl =
-      this.sessionUrl.trim() || this.plugin.settings.webShareLastUrl.trim();
-    const predicted = this.predictedGithubUrl();
+    this.renderHostSwitcher(root);
+    const displayUrl = this.githubShareDisplayUrl();
+    const hasPublished =
+      Boolean(this.sessionUrl.trim()) ||
+      this.isGithubPagesUrl(this.plugin.settings.webShareLastUrl.trim());
 
     root.createDiv({
       cls: "charinfo-share-modal__lead",
-      text: lastUrl
-        ? "같은 링크로 내용만 덮어씁니다. 받는 사람 주소를 바꿀 필요 없어요."
-        : "한 번 만든 주소는 그대로 두고, 나중에 «다시 올리기»로 내용만 갱신할 수 있어요.",
+      text: hasPublished
+        ? "같은 GitHub 링크로 내용만 덮어씁니다. 받는 사람 주소를 바꿀 필요 없어요."
+        : "아래 주소가 고정 링크예요. 「GitHub에 올리기」로 바로 게시할 수 있어요.",
     });
 
-    if (lastUrl) {
+    // Always show scope + panel chips on gallery share (and on character share
+    // still show panel chips so users can pick what appears).
+    if (!this.selectionLocked) {
+      this.renderScopePickers(root);
+    }
+    this.renderAdvancedOptions(root);
+
+    if (displayUrl) {
       const linkField = this.renderField(root, "공개 링크");
-      this.renderLinkBlock(linkField, lastUrl, { labeled: false });
-      this.renderPrimaryAction(root, "다시 올리기", () => void this.publish());
+      this.renderLinkBlock(linkField, displayUrl, { labeled: false });
+      this.renderPrimaryAction(
+        root,
+        hasPublished ? "이 링크 업데이트" : "GitHub에 올리기",
+        () => void this.publish(),
+      );
     } else {
-      if (predicted) {
-        root.createDiv({
-          cls: "charinfo-share-modal__preview",
-          text: `곧 생길 주소 · ${predicted}`,
-        });
-      }
-      this.renderPrimaryAction(root, "공유 링크 만들기", () => void this.publish());
+      this.renderPrimaryAction(root, "GitHub에 올리기", () => void this.publish());
     }
 
     this.statusEl = root.createDiv({ cls: "charinfo-share-modal__status" });
@@ -1006,8 +1025,29 @@ export class ShareGalleryModal extends Modal {
     back.addEventListener("click", () => {
       this.panel = "hosted";
       this.hostMode = "hosted";
+      this.plugin.settings.webShareHost = "hosted";
+      void this.plugin.saveSettings();
       this.onOpen();
     });
+  }
+
+  /** Stable Pages URL to show as soon as GitHub is connected. */
+  private githubShareDisplayUrl(): string {
+    const session = this.sessionUrl.trim();
+    if (session && this.isGithubPagesUrl(session)) return session;
+    const last = this.plugin.settings.webShareLastUrl.trim();
+    if (last && this.isGithubPagesUrl(last)) return last;
+    return this.predictedGithubUrl();
+  }
+
+  private isGithubPagesUrl(url: string): boolean {
+    if (!url) return false;
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      return host.endsWith(".github.io");
+    } catch {
+      return false;
+    }
   }
 
   private async copyLink(): Promise<void> {
@@ -1172,7 +1212,7 @@ export class ShareGalleryModal extends Modal {
       const ok = await copyTextToClipboard(url);
       new Notice(ok ? (update ? "업데이트됨 · 링크 복사" : "링크 복사됨") : "게시 완료");
 
-      if (this.panel === "hosted") {
+      if (this.panel === "hosted" || this.panel === "github") {
         this.busy = false;
         this.onOpen();
         this.setStatus(ok ? `${note} 복사됨.` : note);
