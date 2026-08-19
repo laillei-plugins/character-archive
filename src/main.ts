@@ -1,4 +1,11 @@
-import { Plugin, TFile, WorkspaceLeaf, Notice, normalizePath } from "obsidian";
+import {
+  Plugin,
+  Platform,
+  TFile,
+  WorkspaceLeaf,
+  Notice,
+  normalizePath,
+} from "obsidian";
 import {
   claimLegacyWebShareIfUnambiguous,
   DEFAULT_SETTINGS,
@@ -446,6 +453,9 @@ export default class CharinfoPlugin extends Plugin {
   /**
    * Clicking the library folder in the file explorer opens the gallery
    * (bound to the entry note) without requiring the folder note.
+   *
+   * Mobile: Obsidian drills into the folder inside the Files drawer unless we
+   * stop the event; after opening, collapse the drawer so the gallery is visible.
    */
   private registerLibraryFolderClick(): void {
     this.registerDomEvent(
@@ -473,12 +483,16 @@ export default class CharinfoPlugin extends Plugin {
         const lib = normalizePath(this.settings.libraryFolder.trim() || "Character Archive");
         if (normalizePath(folderPath) !== lib) return;
 
-        // Already showing gallery for this library — just reveal.
+        // Title = open gallery; chevron = expand. Stop mobile folder drill-in.
+        event.preventDefault();
+        event.stopPropagation();
+
+        // Already showing gallery for this library — reveal + close Files drawer.
         const open = this.app.workspace
           .getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY)
           .find((leaf) => leaf.view instanceof GalleryView);
         if (open) {
-          this.app.workspace.revealLeaf(open);
+          void this.revealGalleryLeaf(open);
           return;
         }
 
@@ -488,6 +502,14 @@ export default class CharinfoPlugin extends Plugin {
       },
       true,
     );
+  }
+
+  /** Bring gallery leaf to front; on mobile, dismiss the Files drawer. */
+  private async revealGalleryLeaf(leaf: WorkspaceLeaf): Promise<void> {
+    await this.app.workspace.revealLeaf(leaf);
+    if (Platform.isMobile) {
+      this.app.workspace.leftSplit.collapse();
+    }
   }
 
   /** True if path is under any open gallery's library (or default library). */
@@ -717,6 +739,6 @@ export default class CharinfoPlugin extends Plugin {
       state: { file: file.path },
       active: true,
     });
-    workspace.revealLeaf(leaf);
+    await this.revealGalleryLeaf(leaf);
   }
 }
