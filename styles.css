@@ -619,9 +619,13 @@
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--charinfo-space-xs);
+  gap: var(--charinfo-space-xxs);
   min-width: 0;
   justify-self: start;
+  padding: var(--charinfo-space-xxs);
+  border-radius: var(--charinfo-radius-lg);
+  border: 1px solid var(--charinfo-line);
+  background: var(--charinfo-surface);
 }
 
 .charinfo-gallery__actions {
@@ -2430,21 +2434,34 @@ span.charinfo-status.is-static {
   justify-content: center;
   gap: 0.3rem;
   min-height: 28px;
+  margin: 0;
   border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 0.2rem 0.5rem;
+  border-radius: var(--charinfo-radius-sm);
+  padding: 0.2rem 0.55rem;
   font-size: 0.75rem;
   font-weight: 500;
   font-family: inherit;
+  line-height: 1.2;
   cursor: pointer;
+  /* Beat Obsidian default `button` fill — inactive must look quiet. */
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: none;
   background: transparent;
+  background-color: transparent;
   color: var(--charinfo-muted);
+}
+
+.charinfo-status-filter:hover {
+  color: var(--charinfo-ink);
+  background-color: var(--background-modifier-hover);
 }
 
 .charinfo-status-filter .charinfo-status__dot {
   width: 0.35rem;
   height: 0.35rem;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .charinfo-status-filter.is-green .charinfo-status__dot,
@@ -2478,54 +2495,73 @@ span.charinfo-status.is-static {
 .charinfo-status-filter.is-green.is-active,
 .charinfo-status-filter.is-on.is-active {
   background: var(--charinfo-status-green-bg);
+  background-color: var(--charinfo-status-green-bg);
   color: var(--charinfo-status-green);
-  border-color: color-mix(in srgb, var(--charinfo-status-green) 22%, transparent);
+  border-color: color-mix(in srgb, var(--charinfo-status-green) 28%, transparent);
+  font-weight: 600;
 }
 
 .charinfo-status-filter.is-gray.is-active,
 .charinfo-status-filter.is-off.is-active {
-  background: var(--charinfo-status-gray-bg);
+  background: var(--background-primary);
+  background-color: var(--background-primary);
   color: var(--charinfo-ink);
   border-color: var(--charinfo-line);
+  font-weight: 600;
 }
 
 .charinfo-status-filter.is-amber.is-active {
   background: var(--charinfo-status-amber-bg);
+  background-color: var(--charinfo-status-amber-bg);
   color: var(--charinfo-status-amber);
-  border-color: color-mix(in srgb, var(--charinfo-status-amber) 22%, transparent);
+  border-color: color-mix(in srgb, var(--charinfo-status-amber) 28%, transparent);
+  font-weight: 600;
 }
 .charinfo-status-filter.is-blue.is-active {
   background: var(--charinfo-status-blue-bg);
+  background-color: var(--charinfo-status-blue-bg);
   color: var(--charinfo-status-blue);
-  border-color: color-mix(in srgb, var(--charinfo-status-blue) 22%, transparent);
+  border-color: color-mix(in srgb, var(--charinfo-status-blue) 28%, transparent);
+  font-weight: 600;
 }
 .charinfo-status-filter.is-red.is-active {
   background: var(--charinfo-status-red-bg);
+  background-color: var(--charinfo-status-red-bg);
   color: var(--charinfo-status-red);
-  border-color: color-mix(in srgb, var(--charinfo-status-red) 22%, transparent);
+  border-color: color-mix(in srgb, var(--charinfo-status-red) 28%, transparent);
+  font-weight: 600;
 }
 .charinfo-status-filter.is-violet.is-active {
   background: var(--charinfo-status-violet-bg);
+  background-color: var(--charinfo-status-violet-bg);
   color: var(--charinfo-status-violet);
-  border-color: color-mix(in srgb, var(--charinfo-status-violet) 22%, transparent);
+  border-color: color-mix(in srgb, var(--charinfo-status-violet) 28%, transparent);
+  font-weight: 600;
 }
 .charinfo-status-filter.is-cyan.is-active {
   background: var(--charinfo-status-cyan-bg);
+  background-color: var(--charinfo-status-cyan-bg);
   color: var(--charinfo-status-cyan);
-  border-color: color-mix(in srgb, var(--charinfo-status-cyan) 22%, transparent);
+  border-color: color-mix(in srgb, var(--charinfo-status-cyan) 28%, transparent);
+  font-weight: 600;
 }
 .charinfo-status-filter.is-pink.is-active {
   background: var(--charinfo-status-pink-bg);
+  background-color: var(--charinfo-status-pink-bg);
   color: var(--charinfo-status-pink);
-  border-color: color-mix(in srgb, var(--charinfo-status-pink) 22%, transparent);
+  border-color: color-mix(in srgb, var(--charinfo-status-pink) 28%, transparent);
+  font-weight: 600;
 }
 
-/* Tags have no color, so an active tag chip wears the neutral 「전체」 wash. */
+/* 「전체」 / tag chips — primary-surface pill so default theme isn't all-gray. */
 .charinfo-status-filter.is-all.is-active,
 .charinfo-status-filter.is-tag.is-active {
-  background: color-mix(in srgb, var(--charinfo-ink) 6%, var(--charinfo-surface));
+  background: var(--background-primary);
+  background-color: var(--background-primary);
   color: var(--charinfo-ink);
-  border-color: var(--charinfo-line);
+  border-color: var(--charinfo-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--charinfo-accent) 35%, transparent);
+  font-weight: 600;
 }
 
 .charinfo-settings__status-row .setting-item-control {

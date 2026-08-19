@@ -1,7 +1,7 @@
 {
   "id": "character-archive",
   "name": "Character Archive",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "minAppVersion": "1.7.2",
   "description": "Card-view character archive. Local notes, easy share.",
   "author": "laillei",
