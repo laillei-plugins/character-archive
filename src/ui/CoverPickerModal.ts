@@ -22,7 +22,8 @@ import {
 export type CoverPickResult =
   | { kind: "vault"; file: TFile }
   | { kind: "remote"; url: string }
-  | { kind: "default" };
+  | { kind: "default" }
+  | { kind: "none" };
 
 const MAX_REMOTE_BYTES = 8_000_000;
 
@@ -225,17 +226,34 @@ export class CoverPickerModal extends Modal {
       void this.addFromLink(this.linkInput?.value ?? "");
     });
 
-    // —— 4. Reset (quiet) ——
+    // —— 4. Reset / clear (quiet) ——
     const footer = contentEl.createDiv({ cls: "charinfo-cover-picker__footer" });
     const defBtn = footer.createEl("button", {
       text: "기본으로",
       cls: "charinfo-cover-picker__quiet",
-      attr: { type: "button", title: "노트 첫 이미지 / 기본 커버" },
+      attr: {
+        type: "button",
+        title: "노트의 첫 이미지를 자동으로 사용",
+      },
     });
     defBtn.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
       void this.commit({ kind: "default" });
+    });
+
+    const noneBtn = footer.createEl("button", {
+      text: "커버 없음",
+      cls: "charinfo-cover-picker__quiet",
+      attr: {
+        type: "button",
+        title: "이미지는 남기고 카드 커버만 숨김",
+      },
+    });
+    noneBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.commit({ kind: "none" });
     });
   }
 
