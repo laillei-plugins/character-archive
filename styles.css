@@ -387,6 +387,8 @@
   --charinfo-radius: var(--radius-s, 4px);
   --charinfo-radius-lg: var(--radius-m, 8px);
   --charinfo-peek-width: 20rem;
+  /* Narrow bottom-sheet height; JS swaps it between the 40/55/88vh snaps. */
+  --charinfo-sheet-h: 55vh;
   --charinfo-ink: var(--text-normal);
   --charinfo-muted: var(--text-muted);
   --charinfo-line: var(--background-modifier-border);
@@ -3211,22 +3213,112 @@ span.charinfo-status.is-static {
   }
 }
 
-/* Leaf-width narrow (ResizeObserver) — Notion center peek */
+/*
+ * Leaf-width narrow (ResizeObserver) — peek becomes an overlay bottom sheet.
+ * The grid keeps its full-bleed row underneath, so there is no split band.
+ * Sheet and scrim anchor to .charinfo-gallery (the only positioned ancestor).
+ */
 .charinfo-gallery.is-narrow .charinfo-gallery__body {
-  grid-template-columns: 1fr;
-  position: relative;
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.charinfo-gallery.is-narrow .charinfo-gallery__detail {
+.charinfo-gallery__scrim {
+  display: none;
+}
+
+.charinfo-gallery.is-narrow.is-peek-open .charinfo-gallery__scrim {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: color-mix(in srgb, var(--charinfo-ink) 28%, transparent);
+  animation: charinfo-scrim-in 180ms ease-out;
+}
+
+.charinfo-gallery.is-narrow.is-peek-open .charinfo-gallery__main {
+  pointer-events: none;
+}
+
+.charinfo-gallery.is-narrow.is-peek-open .charinfo-gallery__detail {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 6;
+  height: var(--charinfo-sheet-h, 55vh);
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-left: none;
   border-top: 1px solid var(--charinfo-line);
-  padding: 0 0.65rem 1rem;
-  max-height: 45vh;
+  border-radius: var(--charinfo-radius-lg) var(--charinfo-radius-lg) 0 0;
+  background: var(--background-primary);
+  box-shadow: 0 -8px 24px color-mix(in srgb, var(--charinfo-ink) 12%, transparent);
+  padding: 0 var(--charinfo-space-base)
+    calc(var(--charinfo-space-lg) + env(safe-area-inset-bottom, 0px));
+  transition: height 160ms ease;
+  animation: charinfo-sheet-in 200ms ease-out;
+}
+
+.charinfo-gallery.is-sheet-dragging .charinfo-gallery__detail {
+  transition: none;
+}
+
+@keyframes charinfo-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes charinfo-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .charinfo-gallery.is-narrow.is-peek-open .charinfo-gallery__detail,
+  .charinfo-gallery.is-narrow.is-peek-open .charinfo-gallery__scrim {
+    animation: none;
+    transition: none;
+  }
+}
+
+.charinfo-detail__grip {
+  display: none;
 }
 
 .charinfo-gallery.is-narrow .charinfo-detail__head {
-  margin: 0 -0.65rem 0.75rem;
-  padding: 0.85rem 0.65rem 0.45rem;
+  flex-wrap: wrap;
+  margin: 0 calc(-1 * var(--charinfo-space-base)) var(--charinfo-space-base);
+  padding: 0 var(--charinfo-space-base) var(--charinfo-space-md);
+}
+
+.charinfo-gallery.is-narrow .charinfo-detail__grip {
+  display: flex;
+  order: -1;
+  flex: 0 0 100%;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  /* Handle-only drag start (freeze). */
+  touch-action: none;
+  cursor: grab;
+}
+
+.charinfo-gallery.is-sheet-dragging .charinfo-detail__grip {
+  cursor: grabbing;
+}
+
+.charinfo-detail__grip-bar {
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--charinfo-ink) 22%, transparent);
 }
 
 .charinfo-detail__back {

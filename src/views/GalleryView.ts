@@ -81,6 +81,14 @@ export const VIEW_TYPE_CHARINFO_GALLERY = "charinfo-gallery";
 const NARROW_PX = 720;
 /** Tags shown on a card before collapsing the rest into `+n`. */
 const CARD_TAG_LIMIT = 3;
+/** Narrow bottom-sheet snap heights, as a fraction of the viewport. */
+const SHEET_SNAPS = { low: 0.4, mid: 0.55, tall: 0.88 } as const;
+type SheetSnap = keyof typeof SHEET_SNAPS;
+const SHEET_SNAP_VH: Record<SheetSnap, string> = {
+  low: "40vh",
+  mid: "55vh",
+  tall: "88vh",
+};
 
 /**
  * File-backed gallery — bound to `Character Archive.md` so share/link plugins
@@ -104,6 +112,13 @@ export class GalleryView extends FileView {
   private resizeObserver: ResizeObserver | null = null;
   private isNarrow = false;
   private peekOpen = false;
+  /** Narrow sheet height — remembered for this view session only. */
+  private sheetSnap: SheetSnap = "mid";
+  private sheetDrag: {
+    pointerId: number;
+    startY: number;
+    startH: number;
+  } | null = null;
   private tipTimer: number | null = null;
   /** Serialize cover writes per character so rapid strip taps don't race. */
   private coverWriteChain = new Map<string, Promise<void>>();
@@ -427,6 +442,7 @@ export class GalleryView extends FileView {
       if (next === this.isNarrow) return;
       this.isNarrow = next;
       this.contentEl.toggleClass("is-narrow", next);
+      if (this.peekOpen) this.syncPeekChrome();
     });
     this.resizeObserver.observe(this.contentEl);
     // FileView loads the note via onLoadFile — only refresh here if already bound.
@@ -446,11 +462,119 @@ export class GalleryView extends FileView {
     this.contentEl.empty();
   }
 
+  /**
+   * Crossing 720px with peek open swaps the sheet for the side panel (or back).
+   * Only the affordances differ, so re-point them instead of rebuilding.
+   */
+  private syncPeekChrome(): void {
+    this.applySheetSnap();
+    this.syncGalleryInert();
+    const back = this.contentEl.querySelector(".charinfo-detail__back");
+    if (!(back instanceof HTMLElement)) return;
+    back.empty();
+    setIcon(back, this.isNarrow ? "chevron-left" : "x");
+  }
+
+  /**
+   * Narrow overlay: gallery chrome + grid must not take pointer or keyboard
+   * while the sheet is open (freeze: inert underneath).
+   */
+  private syncGalleryInert(): void {
+    const on = this.isNarrow && this.peekOpen;
+    for (const sel of [
+      ".charinfo-gallery__header",
+      ".charinfo-gallery__main",
+    ]) {
+      const el = this.contentEl.querySelector(sel);
+      if (!(el instanceof HTMLElement)) continue;
+      if (on) el.setAttribute("inert", "");
+      else el.removeAttribute("inert");
+    }
+  }
+
+  /** Viewport basis for the `vh` snaps, so drag math matches what CSS paints. */
+  private sheetBasis(): number {
+    return window.innerHeight || this.contentEl.clientHeight || 640;
+  }
+
+  private applySheetSnap(): void {
+    this.contentEl.style.setProperty(
+      "--charinfo-sheet-h",
+      SHEET_SNAP_VH[this.sheetSnap],
+    );
+  }
+
+  private nearestSnap(px: number): SheetSnap {
+    const basis = this.sheetBasis();
+    let best: SheetSnap = "mid";
+    let bestGap = Number.POSITIVE_INFINITY;
+    for (const snap of Object.keys(SHEET_SNAPS) as SheetSnap[]) {
+      const gap = Math.abs(SHEET_SNAPS[snap] * basis - px);
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = snap;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Height drag starts on the grip handle only — head buttons and the image
+   * strip keep their own gestures (freeze: handle-only drag start).
+   */
+  private attachSheetDrag(handle: HTMLElement, sheet: HTMLElement): void {
+    const endDrag = (event: PointerEvent) => {
+      const drag = this.sheetDrag;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      this.sheetDrag = null;
+      handle.releasePointerCapture?.(event.pointerId);
+      this.contentEl.removeClass("is-sheet-dragging");
+      this.sheetSnap = this.nearestSnap(sheet.getBoundingClientRect().height);
+      this.applySheetSnap();
+    };
+    handle.addEventListener("pointerdown", (event) => {
+      if (!this.isNarrow || !this.peekOpen) return;
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      this.sheetDrag = {
+        pointerId: event.pointerId,
+        startY: event.clientY,
+        startH: sheet.getBoundingClientRect().height,
+      };
+      handle.setPointerCapture?.(event.pointerId);
+      this.contentEl.addClass("is-sheet-dragging");
+    });
+    handle.addEventListener("pointermove", (event) => {
+      const drag = this.sheetDrag;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      const basis = this.sheetBasis();
+      const min = SHEET_SNAPS.low * basis;
+      const max = Math.min(
+        SHEET_SNAPS.tall * basis,
+        this.contentEl.clientHeight,
+      );
+      const next = Math.min(
+        Math.max(min, drag.startH + (drag.startY - event.clientY)),
+        Math.max(min, max),
+      );
+      this.contentEl.style.setProperty(
+        "--charinfo-sheet-h",
+        `${Math.round(next)}px`,
+      );
+    });
+    handle.addEventListener("pointerup", endDrag);
+    handle.addEventListener("pointercancel", endDrag);
+  }
+
   private closePeek(): void {
     this.closeTagMenu();
+    this.sheetDrag = null;
+    this.contentEl.removeClass("is-sheet-dragging");
+    this.applySheetSnap();
     this.selected = null;
     this.peekOpen = false;
     this.contentEl.toggleClass("is-peek-open", false);
+    this.syncGalleryInert();
     this.contentEl.querySelectorAll(".charinfo-card.is-selected").forEach((el) => {
       el.classList.remove("is-selected");
     });
@@ -587,8 +711,10 @@ export class GalleryView extends FileView {
     root.toggleClass("is-narrow", this.isNarrow);
     root.toggleClass("is-peek-open", this.peekOpen);
     root.tabIndex = 0;
+    this.applySheetSnap();
 
     this.renderHeader(root);
+    this.syncGalleryInert();
     root.createDiv({ cls: "charinfo-gallery__body" });
     this.renderBody();
   }
@@ -598,6 +724,14 @@ export class GalleryView extends FileView {
     if (!(body instanceof HTMLElement)) return;
     body.empty();
     const main = body.createDiv({ cls: "charinfo-gallery__main" });
+    // Narrow only: dim layer under the sheet, above the (inert) grid.
+    const scrim = body.createDiv({
+      cls: "charinfo-gallery__scrim",
+      attr: { "aria-hidden": "true" },
+    });
+    scrim.addEventListener("click", () => {
+      if (this.peekOpen) this.closePeek();
+    });
     const detail = body.createDiv({ cls: "charinfo-gallery__detail" });
 
     // Tap gallery chrome (not a card) → dismiss side panel.
@@ -1820,7 +1954,9 @@ export class GalleryView extends FileView {
   private selectCard(record: CharacterRecord): void {
     this.selected = record;
     this.peekOpen = true;
+    this.applySheetSnap();
     this.contentEl.toggleClass("is-peek-open", true);
+    this.syncGalleryInert();
     this.contentEl.querySelectorAll(".charinfo-card.is-selected").forEach((el) => {
       el.classList.remove("is-selected");
     });
@@ -2490,6 +2626,9 @@ export class GalleryView extends FileView {
 
   private async renderDetail(detail: HTMLElement): Promise<void> {
     const requestId = ++this.detailRequestId;
+    // The head owns the drag pointer capture and is about to be replaced.
+    this.sheetDrag = null;
+    this.contentEl.removeClass("is-sheet-dragging");
     detail.empty();
     if (!this.selected) {
       this.peekOpen = false;
@@ -2500,6 +2639,12 @@ export class GalleryView extends FileView {
     const record = this.selected;
 
     const head = detail.createDiv({ cls: "charinfo-detail__head" });
+    const grip = head.createDiv({
+      cls: "charinfo-detail__grip",
+      attr: { "aria-hidden": "true" },
+    });
+    grip.createDiv({ cls: "charinfo-detail__grip-bar" });
+    this.attachSheetDrag(grip, detail);
     const back = head.createEl("button", {
       cls: "charinfo-detail__back",
       attr: { type: "button", "aria-label": "닫기" },
