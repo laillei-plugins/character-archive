@@ -2,7 +2,6 @@ import { Notice, TFile, TFolder, normalizePath } from "obsidian";
 import type CharinfoPlugin from "../main";
 import { forgetGalleryPageState } from "../settings";
 import {
-  isDefaultGalleryEntry,
   isGalleryPage,
   readGalleryScope,
 } from "./galleryPage";
@@ -45,15 +44,6 @@ function libraryRoots(plugin: CharinfoPlugin): TFolder[] {
   return roots;
 }
 
-function hasCharacterNotes(plugin: CharinfoPlugin, library: string): boolean {
-  const lib = normalizePath(library);
-  return plugin.app.vault.getMarkdownFiles().some((file) => {
-    if (file.path === lib || !file.path.startsWith(`${lib}/`)) return false;
-    const kind = plugin.app.metadataCache.getFileCache(file)?.frontmatter?.kind;
-    return String(kind ?? "") === "character";
-  });
-}
-
 export function findEmptyFolders(plugin: CharinfoPlugin): TFolder[] {
   const seen = new Set<string>();
   const out: TFolder[] = [];
@@ -69,11 +59,12 @@ export function findEmptyFolders(plugin: CharinfoPlugin): TFolder[] {
     .sort((a, b) => b.path.length - a.path.length);
 }
 
-/** Extra windows + pages whose card folder is gone. Cards are never included. */
+/**
+ * Gallery pages whose declared `library` folder is gone from the vault — those
+ * windows can no longer show anything. An empty (or duplicated) library is a
+ * legitimate state, so it is never an orphan. Cards are never included.
+ */
 export function findOrphanGalleryPages(plugin: CharinfoPlugin): TFile[] {
-  const mainLib = normalizePath(
-    plugin.settings.libraryFolder.trim() || "Character Archive",
-  );
   const seen = new Set<string>();
   const out: TFile[] = [];
   const add = (file: TFile) => {
@@ -84,23 +75,14 @@ export function findOrphanGalleryPages(plugin: CharinfoPlugin): TFile[] {
 
   for (const file of plugin.app.vault.getMarkdownFiles()) {
     if (!isGalleryPage(file, plugin)) continue;
-    if (isDefaultGalleryEntry(file, plugin)) continue;
     const scope = readGalleryScope(plugin.app, file, plugin.settings);
     const lib = normalizePath(scope.library);
     const libExists = Boolean(
       asFolder(plugin.app.vault.getAbstractFileByPath(lib)),
     );
-    if (!libExists) {
-      add(file);
-      continue;
-    }
-    if (!scope.pinned && lib === mainLib) {
-      add(file);
-      continue;
-    }
-    if (lib !== mainLib && !hasCharacterNotes(plugin, lib)) {
-      add(file);
-    }
+    // Only missing libraries are orphans — including the default entry note
+    // when its card folder is gone.
+    if (!libExists) add(file);
   }
   return out.sort((a, b) => a.path.localeCompare(b.path, "ko"));
 }

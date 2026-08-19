@@ -295,11 +295,9 @@ export async function copyGalleryPageLink(
 export async function resolveGalleryPageFile(
   plugin: CharinfoPlugin,
 ): Promise<TFile | null> {
-  const leaves = plugin.app.workspace.getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY);
-  for (const leaf of leaves) {
-    const view = leaf.view;
-    if (view instanceof GalleryView && view.file) return view.file;
-  }
+  // The gallery in front of the user wins over "whichever tab opened first".
+  const focused = plugin.getFocusedGalleryView();
+  if (focused?.file) return focused.file;
   const active = plugin.app.workspace.getActiveFile();
   if (active && isGalleryPage(active, plugin)) return active;
   const abs = plugin.app.vault.getAbstractFileByPath(galleryPagePath(plugin));

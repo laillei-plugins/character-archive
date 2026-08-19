@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Build (optional) → copy the plugin into the Obsidian vault → reload.
+ * Build (optional) → copy charinfo into the Obsidian vault → reload.
  *
  * Usage:
  *   node scripts/deploy.mjs           # build + copy + reload
@@ -16,7 +16,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -42,6 +42,55 @@ function resolveVaultPluginDir() {
 
 const VAULT_PLUGIN = resolveVaultPluginDir();
 
+function readJson(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Refuse to deploy next to the pre-rename `charinfo` install: two copies of the
+ * same plugin fight over views and settings. Never edits the vault config —
+ * removal is the user's call, so we only print the manual steps.
+ */
+function assertNoLegacyInstall() {
+  const pluginsDir = dirname(VAULT_PLUGIN);
+  const legacyDir = join(pluginsDir, "charinfo");
+  // Deploying *into* the legacy folder is the one case with nothing to collide.
+  if (basename(VAULT_PLUGIN) === "charinfo") return;
+
+  const reasons = [];
+  if (existsSync(legacyDir)) {
+    const manifest = readJson(join(legacyDir, "manifest.json"));
+    if (manifest?.id === "charinfo") {
+      reasons.push(`legacy plugin folder still installed: ${legacyDir}`);
+    }
+  }
+
+  const obsidianDir = dirname(pluginsDir);
+  const communityPath = join(obsidianDir, "community-plugins.json");
+  const enabled = readJson(communityPath);
+  if (Array.isArray(enabled) && enabled.includes("charinfo")) {
+    reasons.push(`"charinfo" is still enabled in ${communityPath}`);
+  }
+
+  if (reasons.length === 0) return;
+
+  console.error("refusing to deploy — legacy charinfo install detected:");
+  for (const reason of reasons) console.error(`  · ${reason}`);
+  console.error("");
+  console.error("do this once in Obsidian, then re-run deploy:");
+  console.error("  1. Settings → Community plugins → turn off «charinfo»");
+  console.error(`  2. delete ${legacyDir}`);
+  console.error(`  3. make sure ${communityPath} no longer lists "charinfo"`);
+  console.error(`  4. reload Obsidian, then: npm run deploy`);
+  process.exit(1);
+}
+
+assertNoLegacyInstall();
+
 const args = new Set(process.argv.slice(2));
 const doBuild = !args.has("--no-build");
 const doReload = !args.has("--no-reload");
@@ -65,6 +114,7 @@ if (!existsSync(VAULT_PLUGIN)) {
   mkdirSync(VAULT_PLUGIN, { recursive: true });
 }
 
+// Code only. `data.json` is the user's live settings — never copy or merge it.
 for (const file of ["main.js", "styles.css", "manifest.json"]) {
   const src = join(root, file);
   if (!existsSync(src)) {
