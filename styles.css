@@ -506,6 +506,7 @@
   max-width: min(22rem, 70vw);
 }
 
+button.charinfo-gallery__genre,
 .charinfo-gallery__genre {
   appearance: none;
   -webkit-appearance: none;
@@ -514,8 +515,9 @@
   gap: 0.35rem;
   margin: 0;
   padding: 0.1rem 0;
-  border: none;
-  background: transparent;
+  border: none !important;
+  background: transparent !important;
+  background-color: transparent !important;
   color: var(--charinfo-ink);
   font: inherit;
   font-size: 1.15rem;
@@ -525,7 +527,14 @@
   cursor: pointer;
   min-width: 0;
   max-width: 100%;
-  box-shadow: none;
+  box-shadow: none !important;
+}
+
+button.charinfo-gallery__genre:hover,
+.charinfo-gallery__genre:hover {
+  color: var(--charinfo-accent);
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
 .charinfo-gallery__genre-label {
@@ -581,10 +590,6 @@
   line-height: 1.4;
 }
 
-.charinfo-gallery__genre:hover {
-  color: var(--charinfo-accent);
-}
-
 .charinfo-gallery__genre:focus {
   outline: none;
 }
@@ -619,13 +624,9 @@
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--charinfo-space-xxs);
+  gap: var(--charinfo-space-xs);
   min-width: 0;
   justify-self: start;
-  padding: var(--charinfo-space-xxs);
-  border-radius: var(--charinfo-radius-lg);
-  border: 1px solid var(--charinfo-line);
-  background: var(--charinfo-surface);
 }
 
 .charinfo-gallery__actions {
@@ -2428,38 +2429,46 @@ span.charinfo-status.is-static {
   background: var(--charinfo-status-pink);
 }
 
+/* Notion-style filter chips: discrete soft pills, no tray / no button chrome.
+ * Mix against --background-primary (not secondary) — Minimal flattens secondary. */
 .charinfo-status-filter {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.3rem;
-  min-height: 28px;
+  gap: var(--charinfo-space-xxs);
+  min-height: var(--size-4-6, 24px);
   margin: 0;
   border: 1px solid transparent;
   border-radius: var(--charinfo-radius-sm);
-  padding: 0.2rem 0.55rem;
-  font-size: 0.75rem;
+  padding: var(--charinfo-space-xxs) var(--charinfo-space-sm);
+  font-size: var(--font-ui-smaller, 12px);
   font-weight: 500;
   font-family: inherit;
   line-height: 1.2;
   cursor: pointer;
-  /* Beat Obsidian default `button` fill — inactive must look quiet. */
-  appearance: none;
-  -webkit-appearance: none;
+  user-select: none;
   box-shadow: none;
   background: transparent;
-  background-color: transparent;
-  color: var(--charinfo-muted);
+  color: var(--text-faint, var(--charinfo-muted));
 }
 
 .charinfo-status-filter:hover {
   color: var(--charinfo-ink);
-  background-color: var(--background-modifier-hover);
+  background: var(--background-modifier-hover);
+}
+
+.charinfo-status-filter:focus {
+  outline: none;
+}
+
+.charinfo-status-filter:focus-visible {
+  outline: 2px solid var(--charinfo-accent);
+  outline-offset: 1px;
 }
 
 .charinfo-status-filter .charinfo-status__dot {
-  width: 0.35rem;
-  height: 0.35rem;
+  width: 0.4rem;
+  height: 0.4rem;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -2492,75 +2501,121 @@ span.charinfo-status.is-static {
   background: var(--charinfo-status-pink);
 }
 
+/* Selected pill — ink/status mixed into primary so Minimal skins still show contrast. */
+.charinfo-status-filter.is-active {
+  color: var(--charinfo-ink);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--charinfo-ink) 12%, var(--background-primary));
+  border-color: color-mix(in srgb, var(--charinfo-ink) 22%, var(--background-primary));
+}
+
 .charinfo-status-filter.is-green.is-active,
 .charinfo-status-filter.is-on.is-active {
-  background: var(--charinfo-status-green-bg);
-  background-color: var(--charinfo-status-green-bg);
   color: var(--charinfo-status-green);
-  border-color: color-mix(in srgb, var(--charinfo-status-green) 28%, transparent);
-  font-weight: 600;
+  background: color-mix(
+    in srgb,
+    var(--charinfo-status-green) 18%,
+    var(--background-primary)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-status-green) 32%,
+    var(--background-primary)
+  );
 }
 
 .charinfo-status-filter.is-gray.is-active,
 .charinfo-status-filter.is-off.is-active {
-  background: var(--background-primary);
-  background-color: var(--background-primary);
   color: var(--charinfo-ink);
-  border-color: var(--charinfo-line);
-  font-weight: 600;
+  background: color-mix(in srgb, var(--charinfo-ink) 12%, var(--background-primary));
+  border-color: color-mix(in srgb, var(--charinfo-ink) 22%, var(--background-primary));
 }
 
 .charinfo-status-filter.is-amber.is-active {
-  background: var(--charinfo-status-amber-bg);
-  background-color: var(--charinfo-status-amber-bg);
   color: var(--charinfo-status-amber);
-  border-color: color-mix(in srgb, var(--charinfo-status-amber) 28%, transparent);
-  font-weight: 600;
+  background: color-mix(
+    in srgb,
+    var(--charinfo-status-amber) 18%,
+    var(--background-primary)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-status-amber) 32%,
+    var(--background-primary)
+  );
 }
 .charinfo-status-filter.is-blue.is-active {
-  background: var(--charinfo-status-blue-bg);
-  background-color: var(--charinfo-status-blue-bg);
   color: var(--charinfo-status-blue);
-  border-color: color-mix(in srgb, var(--charinfo-status-blue) 28%, transparent);
-  font-weight: 600;
+  background: color-mix(
+    in srgb,
+    var(--charinfo-status-blue) 18%,
+    var(--background-primary)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-status-blue) 32%,
+    var(--background-primary)
+  );
 }
 .charinfo-status-filter.is-red.is-active {
-  background: var(--charinfo-status-red-bg);
-  background-color: var(--charinfo-status-red-bg);
   color: var(--charinfo-status-red);
-  border-color: color-mix(in srgb, var(--charinfo-status-red) 28%, transparent);
-  font-weight: 600;
+  background: color-mix(
+    in srgb,
+    var(--charinfo-status-red) 18%,
+    var(--background-primary)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-status-red) 32%,
+    var(--background-primary)
+  );
 }
 .charinfo-status-filter.is-violet.is-active {
-  background: var(--charinfo-status-violet-bg);
-  background-color: var(--charinfo-status-violet-bg);
   color: var(--charinfo-status-violet);
-  border-color: color-mix(in srgb, var(--charinfo-status-violet) 28%, transparent);
-  font-weight: 600;
+  background: color-mix(
+    in srgb,
+    var(--charinfo-status-violet) 18%,
+    var(--background-primary)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-status-violet) 32%,
+    var(--background-primary)
+  );
 }
 .charinfo-status-filter.is-cyan.is-active {
-  background: var(--charinfo-status-cyan-bg);
-  background-color: var(--charinfo-status-cyan-bg);
   color: var(--charinfo-status-cyan);
-  border-color: color-mix(in srgb, var(--charinfo-status-cyan) 28%, transparent);
-  font-weight: 600;
+  background: color-mix(
+    in srgb,
+    var(--charinfo-status-cyan) 18%,
+    var(--background-primary)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-status-cyan) 32%,
+    var(--background-primary)
+  );
 }
 .charinfo-status-filter.is-pink.is-active {
-  background: var(--charinfo-status-pink-bg);
-  background-color: var(--charinfo-status-pink-bg);
   color: var(--charinfo-status-pink);
-  border-color: color-mix(in srgb, var(--charinfo-status-pink) 28%, transparent);
-  font-weight: 600;
+  background: color-mix(
+    in srgb,
+    var(--charinfo-status-pink) 18%,
+    var(--background-primary)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-status-pink) 32%,
+    var(--background-primary)
+  );
 }
 
-/* 「전체」 / tag chips — primary-surface pill so default theme isn't all-gray. */
+/* 「전체」 / tag — same pill strength as other chips (no special fade-out). */
 .charinfo-status-filter.is-all.is-active,
 .charinfo-status-filter.is-tag.is-active {
-  background: var(--background-primary);
-  background-color: var(--background-primary);
   color: var(--charinfo-ink);
-  border-color: var(--charinfo-accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--charinfo-accent) 35%, transparent);
+  background: color-mix(in srgb, var(--charinfo-ink) 12%, var(--background-primary));
+  border-color: color-mix(in srgb, var(--charinfo-ink) 22%, var(--background-primary));
   font-weight: 600;
 }
 

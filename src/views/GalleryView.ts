@@ -605,7 +605,12 @@ export class GalleryView extends FileView {
       if (!this.peekOpen) return;
       const target = event.target as HTMLElement;
       if (target.closest(".charinfo-card")) return;
-      if (target.closest("button, a, input, textarea, select")) return;
+      if (
+        target.closest(
+          "button, a, input, textarea, select, .charinfo-status-filter",
+        )
+      )
+        return;
       this.closePeek();
     });
 
@@ -673,23 +678,29 @@ export class GalleryView extends FileView {
       })),
     ];
     for (const option of options) {
-      const btn = tokens.createEl("button", {
+      // Span (not <button>) so Obsidian default button chrome can't paint a grey tray.
+      const chip = tokens.createEl("span", {
         cls:
           "charinfo-status-filter" +
           ` ${option.cls}` +
           (active === option.id ? " is-active" : ""),
         attr: {
-          type: "button",
+          role: "button",
+          tabindex: "0",
           "data-filter": option.id,
           "aria-pressed": active === option.id ? "true" : "false",
         },
       });
       if (option.id !== "all" && !isTagAxis) {
-        btn.createSpan({ cls: "charinfo-status__dot" });
+        chip.createSpan({ cls: "charinfo-status__dot" });
       }
-      btn.createSpan({ text: option.label });
-      btn.addEventListener("click", () => {
-        void this.setChipFilter(option.id);
+      chip.createSpan({ text: option.label });
+      const activate = () => void this.setChipFilter(option.id);
+      chip.addEventListener("click", activate);
+      chip.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        activate();
       });
     }
   }
