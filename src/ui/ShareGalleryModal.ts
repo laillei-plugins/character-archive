@@ -4,8 +4,16 @@ import type { CharacterRecord } from "../data/CharacterStore";
 import type {
   HostedShareTtl,
   WebShareHostMode,
+  WebShareLastState,
 } from "../settings";
-import { SHARE_ATTR_HEADER } from "../settings";
+import {
+  SHARE_ATTR_HEADER,
+  clearWebShareForPage,
+  discardStaleWebShareForPage,
+  getGroupOrderFor,
+  getWebShareForPage,
+  setWebShareForPage,
+} from "../settings";
 import {
   buildSharePayload,
   collectPanelHeaders,
@@ -31,11 +39,11 @@ import {
 } from "../share/hostedShare";
 import {
   copyTextToClipboard,
+  galleryPagePath,
   getFilterAxisForPage,
   readGalleryScope,
 } from "../page/galleryPage";
 import { resolveGroupOrder } from "../data/order";
-import { getGroupOrderFor } from "../settings";
 
 type Panel = "hosted" | "github";
 
@@ -88,6 +96,11 @@ export class ShareGalleryModal extends Modal {
   private availableHeaders: string[] = [SHARE_ATTR_HEADER];
   private headerChipsEl: HTMLElement | null = null;
   private selectionLocked: boolean;
+  /**
+   * Explicit single-character share (not “gallery with one card”). Create-only
+   * for hosted credentials — must not Update/Delete the gallery page’s link.
+   */
+  private characterShare: boolean;
   private selectedArchives: Set<string>;
   private selectedGroups: Set<string>;
   private archiveWrap: HTMLElement | null = null;
@@ -118,10 +131,22 @@ export class ShareGalleryModal extends Modal {
     this.hostMode = "hosted";
     this.panel = "hosted";
     this.pageFile = opts.pageFile ?? null;
-    this.selectionLocked = Boolean(opts.selectionLocked) || records.length <= 1;
+    this.characterShare = Boolean(opts.selectionLocked);
+    this.selectionLocked = this.characterShare || records.length <= 1;
     this.selectedArchives = new Set();
     this.selectedGroups = new Set();
     this.initScopeSelection(opts.defaultArchive?.trim() || "");
+  }
+
+  /** Gallery note path this share is scoped to (credentials key). */
+  private pageSharePath(): string {
+    return this.pageFile?.path ?? galleryPagePath(this.plugin);
+  }
+
+  /** Page-scoped hosted link usable for Update/Stop (null for character share). */
+  private pageHostedShare(): WebShareLastState | null {
+    if (this.characterShare) return null;
+    return getWebShareForPage(this.plugin.settings, this.pageSharePath());
   }
 
   private initScopeSelection(preferredArchive: string): void {
@@ -234,19 +259,35 @@ export class ShareGalleryModal extends Modal {
   /** Old share HTML (pre redesign) must not be offered as the current link. */
   private discardStaleLastUrl(): void {
     const s = this.plugin.settings;
-    if (s.webShareHtmlVersion === SHARE_HTML_VERSION) return;
-    if (!s.webShareLastUrl && !this.sessionUrl) {
+    // Character share never owns page credentials.
+    if (this.characterShare) {
+      if (s.webShareHtmlVersion !== SHARE_HTML_VERSION) {
+        this.sessionUrl = "";
+        s.webShareHtmlVersion = SHARE_HTML_VERSION;
+        void this.plugin.saveSettings();
+      }
+      return;
+    }
+    const path = this.pageSharePath();
+    const dropped = discardStaleWebShareForPage(
+      s,
+      path,
+      SHARE_HTML_VERSION,
+    );
+    // Also clear ambiguous legacy globals when the HTML format moved.
+    if (s.webShareHtmlVersion !== SHARE_HTML_VERSION) {
+      this.sessionUrl = "";
+      s.webShareLastId = "";
+      s.webShareLastManageKey = "";
+      // Keep lastUrl only if a fresh page record still has one.
+      const page = getWebShareForPage(s, path);
+      if (!page?.url) s.webShareLastUrl = "";
+      s.webShareLastAt = page?.at ?? "";
       s.webShareHtmlVersion = SHARE_HTML_VERSION;
       void this.plugin.saveSettings();
       return;
     }
-    this.sessionUrl = "";
-    s.webShareLastUrl = "";
-    s.webShareLastId = "";
-    s.webShareLastManageKey = "";
-    s.webShareLastAt = "";
-    s.webShareHtmlVersion = SHARE_HTML_VERSION;
-    void this.plugin.saveSettings();
+    if (dropped) void this.plugin.saveSettings();
   }
 
   onClose(): void {
@@ -271,12 +312,19 @@ export class ShareGalleryModal extends Modal {
       return;
     }
 
+    const page = this.pageHostedShare();
     const lastUrl =
-      this.sessionUrl.trim() || this.plugin.settings.webShareLastUrl.trim();
+      this.sessionUrl.trim() ||
+      page?.url.trim() ||
+      // Read-only legacy URL when ownership could not be claimed to a page.
+      (!this.characterShare && !page
+        ? this.plugin.settings.webShareLastUrl.trim()
+        : "");
     const canManage = Boolean(
-      lastUrl &&
-        this.plugin.settings.webShareLastId.trim() &&
-        this.plugin.settings.webShareLastManageKey.trim(),
+      !this.characterShare &&
+        lastUrl &&
+        page?.id.trim() &&
+        page?.manageKey.trim(),
     );
     /** Managed link is live — update/stop only; create appears after stop. */
     const hasLiveLink = canManage;
@@ -1035,10 +1083,10 @@ export class ShareGalleryModal extends Modal {
       return;
     }
     const update = Boolean(opts.update);
+    const pagePath = this.pageSharePath();
+    const pageShare = this.pageHostedShare();
     if (update) {
-      const id = this.plugin.settings.webShareLastId.trim();
-      const manageKey = this.plugin.settings.webShareLastManageKey.trim();
-      if (!id || !manageKey) {
+      if (this.characterShare || !pageShare?.id.trim() || !pageShare.manageKey.trim()) {
         new Notice("업데이트할 링크 열쇠가 없어요. 새 링크를 만드세요.");
         return;
       }
@@ -1058,8 +1106,8 @@ export class ShareGalleryModal extends Modal {
         const result = update
           ? await updateHostedShare(html, {
               baseUrl: this.plugin.settings.webShareHostedBaseUrl,
-              id: this.plugin.settings.webShareLastId,
-              manageKey: this.plugin.settings.webShareLastManageKey,
+              id: pageShare!.id,
+              manageKey: pageShare!.manageKey,
               uploadKey: this.plugin.settings.webShareHostedUploadKey,
               ttl: this.hostedTtl,
             })
@@ -1069,10 +1117,22 @@ export class ShareGalleryModal extends Modal {
               ttl: this.hostedTtl,
             });
         url = result.url;
-        this.plugin.settings.webShareLastId = result.id;
-        if (result.manageKey) {
-          this.plugin.settings.webShareLastManageKey = result.manageKey;
+        const at = new Date().toISOString();
+        const manageKey = result.manageKey || pageShare?.manageKey || "";
+        if (!this.characterShare) {
+          setWebShareForPage(this.plugin.settings, pagePath, {
+            url,
+            id: result.id,
+            manageKey,
+            at,
+            htmlVersion: SHARE_HTML_VERSION,
+          });
         }
+        // Settings “last link” mirror only — Update never reads these globals.
+        this.plugin.settings.webShareLastUrl = url;
+        this.plugin.settings.webShareLastAt = at;
+        this.plugin.settings.webShareLastId = "";
+        this.plugin.settings.webShareLastManageKey = "";
         note = update
           ? "같은 링크 내용이 갱신됐어요."
           : result.ttl === "permanent"
@@ -1136,9 +1196,10 @@ export class ShareGalleryModal extends Modal {
 
   private async stopSharing(): Promise<void> {
     if (this.busy) return;
-    const id = this.plugin.settings.webShareLastId.trim();
-    const manageKey = this.plugin.settings.webShareLastManageKey.trim();
-    if (!id || !manageKey) {
+    const pageShare = this.pageHostedShare();
+    const id = pageShare?.id.trim() ?? "";
+    const manageKey = pageShare?.manageKey.trim() ?? "";
+    if (this.characterShare || !id || !manageKey) {
       new Notice("중지할 링크 열쇠가 없어요.");
       return;
     }
@@ -1153,6 +1214,7 @@ export class ShareGalleryModal extends Modal {
         uploadKey: this.plugin.settings.webShareHostedUploadKey,
       });
       this.sessionUrl = "";
+      clearWebShareForPage(this.plugin.settings, this.pageSharePath());
       this.plugin.settings.webShareLastUrl = "";
       this.plugin.settings.webShareLastId = "";
       this.plugin.settings.webShareLastManageKey = "";

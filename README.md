@@ -4,14 +4,16 @@ Card gallery for character notes in your vault. Notes stay local.
 
 Each card shows a cover, status, relationships, body text, and prompts. Open the note when you want to edit in depth.
 
+> Korean guide: [README.ko.md](./README.ko.md)
+
 ## What it does
 
 - **Gallery** — cards grouped by archive (top name) and group (row title).
 - **Cards** — cover and properties at a glance. Click a card to open the peek panel.
-- **Properties** — status, relation, bond, affiliation, tags. Visible labels are renamed in gallery edit → **속성 관리** (book icon).
+- **Properties** — status, relation, bond, affiliation, tags. Rename visible labels in gallery edit → **Property manager** (book icon).
 - **Filters** — chips at the top (On / Off and other values).
 - **Cover** — the first image in the note becomes the card cover. In gallery edit, tap the cover to change it.
-- **New card** — starter sheet with a 신상 table, 외형 / 성격 / 능력, and prompt blocks. Guide text only. No images.
+- **New card** — starter sheet with a profile table, appearance / personality / ability sections, and prompt blocks. Guide text only. No images.
 - **Extra windows** — the same cards in another tab. This does not create a new subgroup.
 - **Web share** (optional) — publish the current gallery as HTML. You host it. The vault stays the source.
 
@@ -19,15 +21,15 @@ Each card shows a cover, status, relationships, body text, and prompts. Open the
 
 1. Enable the plugin.
 2. Open `Character Archive/Character Archive.md`. That note becomes the gallery.
-3. Or use the ribbon **grid** icon, or the commands **갤러리 열기** / **기본 갤러리 열기**.
+3. Or use the ribbon **grid** icon, or the command palette entries **Open gallery** / **Open default gallery**.
 
-The first time, one sample card is created: **첫 카드** in the **예시** archive. You can delete it.
+The first time, one sample card is created in the **Example** archive. You can delete it.
 
 A character is a note with `kind: character` under the library folder.
 
 Turn on the pencil to move cards, add a character, and edit properties. With the pencil off, the gallery is read-only.
 
-`##` headings and tables are read by the gallery. `## 메모` stays note-only.
+Heading sections and tables are read by the gallery. A **Memo** section stays note-only (not shown in the peek panel).
 
 Embed the gallery on any note:
 
@@ -35,6 +37,21 @@ Embed the gallery on any note:
 ```charinfo
 ```
 ````
+
+### Command palette names
+
+The plugin UI is currently Korean-labeled. Matching palette names:
+
+| English (this README) | In Obsidian |
+| --- | --- |
+| Open gallery | 갤러리 열기 |
+| Open default gallery | 기본 갤러리 열기 |
+| New gallery window | 새 갤러리 창 |
+| Create character note | 캐릭터 노트 만들기 |
+| Share gallery | 갤러리 공유 |
+| Property manager | 속성 관리 |
+
+Starter sample paths may use Korean names (`예시`, `첫 카드`). Section headings in the bundled template are also Korean.
 
 ## Install
 
@@ -54,11 +71,6 @@ Embed the gallery on any note:
 
 The globe button uploads the cards you selected. Host the page yourself (Cloudflare Worker or GitHub Pages) and put the origin plus upload key in settings. This plugin does not ship a public host.
 
-## 한국어
+## License
 
-보관함 안의 캐릭터 노트를 카드 갤러리로 봅니다. 데이터는 로컬 노트입니다.
-
-- 리본 격자 또는 `Character Archive/Character Archive.md` 로 갤러리를 엽니다.
-- 연필을 켜면 카드 이동·새 캐릭터·속성 편집을 합니다.
-- 첫 그림이 표지입니다. 갤러리 편집에서 표지를 누르면 바꿉니다.
-- 설치: 커뮤니티 플러그인에서 Character Archive를 켜거나, Release의 세 파일을 `.obsidian/plugins/character-archive/`에 넣습니다.
+MIT — see [LICENSE](./LICENSE).

@@ -106,6 +106,24 @@ export interface GalleryPageState {
   chipFilterProperty?: string;
 }
 
+/**
+ * Last public share published from one gallery page.
+ * `id` + `manageKey` are what make a link updatable/stoppable, so they must
+ * never be shared across pages.
+ */
+export interface WebShareLastState {
+  /** Public URL (hosted `/g/:id` or the Pages URL). */
+  url: string;
+  /** Hosted share id (`/g/:id`). Empty for GitHub Pages shares. */
+  id: string;
+  /** Manage key for update/delete (never part of the public URL). */
+  manageKey: string;
+  /** ISO timestamp of the publish. */
+  at: string;
+  /** Share HTML format version this page was published with. */
+  htmlVersion: number;
+}
+
 export interface CharinfoSettings {
   /** Folder that holds character notes (scanned for kind: character). */
   libraryFolder: string;
@@ -235,6 +253,12 @@ export interface CharinfoSettings {
    * Mismatch with SHARE_HTML_VERSION → treat lastUrl as stale.
    */
   webShareHtmlVersion: number;
+  /**
+   * Last published link per gallery note path. Update / stop must read *this*
+   * page's record; the global `webShareLast*` fields above are legacy
+   * read-only fallback (display) so gallery A can never manage gallery B.
+   */
+  webShareByPage: Record<string, WebShareLastState>;
 }
 
 export const DEFAULT_SETTINGS: CharinfoSettings = {
@@ -282,6 +306,7 @@ export const DEFAULT_SETTINGS: CharinfoSettings = {
   webShareLastManageKey: "",
   webShareLastAt: "",
   webShareHtmlVersion: 0,
+  webShareByPage: {},
 };
 
 function normalizeDefaultStatusId(
@@ -314,6 +339,77 @@ function normalizeTemplateByGenre(raw: unknown): Record<string, string> {
     if (!(genre in out)) out[genre] = path;
   }
   return out;
+}
+
+function normalizeWebShareState(raw: unknown): WebShareLastState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const src = raw as Record<string, unknown>;
+  const text = (value: unknown): string =>
+    typeof value === "string" ? value.trim() : "";
+  const state: WebShareLastState = {
+    url: text(src.url),
+    id: text(src.id),
+    manageKey: text(src.manageKey),
+    at: text(src.at),
+    htmlVersion:
+      typeof src.htmlVersion === "number" && Number.isFinite(src.htmlVersion)
+        ? Math.max(0, Math.floor(src.htmlVersion))
+        : 0,
+  };
+  // Nothing to reopen or manage — drop the row instead of keeping a stub.
+  if (!state.url && !state.id) return null;
+  return state;
+}
+
+function normalizeWebShareByPage(
+  raw: unknown,
+): Record<string, WebShareLastState> {
+  const out: Record<string, WebShareLastState> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [path, value] of Object.entries(raw as Record<string, unknown>)) {
+    const key = normalizePath(path.trim());
+    if (!key) continue;
+    const state = normalizeWebShareState(value);
+    if (state) out[key] = state;
+  }
+  return out;
+}
+
+/**
+ * One-shot adoption of legacy global hosted credentials by the default gallery
+ * page — only when the vault census shows that page is the *only* gallery note.
+ * Call from plugin load with real paths (settings alone cannot see the vault).
+ * Returns true when credentials were moved (caller should save).
+ */
+export function claimLegacyWebShareIfUnambiguous(
+  settings: CharinfoSettings,
+  galleryPagePaths: string[],
+  defaultPagePath: string,
+): boolean {
+  const id = settings.webShareLastId.trim();
+  const manageKey = settings.webShareLastManageKey.trim();
+  if (!id || !manageKey) return false;
+  const def = normalizePath(defaultPagePath);
+  if (settings.webShareByPage[def]) return false;
+  const unique = [
+    ...new Set(galleryPagePaths.map((p) => normalizePath(p)).filter(Boolean)),
+  ];
+  if (unique.length !== 1 || unique[0] !== def) return false;
+
+  settings.webShareByPage = {
+    ...settings.webShareByPage,
+    [def]: {
+      url: settings.webShareLastUrl.trim(),
+      id,
+      manageKey,
+      at: settings.webShareLastAt.trim(),
+      htmlVersion: settings.webShareHtmlVersion,
+    },
+  };
+  // Moved, not copied — keep URL/at for the read-only Settings row.
+  settings.webShareLastId = "";
+  settings.webShareLastManageKey = "";
+  return true;
 }
 
 function normalizeWebShareHost(raw: unknown): WebShareHostMode {
@@ -389,6 +485,10 @@ export function migrateSettings(
   const src = (raw ?? {}) as Partial<CharinfoSettings>;
   let activeGenre =
     typeof src.activeGenre === "string" ? src.activeGenre.trim() : "";
+  // Legacy storage label → current archive name
+  if (activeGenre === "가이드버스" || activeGenre === "가이드 버스") {
+    activeGenre = "Fearless";
+  }
   if (!activeGenre) {
     const savedOrder =
       src.groupOrderByGenre && typeof src.groupOrderByGenre === "object"
@@ -545,7 +645,13 @@ export function migrateSettings(
       Number.isFinite(src.webShareHtmlVersion)
         ? Math.max(0, Math.floor(src.webShareHtmlVersion))
         : 0,
+    webShareByPage: normalizeWebShareByPage(
+      (src as { webShareByPage?: unknown }).webShareByPage,
+    ),
   };
+
+  // Legacy hosted credentials are claimed in plugin onload with a vault census
+  // (`claimLegacyWebShareIfUnambiguous`) — settings alone cannot see gallery notes.
 
   // Migrate-and-drop: `chipFilter` is the single source of truth from here on.
   delete (merged as unknown as Record<string, unknown>).statusFilter;
@@ -770,9 +876,14 @@ export function forgetGalleryPageState(
   pagePath: string,
 ): void {
   const key = normalizePath(pagePath);
-  if (!settings.galleryPageState[key]) return;
-  const { [key]: _drop, ...rest } = settings.galleryPageState;
-  settings.galleryPageState = rest;
+  if (settings.galleryPageState[key]) {
+    const { [key]: _drop, ...rest } = settings.galleryPageState;
+    settings.galleryPageState = rest;
+  }
+  // The note is gone, so its published link can no longer be managed from the
+  // app; keeping the credentials would only risk attaching them to a new note
+  // that later takes the same path.
+  clearWebShareForPage(settings, key);
 }
 
 /** Move remembered UI when a gallery note is renamed/moved. */
@@ -785,13 +896,76 @@ export function remapGalleryPageState(
   const to = normalizePath(toPath);
   if (from === to) return;
   const prev = settings.galleryPageState[from];
+  if (prev) {
+    const { [from]: _drop, ...rest } = settings.galleryPageState;
+    settings.galleryPageState = {
+      ...rest,
+      [to]: {
+        ...prev,
+        ...rest[to],
+      },
+    };
+  }
+  remapWebShareByPage(settings, from, to);
+}
+
+/** Keep a published link manageable after its gallery note moves. */
+function remapWebShareByPage(
+  settings: CharinfoSettings,
+  from: string,
+  to: string,
+): void {
+  const prev = settings.webShareByPage[from];
   if (!prev) return;
-  const { [from]: _drop, ...rest } = settings.galleryPageState;
-  settings.galleryPageState = {
-    ...rest,
-    [to]: {
-      ...prev,
-      ...rest[to],
-    },
+  const { [from]: _drop, ...rest } = settings.webShareByPage;
+  // A record already sitting at the destination wins (same rule as page state).
+  settings.webShareByPage = { ...rest, [to]: rest[to] ?? prev };
+}
+
+/** This page's last published link, or null when it never published / cleared. */
+export function getWebShareForPage(
+  settings: CharinfoSettings,
+  pagePath: string,
+): WebShareLastState | null {
+  return settings.webShareByPage[normalizePath(pagePath)] ?? null;
+}
+
+/** Remember a publish result for one gallery page. */
+export function setWebShareForPage(
+  settings: CharinfoSettings,
+  pagePath: string,
+  state: WebShareLastState,
+): void {
+  const key = normalizePath(pagePath);
+  if (!key) return;
+  settings.webShareByPage = {
+    ...settings.webShareByPage,
+    [key]: { ...state },
   };
+}
+
+/** Forget one page's link (share stopped, or credentials no longer usable). */
+export function clearWebShareForPage(
+  settings: CharinfoSettings,
+  pagePath: string,
+): void {
+  const key = normalizePath(pagePath);
+  if (!settings.webShareByPage[key]) return;
+  const { [key]: _drop, ...rest } = settings.webShareByPage;
+  settings.webShareByPage = rest;
+}
+
+/**
+ * Share HTML from an older format must not be offered as this page's current
+ * link. Returns true when a stale record was dropped.
+ */
+export function discardStaleWebShareForPage(
+  settings: CharinfoSettings,
+  pagePath: string,
+  currentHtmlVersion: number,
+): boolean {
+  const entry = getWebShareForPage(settings, pagePath);
+  if (!entry || entry.htmlVersion === currentHtmlVersion) return false;
+  clearWebShareForPage(settings, pagePath);
+  return true;
 }

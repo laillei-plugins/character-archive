@@ -1,5 +1,10 @@
 import { Plugin, TFile, WorkspaceLeaf, Notice, normalizePath } from "obsidian";
-import { DEFAULT_SETTINGS, migrateSettings, type CharinfoSettings } from "./settings";
+import {
+  claimLegacyWebShareIfUnambiguous,
+  DEFAULT_SETTINGS,
+  migrateSettings,
+  type CharinfoSettings,
+} from "./settings";
 import { CharacterStore } from "./data/CharacterStore";
 import { healCollapsedImageEmbeds, healCharacterCardFields, healNaiPromptEmphasis } from "./data/images";
 import { MediaService } from "./media/MediaService";
@@ -8,6 +13,7 @@ import {
   createGalleryPage,
   copyGalleryPageLink,
   copyTextToClipboard,
+  galleryPagePath,
   galleryWikiLink,
   isGalleryPage,
   readGalleryScope,
@@ -132,7 +138,14 @@ export default class CharinfoPlugin extends Plugin {
       id: "new-character",
       name: "캐릭터 노트 만들기",
       callback: () => {
-        void createCharacterNote(this);
+        // Focused gallery decides where the card lands; no gallery open → globals.
+        const view = this.getFocusedGalleryView();
+        void createCharacterNote(
+          this,
+          view
+            ? { library: view.pageLibrary(), genre: view.activeArchive() }
+            : undefined,
+        );
       },
     });
 
@@ -194,15 +207,12 @@ export default class CharinfoPlugin extends Plugin {
       id: "share-gallery-web",
       name: "갤러리 공유",
       callback: () => {
-        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY);
-        for (const leaf of leaves) {
-          const view = leaf.view;
-          if (view instanceof GalleryView) {
-            view.openWebShare();
-            return;
-          }
+        const view = this.getFocusedGalleryView();
+        if (!view) {
+          new Notice("갤러리를 먼저 여세요.");
+          return;
         }
-        new Notice("갤러리를 먼저 여세요.");
+        view.openWebShare();
       },
     });
 
@@ -563,6 +573,24 @@ export default class CharinfoPlugin extends Plugin {
     this.galleryRefreshTimer = null;
   }
 
+  /**
+   * The gallery a command should act on: the one the user is looking at, else
+   * the first open gallery, else none. Commands must never guess "first leaf"
+   * while another gallery is focused — share credentials and new-card scope
+   * both hang off this choice.
+   */
+  getFocusedGalleryView(): GalleryView | null {
+    const active = this.app.workspace.getActiveViewOfType(GalleryView);
+    if (active) return active;
+    for (const leaf of this.app.workspace.getLeavesOfType(
+      VIEW_TYPE_CHARINFO_GALLERY,
+    )) {
+      const view = leaf.view;
+      if (view instanceof GalleryView) return view;
+    }
+    return null;
+  }
+
   private isAnyGalleryLeafActive(): boolean {
     const active = this.app.workspace.activeLeaf;
     if (!active) return false;
@@ -577,6 +605,19 @@ export default class CharinfoPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     this.settings = migrateSettings(await this.loadData());
+    const galleryPaths = this.app.vault
+      .getMarkdownFiles()
+      .filter((file) => isGalleryPage(file, this))
+      .map((file) => file.path);
+    if (
+      claimLegacyWebShareIfUnambiguous(
+        this.settings,
+        galleryPaths,
+        galleryPagePath(this),
+      )
+    ) {
+      await this.saveSettings();
+    }
   }
 
   async saveSettings(): Promise<void> {
