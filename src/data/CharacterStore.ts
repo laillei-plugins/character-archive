@@ -2,7 +2,7 @@ import { App, TFile, parseYaml, normalizePath } from "obsidian";
 import type { SortMode } from "../settings";
 import { sortCharacters } from "./order";
 import { parseTagIds } from "./tags";
-import { firstRemoteImageEmbed } from "./images";
+import { COVER_NONE, firstRemoteImageEmbed, isCoverNone } from "./images";
 
 export interface CharacterRecord {
   file: TFile;
@@ -37,6 +37,7 @@ function asString(value: unknown): string {
 
 function parseCover(raw: string): string {
   const trimmed = raw.trim();
+  if (trimmed === COVER_NONE) return COVER_NONE;
   const wiki = trimmed.match(/^\[\[([^\]]+)\]\]$/);
   if (wiki?.[1]) {
     return wiki[1].split("|")[0]?.trim() ?? "";
@@ -120,7 +121,8 @@ export class CharacterStore {
 
     let cover = parseCover(asString(data.cover));
     // Empty cover + remote markdown image (`![](https://…)`) → use that URL.
-    if (!cover) {
+    // Sentinel `__none__` stays empty-of-fallback (intentional no cover).
+    if (!cover && !isCoverNone(asString(data.cover))) {
       const text = await this.app.vault.cachedRead(file);
       cover = firstRemoteImageEmbed(text) ?? "";
     }

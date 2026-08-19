@@ -19,9 +19,12 @@ import {
   coverDisplaySrc,
   setCharacterCover,
   setCharacterCoverUrl,
+  setCharacterCoverNone,
   setCharacterField,
   setCharacterTags,
   setCoverPosition,
+  COVER_NONE,
+  isCoverNone,
 } from "../data/images";
 import { persistGenreOrder, renameGenre, resolveGroupOrder, moveInOrder, sortCharacters } from "../data/order";
 import { EXAMPLE_ARCHIVE } from "../data/bundledTemplate";
@@ -2102,7 +2105,9 @@ export class GalleryView extends FileView {
       record,
       images,
       async (pick) => {
-        if (pick.kind === "default") {
+        if (pick.kind === "none") {
+          await this.clearCoverNone(record, false);
+        } else if (pick.kind === "default") {
           await this.changeCover(record, null, false);
         } else if (pick.kind === "remote") {
           await this.changeCoverRemote(record, pick.url, false);
@@ -2136,6 +2141,23 @@ export class GalleryView extends FileView {
         ? `커버를 「${image.basename}」으로 바꿨어요`
         : "노트 첫 이미지를 커버로 쓸게요",
     );
+    if (refresh) this.render();
+    else this.syncCoverPreview(record);
+  }
+
+  /** Hide card cover; keep note images (`cover: __none__`). */
+  private async clearCoverNone(
+    record: CharacterRecord,
+    refresh = true,
+  ): Promise<void> {
+    this.plugin.suppressGalleryRefresh = true;
+    try {
+      await setCharacterCoverNone(this.app, record.file);
+      record.cover = COVER_NONE;
+    } finally {
+      this.plugin.suppressGalleryRefresh = false;
+    }
+    new Notice("카드 커버를 숨겼어요");
     if (refresh) this.render();
     else this.syncCoverPreview(record);
   }
@@ -2213,7 +2235,8 @@ export class GalleryView extends FileView {
     record: CharacterRecord,
     orderedPaths?: string[],
   ): void {
-    const resolved = resolveCover(this.app, record);
+    const none = isCoverNone(record.cover);
+    const resolved = none ? null : resolveCover(this.app, record);
     const resolvedVaultPath =
       resolved?.kind === "vault" ? resolved.file.path : null;
 
@@ -2223,6 +2246,7 @@ export class GalleryView extends FileView {
         if (!(thumb instanceof HTMLElement)) return;
         const id = thumb.dataset.id ?? "";
         const isCover =
+          !none &&
           !!resolvedVaultPath &&
           (id === resolvedVaultPath ||
             resolvedVaultPath.endsWith(`/${id}`) ||
@@ -2262,7 +2286,8 @@ export class GalleryView extends FileView {
       return;
     }
 
-    if (orderedPaths?.[0]) {
+    // Automatic default only — never paint first image when cover is `__none__`.
+    if (!none && orderedPaths?.[0]) {
       const file = this.app.vault.getAbstractFileByPath(orderedPaths[0]);
       if (file instanceof TFile) {
         applySrc(this.app.vault.getResourcePath(file));

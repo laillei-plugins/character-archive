@@ -8,6 +8,16 @@ const MD_EMBED = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 const COLLAPSED_WIKI_SIZE =
   /(!\[\[([^\]|#]+)(?:#[^\]|]*)?)\|\s*0(\]\])/g;
 
+/**
+ * Frontmatter sentinel: card shows no cover while note images stay.
+ * Empty `cover` still means “use first image automatically”.
+ */
+export const COVER_NONE = "__none__";
+
+export function isCoverNone(raw: string | null | undefined): boolean {
+  return (raw ?? "").trim() === COVER_NONE;
+}
+
 export function isImagePath(path: string): boolean {
   return IMAGE_EXT.test(path);
 }
@@ -272,15 +282,18 @@ export function coverDisplaySrc(app: App, cover: CoverRef): string {
 
 /**
  * Cover resolution:
- * 1) explicit `cover` frontmatter (vault wiki/path or https URL)
- * 2) first image embed in the note (vault wiki or https markdown)
- * 3) first image next to the note (same folder / legacy sibling folder)
+ * 1) `cover: __none__` → no cover (images stay in the note)
+ * 2) explicit `cover` frontmatter (vault wiki/path or https URL)
+ * 3) first image embed in the note (vault wiki or https markdown)
+ * 4) first image next to the note (same folder / legacy sibling folder)
  */
 export function resolveCover(
   app: App,
   record: CharacterRecord,
   markdown?: string,
 ): CoverRef | null {
+  if (isCoverNone(record.cover)) return null;
+
   if (record.cover) {
     const raw = record.cover.trim();
     if (isRemoteCoverUrl(raw)) return { kind: "remote", url: raw };
@@ -333,6 +346,7 @@ export async function setCharacterCover(
       fm.cover = `[[${wikiPathForEmbed(file, image)}]]`;
       fm.coverPosition = "50% 50%";
     } else {
+      // Automatic default — first embed/folder image via resolveCover.
       delete fm.cover;
       fm.cover = "";
     }
@@ -342,6 +356,16 @@ export async function setCharacterCover(
   if (image) {
     await ensureCoverEmbed(app, file, wikiPathForEmbed(file, image));
   }
+}
+
+/** Hide card cover without removing note images (`cover: __none__`). */
+export async function setCharacterCoverNone(
+  app: App,
+  file: TFile,
+): Promise<void> {
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    fm.cover = COVER_NONE;
+  });
 }
 
 /** Persist an https cover URL (e.g. Imgur). Does not embed into note body. */
@@ -478,6 +502,11 @@ export async function healCharacterCardFields(
       .replace(/^["']|["']$/g, "")
       .replace(/^\[\[|\]\]$/g, "");
   })();
+
+  // Intentional no-cover — never auto-fill from embeds/folder.
+  if (isCoverNone(coverNow)) {
+    return changed;
+  }
 
   if (!coverNow) {
     const remote = firstRemoteImageEmbed(text);
