@@ -12,6 +12,11 @@ import type {
   PrimaryFilterProperty,
 } from "../settings";
 import { normalizePrimaryFilterProperty, resolveFilterAxis } from "../settings";
+import {
+  applyNotePropertyPlan,
+  planNoteProperties,
+  resolveGroupSchema,
+} from "../data/groupSchema";
 import { GalleryView, VIEW_TYPE_CHARINFO_GALLERY } from "../views/GalleryView";
 
 /** User-facing product name (plugin list, tabs, settings). */
@@ -87,6 +92,71 @@ export function readGalleryScope(
 
 function isFilterAxisName(raw: string): boolean {
   return Boolean(raw) && normalizePrimaryFilterProperty(raw) === raw;
+}
+
+/**
+ * Every library a gallery claims as its own **identity**: the default library
+ * plus each `library` a `charinfo: gallery` note points at, whether or not that
+ * gallery is open. Normalized and de-duplicated, but *not* collapsed — a nested
+ * library keeps its own identity so `longestMatchingLibrary` can hand a note
+ * under `Root/Sub` the `Root/Sub` schema scope.
+ */
+export function listGalleryLibraryIdentities(
+  plugin: CharinfoPlugin,
+): string[] {
+  const identities = new Set<string>();
+  identities.add(
+    normalizePath(plugin.settings.libraryFolder.trim() || "Character Archive"),
+  );
+  for (const file of plugin.app.vault.getMarkdownFiles()) {
+    const fm = plugin.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!fm || fm.charinfo !== "gallery") continue;
+    const raw = typeof fm.library === "string" ? fm.library.trim() : "";
+    if (!raw) continue;
+    identities.add(normalizePath(raw));
+  }
+  return [...identities].filter(
+    (root) => root && root !== "/" && root !== ".",
+  );
+}
+
+/**
+ * Gallery notes whose resolved library is this one. Card-eye rows carry a page
+ * but no library, so an archive rename needs exactly this list to know which
+ * rows it may touch.
+ */
+export function listGalleryPagePathsForLibrary(
+  plugin: CharinfoPlugin,
+  library: string,
+): string[] {
+  const want = normalizePath(library);
+  const out: string[] = [];
+  for (const file of plugin.app.vault.getMarkdownFiles()) {
+    if (!isGalleryPage(file, plugin)) continue;
+    const scope = readGalleryScope(plugin.app, file, plugin.settings);
+    if (normalizePath(scope.library) !== want) continue;
+    out.push(file.path);
+  }
+  return out;
+}
+
+/** Drop roots already contained in a shorter root, and empty/vault-root entries. */
+export function dedupeOverlappingRoots(roots: string[]): string[] {
+  const cleaned = [
+    ...new Set(
+      roots
+        .map((root) => root.replace(/\/+$/, "").trim())
+        .filter((root) => root && root !== "/" && root !== "."),
+    ),
+  ].sort((a, b) => a.length - b.length || a.localeCompare(b));
+  const out: string[] = [];
+  for (const root of cleaned) {
+    if (out.some((kept) => root === kept || root.startsWith(`${kept}/`))) {
+      continue;
+    }
+    out.push(root);
+  }
+  return out;
 }
 
 /**
@@ -573,6 +643,21 @@ export async function createCharacterNote(
     group: group || undefined,
   });
 
+  // The destination group decides which fields this card is born with, so its
+  // schema has to exist before the note does (lazy baseline → persisted).
+  // A note created against a schema that was rolled back would be healed into
+  // the wrong shape, so a failed save means no note at all.
+  try {
+    await plugin.persistGroupSchema(library, genre, group);
+  } catch (error) {
+    console.error("[charinfo] 그룹 속성 저장 실패", error);
+    new Notice(
+      `그룹 속성을 저장하지 못해 카드를 만들지 않았어요: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return null;
+  }
+  const schema = resolveGroupSchema(plugin.settings, library, genre, group);
+
   let file: TFile;
   try {
     file = await plugin.app.vault.create(path, body);
@@ -583,14 +668,35 @@ export async function createCharacterNote(
     return null;
   }
 
-  await plugin.app.fileManager.processFrontMatter(file, (fm) => {
-    fm.kind = "character";
-    fm.이름 = title;
-    fm.상태 = plugin.settings.defaultStatusId || "Off";
-    if (genre) fm.장르 = genre;
-    if (group) fm.그룹 = group;
-    else fm.그룹 = "";
-  });
+  try {
+    await plugin.app.fileManager.processFrontMatter(file, (fm) => {
+      fm.kind = "character";
+      fm.이름 = title;
+      fm.상태 = plugin.settings.defaultStatusId || "Off";
+      if (genre) fm.장르 = genre;
+      if (group) fm.그룹 = group;
+      else fm.그룹 = "";
+      // Every active field is present before reveal, in the same deterministic
+      // order the reconciler maintains for existing notes.
+      const plan = planNoteProperties(
+        fm as Record<string, unknown>,
+        schema.fields,
+      );
+      if (plan && !plan.clean) {
+        applyNotePropertyPlan(fm as Record<string, unknown>, plan);
+      }
+    });
+  } catch (error) {
+    // The note exists and holds the template body — deleting it would throw the
+    // user's starting point away. Keep it, reveal it, and queue a best-effort
+    // schema pass. A malformed or non-character template cannot be repaired by
+    // the healer, so this promises a *try*, not a fix.
+    console.error("[charinfo] 새 카드 속성 쓰기 실패", error);
+    plugin.queueSchemaHeal(file.path);
+    new Notice(
+      `속성을 쓰지 못했어요. 노트는 남겨 두고 복구를 예약했어요 · ${file.basename}`,
+    );
+  }
 
   plugin.markGalleriesDirty({ schedule: false });
 

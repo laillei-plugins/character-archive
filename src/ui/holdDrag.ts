@@ -118,9 +118,12 @@ export function attachHoldDrag(
   /** Slim ghost — avoid deep-cloning the whole card (images + chrome). */
   const makeGhost = (w: number, h: number) => {
     const g = document.createElement("div");
-    g.className = ghostClass.includes("thumb") || ghostClass.includes("genre")
-      ? ghostClass
-      : `charinfo-card ${ghostClass}`;
+    g.className =
+      ghostClass.includes("thumb") ||
+      ghostClass.includes("genre") ||
+      ghostClass.includes("prop-row")
+        ? ghostClass
+        : `charinfo-card ${ghostClass}`;
     g.setCssStyles({
       width: `${w}px`,
       height: `${h}px`,
@@ -140,6 +143,16 @@ export function attachHoldDrag(
         "";
       g.textContent = title;
       g.setCssStyles({ height: "2.5rem" });
+      return g;
+    }
+
+    if (ghostClass.includes("prop-row")) {
+      g.textContent =
+        el.querySelector(
+          ".charinfo-attr-modal__field-name, .charinfo-attr-modal__option-name, .charinfo-attr-modal__row-input, .charinfo-prop-row__label",
+        )?.textContent?.trim() ||
+        el.dataset.id ||
+        "";
       return g;
     }
 
@@ -436,9 +449,11 @@ export function attachHoldDrag(
     if (event.button !== 0) return;
     if (!handlers.canDrag()) return;
     if (document.body.classList.contains("charinfo-dragging")) return;
-    if (
-      (event.target as HTMLElement).closest("button, a, input, select, textarea")
-    ) {
+    const target = event.target as HTMLElement;
+    const handle = handlers.handleSelector
+      ? target.closest(handlers.handleSelector)
+      : null;
+    if (target.closest("button, a, input, select, textarea") && !handle) {
       return;
     }
     if (
@@ -448,9 +463,7 @@ export function attachHoldDrag(
       return;
     }
     if (handlers.handleSelector) {
-      if (!(event.target as HTMLElement).closest(handlers.handleSelector)) {
-        return;
-      }
+      if (!handle) return;
     }
 
     startX = event.clientX;

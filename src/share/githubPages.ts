@@ -33,10 +33,10 @@ export function isGithubShareConfigured(cfg: {
   return Boolean(token && parseGithubRepo(repo));
 }
 
-/** Classic PAT link — one checkbox (`repo`) is enough for normal users. */
+/** Classic PAT link — public-repository access is enough for normal users. */
 export function githubTokenCreateUrl(): string {
   const params = new URLSearchParams({
-    scopes: "repo",
+    scopes: "public_repo",
     description: "Character Archive gallery share",
   });
   return `https://github.com/settings/tokens/new?${params.toString()}`;
@@ -62,7 +62,7 @@ export async function fetchGithubLogin(token: string): Promise<string> {
   });
   if (res.status === 401 || res.status === 403) {
     throw new Error(
-      "키가 잘못됐거나 권한이 부족해요. 「GitHub에서 키 만들기」로 새로 만들고, repo 가 체크된 채로 Generate token 을 눌러 주세요.",
+      "키가 잘못됐거나 권한이 부족해요. 「GitHub에서 키 만들기」로 새로 만들고, public_repo 가 체크된 채로 Generate token 을 눌러 주세요.",
     );
   }
   if (res.status >= 400) {
@@ -308,7 +308,7 @@ export async function testGithubConnection(cfg: {
   });
   if (res.status === 401 || res.status === 403) {
     throw new Error(
-      "키 권한이 없어요. 「GitHub에서 키 만들기」로 repo 가 체크된 키를 새로 발급해 주세요.",
+      "키 권한이 없어요. 「GitHub에서 키 만들기」로 public_repo 가 체크된 키를 새로 발급해 주세요.",
     );
   }
   if (res.status === 404) {

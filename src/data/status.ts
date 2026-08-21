@@ -1,5 +1,9 @@
-/** Preset color tokens for status chips (theme-safe; no freeform hex). */
-export type StatusColorToken =
+/**
+ * Named preset color tokens for status chips. Painted by class, so a theme can
+ * restyle them. The first eight are the tokens older vaults already persisted —
+ * their spelling is a storage contract and must never change.
+ */
+export type StatusColorPreset =
   | "green"
   | "gray"
   | "amber"
@@ -7,7 +11,21 @@ export type StatusColorToken =
   | "red"
   | "violet"
   | "cyan"
-  | "pink";
+  | "pink"
+  | "olive"
+  | "indigo"
+  | "lime"
+  | "yellow";
+
+/** A user-picked color, canonical uppercase six-digit hex (`#7C3AED`). */
+export type StatusCustomColor = `#${string}`;
+
+/**
+ * What a chip color may be: a named preset, or one canonical hex the user
+ * chose. Everything reaching persistence or a stylesheet goes through
+ * `normalizeStatusColor` first, so no other shape ever exists at rest.
+ */
+export type StatusColorToken = StatusColorPreset | StatusCustomColor;
 
 export interface StatusDef {
   /** Stored in frontmatter `상태`. Stable id. */
@@ -17,7 +35,7 @@ export interface StatusDef {
 }
 
 export const STATUS_COLOR_TOKENS: {
-  id: StatusColorToken;
+  id: StatusColorPreset;
   label: string;
 }[] = [
   { id: "green", label: "초록" },
@@ -28,6 +46,10 @@ export const STATUS_COLOR_TOKENS: {
   { id: "violet", label: "보라" },
   { id: "cyan", label: "청록" },
   { id: "pink", label: "분홍" },
+  { id: "olive", label: "올리브" },
+  { id: "indigo", label: "남색" },
+  { id: "lime", label: "라임" },
+  { id: "yellow", label: "노랑" },
 ];
 
 export const DEFAULT_STATUSES: StatusDef[] = [
@@ -37,10 +59,29 @@ export const DEFAULT_STATUSES: StatusDef[] = [
 
 const COLOR_SET = new Set<string>(STATUS_COLOR_TOKENS.map((t) => t.id));
 
+/** Only canonical `#RRGGBB` is accepted — no shorthand, alpha, or CSS names. */
+const CANONICAL_HEX = /^#[0-9a-fA-F]{6}$/;
+
+export function isStatusColorPreset(raw: unknown): raw is StatusColorPreset {
+  return typeof raw === "string" && COLOR_SET.has(raw);
+}
+
+/** True for a user-picked hex, false for every named preset. */
+export function isCustomStatusColor(color: StatusColorToken): boolean {
+  return color.startsWith("#");
+}
+
+/**
+ * The one gate every stored / rendered color passes through. A known preset
+ * survives verbatim (old vaults keep their chips), a valid hex is canonicalized
+ * to uppercase, and anything else — including CSS text someone tried to smuggle
+ * in — collapses to `gray`.
+ */
 export function normalizeStatusColor(raw: unknown): StatusColorToken {
-  if (typeof raw === "string" && COLOR_SET.has(raw)) {
-    return raw as StatusColorToken;
-  }
+  if (typeof raw !== "string") return "gray";
+  const value = raw.trim();
+  if (COLOR_SET.has(value)) return value as StatusColorPreset;
+  if (CANONICAL_HEX.test(value)) return value.toUpperCase() as StatusCustomColor;
   return "gray";
 }
 
@@ -111,8 +152,39 @@ export function resolveStatus(
   return { id: raw, label: raw, color: "gray" };
 }
 
+/** CSS custom property the chip rules read for a user-picked color. */
+export const STATUS_CUSTOM_COLOR_VAR = "--charinfo-chip-ink";
+/** Marker class for a chip painted from `STATUS_CUSTOM_COLOR_VAR`. */
+export const STATUS_CUSTOM_COLOR_CLASS = "is-custom";
+
+/** Every class `paintStatusColor` may own, including the legacy On/Off aliases. */
+export const STATUS_COLOR_CLASSES: string[] = [
+  ...STATUS_COLOR_TOKENS.map((token) => `is-${token.id}`),
+  STATUS_CUSTOM_COLOR_CLASS,
+  "is-on",
+  "is-off",
+];
+
 export function statusColorClass(color: StatusColorToken): string {
-  return `is-${color}`;
+  return isCustomStatusColor(color) ? STATUS_CUSTOM_COLOR_CLASS : `is-${color}`;
+}
+
+/**
+ * Shared chip painter — the only place a color token becomes styling.
+ *
+ * A preset stays class-based so themes keep control. A custom color travels as
+ * one validated CSS variable set through the CSSOM: no class name is built from
+ * user text, and no stylesheet ever receives a raw value.
+ */
+export function paintStatusColor(el: HTMLElement, raw: unknown): void {
+  const color = normalizeStatusColor(raw);
+  for (const cls of STATUS_COLOR_CLASSES) el.classList.remove(cls);
+  el.classList.add(statusColorClass(color));
+  if (isCustomStatusColor(color)) {
+    el.style.setProperty(STATUS_CUSTOM_COLOR_VAR, color);
+  } else {
+    el.style.removeProperty(STATUS_CUSTOM_COLOR_VAR);
+  }
 }
 
 /** Suggest a unique id from a label. */
@@ -131,7 +203,7 @@ export function suggestStatusId(label: string, existing: StatusDef[]): string {
 }
 
 /** Guess a preset color when adopting a status typed directly in a note. */
-export function guessStatusColor(idOrLabel: string): StatusColorToken {
+export function guessStatusColor(idOrLabel: string): StatusColorPreset {
   const k = idOrLabel.trim().toLowerCase();
   if (!k) return "gray";
   if (k === "on" || k === "active" || k.includes("활성")) return "green";

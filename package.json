@@ -1,11 +1,12 @@
 {
   "name": "character-archive",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "Card-view character archive. Local notes, easy share.",
   "main": "main.js",
   "type": "module",
   "scripts": {
     "dev": "node esbuild.config.mjs",
+    "test": "node --test tests/*.test.ts",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "pack": "node scripts/pack.mjs",
     "deploy": "node scripts/deploy.mjs",

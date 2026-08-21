@@ -2,15 +2,15 @@
   "name": "charinfo-share-host",
   "private": true,
   "version": "0.1.0",
-  "description": "Cloudflare Worker + R2 host for Character Archive gallery shares",
+  "description": "Cloudflare Pages + KV host for Character Archive gallery shares",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "tail": "wrangler tail"
+    "dev": "wrangler pages dev public",
+    "deploy": "wrangler pages deploy public",
+    "tail": "wrangler pages deployment tail"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250813.0",
+    "@cloudflare/workers-types": "^5.20260820.1",
     "typescript": "^5.8.3",
-    "wrangler": "4.28.0"
+    "wrangler": "4.125.0"
   }
 }

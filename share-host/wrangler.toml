@@ -4,4 +4,4 @@ pages_build_output_dir = "public"
 
 [[kv_namespaces]]
 binding = "GALLERIES"
-id = "YOUR_KV_NAMESPACE_ID"
+id = "53882120ee9c4bfd92d19a52bc335ee4"

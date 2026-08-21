@@ -1,18 +1,25 @@
 /**
- * Character detail display contract (gallery peek).
+ * Structured character sheet (props / abilities / notes / prompt copy).
  *
- * Fixed kinds, free sequence (note heading order):
- * - Allowed H2 kinds (starter + profile notes):
- *   설명 / 신상 / 외형 / 성격 / 특징 / 능력 / 리스크 / 운용·비고 / 프롬프트
- * - 운용 aliases: 운용, 지침, 비고, 특이사항, 추가 정보
- * - Profile shape: 설명(인용) → 신상(소속·나이) → 외형 → 성격 → 특징 → 능력 → 프롬프트
- * - Some notes keep 배경 / 운용 labeled rows
- * - ## 메모 · ## 말투 (+ unknown) hidden from peek
+ * Peek and share share this paint. Visibility differs:
+ * - peek: literal H2 titles, source order, private-only suppress
+ * - share: fail-closed allowlist + canonical titles
  *
- * Hidden: H1 title, cover embeds, "### 프로필", raw **, table pipes.
+ * Section boundaries, fences, and the private marker come from
+ * `noteSections.ts`. A marker can no longer be swallowed by a section body.
  */
 
 import { setIcon } from "obsidian";
+import {
+  classifyLines,
+  extractPromptFences,
+  scanNoteSections,
+  sectionPrivacyKind,
+  stripInlineChrome,
+  type NoteLine,
+} from "./noteSections";
+
+export type DetailParseMode = "share" | "peek";
 
 export interface DetailProp {
   label: string;
@@ -35,7 +42,7 @@ export interface DetailSection {
 
 export type DetailBlock =
   | { type: "section"; section: DetailSection }
-  | { type: "prompts"; prompts: DetailProp[] };
+  | { type: "prompts"; title?: string; prompts: DetailProp[] };
 
 export interface DetailDoc {
   meta: string[];
@@ -61,36 +68,14 @@ const ALLOWED_TITLES = new Set([
 /** Peek-hidden: author secrets / speech notes not in public HTML. */
 const HIDDEN_TITLES = new Set(["메모", "말투"]);
 
+/** Quiet dossier banner — its quote lines become sheet meta. */
+const BANNER_RE = /PERSONNEL RECORD|CONFIDENTIAL/i;
+
 /** Short dossier field labels. Longer prose stays as notes. */
 const MAX_PLAIN_LABEL = 12;
 
-function stripMd(text: string): string {
-  return text
-    .replace(/\u00a0/g, " ")
-    .replace(/\*{2,}/g, "**")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/^#{1,6}\s+/, "")
-    .replace(/^🔒\s*/, "")
-    .trim();
-}
-
 function plainInline(text: string): string {
-  return stripMd(text).replace(/\*\*/g, "").trim();
-}
-
-function isImageLine(line: string): boolean {
-  const t = line.trim();
-  return /^!\[\[/.test(t) || /^!\[/.test(t);
-}
-
-function isHeading(line: string): boolean {
-  return /^#{1,6}\s+/.test(line.trim());
-}
-
-function headingText(line: string): string {
-  return plainInline(line.trim().replace(/^#{1,6}\s+/, ""));
+  return stripInlineChrome(text).replace(/\*\*/g, "").trim();
 }
 
 function isTableRow(line: string): boolean {
@@ -180,155 +165,84 @@ function sectionKind(title: string): DetailSection["kind"] {
   return "props";
 }
 
-/** Parse messy Notion-export markdown into a clean detail document. */
-export function parseDetailDoc(markdown: string): DetailDoc {
-  const body = markdown.replace(/^---\n[\s\S]*?\n---\n?/, "");
-  const lines = body.split(/\r?\n/);
+interface ParseState {
+  current: DetailSection | null;
+  ability: DetailAbility | null;
+}
 
-  const doc: DetailDoc = { meta: [], blocks: [] };
+function flushAbility(state: ParseState): void {
+  if (state.current && state.ability) {
+    state.current.abilities.push(state.ability);
+  }
+  state.ability = null;
+}
+
+/** Always a new block — preserve source order, no distant merge. */
+function ensureSection(
+  doc: DetailDoc,
+  state: ParseState,
+  title: string,
+  kindTitle = title,
+): DetailSection {
+  flushAbility(state);
+  const section: DetailSection = {
+    title,
+    kind: sectionKind(kindTitle),
+    props: [],
+    abilities: [],
+    notes: [],
+  };
+  doc.blocks.push({ type: "section", section });
+  state.current = section;
+  return section;
+}
+
+/**
+ * Parse one region (preamble or a single H2 body) into the current section.
+ * Never sees H2s or the private marker — the scanner removed both.
+ */
+function ingestRegion(doc: DetailDoc, state: ParseState, text: string): void {
+  const lines: NoteLine[] = classifyLines(text.split(/\r?\n/));
   let i = 0;
 
-  // Skip title / images / 프로필
-  while (i < lines.length) {
-    const t = (lines[i] ?? "").trim();
-    if (!t || /^#\s+/.test(t) || isImageLine(t) || t === "### 프로필") {
+  /** Raw interior lines of the fence starting at `i`; advances past it. */
+  const consumeFence = (): string[] => {
+    i += 1;
+    const buf: string[] = [];
+    while (i < lines.length && lines[i]!.fence !== "close") {
+      buf.push(lines[i]!.raw);
       i += 1;
-      continue;
     }
-    break;
-  }
-
-  const state: {
-    current: DetailSection | null;
-    ability: DetailAbility | null;
-  } = { current: null, ability: null };
-
-  const flushAbility = () => {
-    if (state.current && state.ability) {
-      state.current.abilities.push(state.ability);
-    }
-    state.ability = null;
-  };
-
-  /** Always a new block — preserve source order, no distant merge. */
-  const ensureSection = (title: string): DetailSection => {
-    flushAbility();
-    const section: DetailSection = {
-      title,
-      kind: sectionKind(title),
-      props: [],
-      abilities: [],
-      notes: [],
-    };
-    doc.blocks.push({ type: "section", section });
-    state.current = section;
-    return section;
-  };
-
-  const skipUntilHeading = () => {
-    while (i < lines.length && !isHeading(lines[i] ?? "")) i += 1;
+    if (i < lines.length) i += 1;
+    return buf;
   };
 
   while (i < lines.length) {
-    const raw = lines[i] ?? "";
-    const trimmed = raw.trim();
+    const line = lines[i]!;
+    const trimmed = line.trimmed;
 
     if (!trimmed) {
       i += 1;
       continue;
     }
 
-    // Confidential banner → quiet meta
-    if (isHeading(trimmed) && /PERSONNEL RECORD|CONFIDENTIAL/i.test(trimmed)) {
-      i += 1;
-      while (i < lines.length) {
-        const q = (lines[i] ?? "").trim();
-        if (!q) {
-          i += 1;
-          continue;
-        }
-        if (!q.startsWith(">")) break;
-        const text = plainInline(q.replace(/^>\s?/, ""));
-        if (text) doc.meta.push(text.replace(/^보안 등급:\s*/, "보안 ").replace(/^소속:\s*/, ""));
-        i += 1;
-      }
+    // Fenced code with no labelled owner never reaches share HTML.
+    if (line.fence === "open") {
+      consumeFence();
       continue;
     }
 
-    if (isHeading(trimmed)) {
-      const title = normalizeSectionTitle(headingText(trimmed));
-      if (!title || title === "프로필") {
-        i += 1;
-        continue;
-      }
-      if (HIDDEN_TITLES.has(title) || !ALLOWED_TITLES.has(title)) {
-        // Secret / freeform / unknown — peek skips until next heading.
-        i += 1;
-        skipUntilHeading();
-        continue;
-      }
-
-      if (title === "프롬프트") {
-        flushAbility();
-        state.current = null;
-        i += 1;
-        const prompts: DetailProp[] = [];
-        while (i < lines.length && !isHeading(lines[i] ?? "")) {
-          const t = (lines[i] ?? "").trim();
-          if (!t) {
-            i += 1;
-            continue;
-          }
-          let label = "";
-          if (isAbilityTitle(t) || /^\*\*/.test(t) || !t.startsWith("```")) {
-            if (t.startsWith("```")) {
-              i += 1;
-              continue;
-            }
-            label = abilityTitle(t);
-            i += 1;
-            while (i < lines.length && !(lines[i] ?? "").trim()) i += 1;
-          }
-          if ((lines[i] ?? "").trim().startsWith("```")) {
-            i += 1;
-            const buf: string[] = [];
-            while (i < lines.length && !(lines[i] ?? "").trim().startsWith("```")) {
-              buf.push(lines[i] ?? "");
-              i += 1;
-            }
-            if ((lines[i] ?? "").trim().startsWith("```")) i += 1;
-            prompts.push({
-              label: label || "프롬프트",
-              value: buf.join("\n").trim(),
-            });
-            continue;
-          }
-          if (label) {
-            const buf: string[] = [];
-            while (i < lines.length) {
-              const n = (lines[i] ?? "").trim();
-              if (!n || isHeading(n) || isAbilityTitle(n) || n.startsWith("```")) break;
-              buf.push(plainInline(n));
-              i += 1;
-            }
-            if (buf.length) prompts.push({ label, value: buf.join("\n") });
-            continue;
-          }
-          i += 1;
-        }
-        if (prompts.length) doc.blocks.push({ type: "prompts", prompts });
-        continue;
-      }
-      ensureSection(title);
-      i += 1;
+    // Confidential banner → quiet meta (any heading level below H2)
+    if (/^#{1,6}\s+/.test(trimmed) && BANNER_RE.test(trimmed)) {
+      i = ingestBannerQuotes(doc, lines, i + 1);
       continue;
     }
 
     // Table → props on current (or 신상)
     if (isTableRow(trimmed)) {
-      const section = state.current ?? ensureSection("신상");
-      while (i < lines.length && isTableRow(lines[i] ?? "")) {
-        const row = lines[i] ?? "";
+      const section = state.current ?? ensureSection(doc, state, "신상");
+      while (i < lines.length && isTableRow(lines[i]!.trimmed)) {
+        const row = lines[i]!.trimmed;
         i += 1;
         if (isTableSep(row)) continue;
         const cells = parseTableRow(row);
@@ -340,8 +254,8 @@ export function parseDetailDoc(markdown: string): DetailDoc {
     }
 
     // Ability title inside 능력/리스크
-    if (isAbilityTitle(trimmed) && state.current && state.current.kind === "abilities") {
-      flushAbility();
+    if (isAbilityTitle(trimmed) && state.current?.kind === "abilities") {
+      flushAbility(state);
       state.ability = { title: abilityTitle(trimmed), props: [], notes: [] };
       i += 1;
       continue;
@@ -352,28 +266,21 @@ export function parseDetailDoc(markdown: string): DetailDoc {
     const labeled = parseLabeled(fixed) ?? parseLabeled(trimmed);
 
     if (labeled) {
-      const section = state.current ?? ensureSection("배경");
+      const section = state.current ?? ensureSection(doc, state, "배경");
       if (state.ability) {
         if (labeled.value) state.ability.props.push(labeled);
         else state.ability.notes.push(labeled.label);
-      } else if (section.kind === "abilities") {
-        // orphan labeled under abilities without title → notes on section
-        section.props.push(labeled);
       } else {
         section.props.push(labeled);
       }
       i += 1;
       // absorb following fenced block as value extension (메멘토 trauma etc.)
-      while (i < lines.length && !(lines[i] ?? "").trim()) i += 1;
-      if ((lines[i] ?? "").trim().startsWith("```")) {
-        i += 1;
-        const buf: string[] = [];
-        while (i < lines.length && !(lines[i] ?? "").trim().startsWith("```")) {
-          buf.push(plainInline(lines[i] ?? ""));
-          i += 1;
-        }
-        if ((lines[i] ?? "").trim().startsWith("```")) i += 1;
-        const extra = buf.filter(Boolean).join(" ");
+      while (i < lines.length && !lines[i]!.trimmed) i += 1;
+      if (lines[i]?.fence === "open") {
+        const extra = consumeFence()
+          .map((raw) => plainInline(raw))
+          .filter(Boolean)
+          .join(" ");
         if (extra) {
           if (state.ability) {
             const last = state.ability.props[state.ability.props.length - 1];
@@ -386,13 +293,6 @@ export function parseDetailDoc(markdown: string): DetailDoc {
           }
         }
       }
-      continue;
-    }
-
-    if (trimmed.startsWith("```")) {
-      i += 1;
-      while (i < lines.length && !(lines[i] ?? "").trim().startsWith("```")) i += 1;
-      if ((lines[i] ?? "").trim().startsWith("```")) i += 1;
       continue;
     }
 
@@ -420,8 +320,92 @@ export function parseDetailDoc(markdown: string): DetailDoc {
     }
     i += 1;
   }
+}
 
-  flushAbility();
+/** Quote lines right after a banner heading become sheet meta. */
+function ingestBannerQuotes(
+  doc: DetailDoc,
+  lines: NoteLine[],
+  start: number,
+): number {
+  let i = start;
+  while (i < lines.length) {
+    const q = lines[i]!;
+    if (!q.trimmed) {
+      i += 1;
+      continue;
+    }
+    if (q.inFence || !q.trimmed.startsWith(">")) break;
+    const text = plainInline(q.trimmed.replace(/^>\s?/, ""));
+    if (text) {
+      doc.meta.push(
+        text.replace(/^보안 등급:\s*/, "보안 ").replace(/^소속:\s*/, ""),
+      );
+    }
+    i += 1;
+  }
+  return i;
+}
+
+/** Parse messy Notion-export markdown into a clean detail document. */
+export function parseDetailDoc(
+  markdown: string,
+  mode: DetailParseMode = "share",
+): DetailDoc {
+  const scan = scanNoteSections(markdown);
+  const doc: DetailDoc = { meta: [], blocks: [] };
+  const state: ParseState = { current: null, ability: null };
+  const peek = mode === "peek";
+
+  // Untitled lead-in: callout/quote meta, and tables that predate any heading.
+  ingestRegion(doc, state, scan.preamble);
+
+  for (const section of scan.sections) {
+    // Fail-closed: a marked block is dropped whatever it claims to be titled.
+    if (section.markedPrivate) continue;
+
+    if (BANNER_RE.test(section.rawHeading)) {
+      flushAbility(state);
+      state.current = null;
+      ingestBannerQuotes(doc, classifyLines(section.body.split(/\r?\n/)), 0);
+      continue;
+    }
+
+    const kindTitle = normalizeSectionTitle(section.title);
+    const displayTitle = peek ? section.title : kindTitle;
+    if (!displayTitle || kindTitle === "프로필") continue;
+
+    if (peek) {
+      if (sectionPrivacyKind(section.title) === "private") continue;
+    } else if (HIDDEN_TITLES.has(kindTitle) || !ALLOWED_TITLES.has(kindTitle)) {
+      // Secret / freeform / unknown — share skips the whole block.
+      continue;
+    }
+
+    if (kindTitle === "프롬프트" || sectionPrivacyKind(section.title) === "prompt") {
+      flushAbility(state);
+      state.current = null;
+      const prompts: DetailProp[] = extractPromptFences(section.body).map(
+        (prompt) => ({ label: prompt.label, value: prompt.value }),
+      );
+      if (prompts.length) {
+        doc.blocks.push({
+          type: "prompts",
+          title: peek ? displayTitle : undefined,
+          prompts,
+        });
+      } else if (peek) {
+        // Keep the heading even when there is nothing to copy yet.
+        ensureSection(doc, state, displayTitle, kindTitle);
+      }
+      continue;
+    }
+
+    ensureSection(doc, state, displayTitle, kindTitle);
+    ingestRegion(doc, state, section.body);
+  }
+
+  flushAbility(state);
   return doc;
 }
 
@@ -451,11 +435,16 @@ function renderProps(parent: HTMLElement, props: DetailProp[]): void {
 }
 
 /** Render parsed detail doc into a Notion-quiet sheet (document order). */
-export function renderCleanBody(container: HTMLElement, markdown: string): void {
+export function renderCleanBody(
+  container: HTMLElement,
+  markdown: string,
+  mode: DetailParseMode = "share",
+): void {
   container.empty();
   container.addClass("charinfo-sheet");
 
-  const doc = parseDetailDoc(markdown);
+  const doc = parseDetailDoc(markdown, mode);
+  const keepEmpty = mode === "peek";
 
   if (doc.meta.length) {
     const meta = container.createDiv({ cls: "charinfo-sheet__meta" });
@@ -464,7 +453,7 @@ export function renderCleanBody(container: HTMLElement, markdown: string): void 
 
   for (const block of doc.blocks) {
     if (block.type === "prompts") {
-      renderPromptBlock(container, block.prompts);
+      renderPromptBlock(container, block.prompts, block.title);
       continue;
     }
     const section = block.section;
@@ -472,7 +461,7 @@ export function renderCleanBody(container: HTMLElement, markdown: string): void 
       !section.props.length &&
       !section.abilities.length &&
       !section.notes.length;
-    if (empty) continue;
+    if (empty && !keepEmpty) continue;
 
     const el = container.createDiv({ cls: "charinfo-sheet__block" });
     el.createDiv({ cls: "charinfo-sheet__heading", text: section.title });
@@ -503,10 +492,14 @@ export function renderCleanBody(container: HTMLElement, markdown: string): void 
   }
 }
 
-function renderPromptBlock(container: HTMLElement, prompts: DetailProp[]): void {
+function renderPromptBlock(
+  container: HTMLElement,
+  prompts: DetailProp[],
+  title = "프롬프트",
+): void {
   if (!prompts.length) return;
   const block = container.createDiv({ cls: "charinfo-sheet__block is-prompts" });
-  block.createDiv({ cls: "charinfo-sheet__heading", text: "프롬프트" });
+  block.createDiv({ cls: "charinfo-sheet__heading", text: title });
 
   for (const prompt of prompts) {
     const item = block.createDiv({ cls: "charinfo-sheet__prompt" });
@@ -544,12 +537,13 @@ function renderPromptBlock(container: HTMLElement, prompts: DetailProp[]): void 
 }
 
 async function copyText(text: string, button: HTMLElement): Promise<void> {
-  const value = text.trim();
+  // Byte-preserve fence contents — do not trim on copy.
+  const value = text;
   const show = (icon: string, title: string) => {
     setIcon(button, icon);
     button.setAttr("title", title);
   };
-  if (!value) {
+  if (value.length === 0) {
     show("circle-alert", "비어 있음");
     window.setTimeout(() => show("copy", "복사"), 1000);
     return;

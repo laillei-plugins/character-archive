@@ -1,5 +1,7 @@
 # Character Archive — plugin design system
 
+Status: **binding after Codex FAIL 2026-08-18** (width, empty save, spacing grammar). Grok still pending. Do not invent a second skin.
+
 Base (Obsidian open source):
 
 - [About styling](https://docs.obsidian.md/Reference/CSS+variables/About+styling) — use built-in CSS variables so themes still work
@@ -8,6 +10,8 @@ Base (Obsidian open source):
 - [Radiuses](https://docs.obsidian.md/Reference/CSS+variables/Foundations/Radiuses) — `--radius-s/m/l`
 - [Typography](https://docs.obsidian.md/Reference/CSS+variables/Foundations/Typography) — `--font-ui-*` for chrome
 - [Button](https://docs.obsidian.md/Reference/CSS+variables/Components/Button) / [Modal](https://docs.obsidian.md/Reference/CSS+variables/Components/Modal)
+
+Taste (not tokens): `.orch/PRODUCT_TASTE.md`. Dead chrome: `.orch/DEAD-UX-CHECKLIST.md`.
 
 ---
 
@@ -80,6 +84,19 @@ Label `--font-ui-small` + `--text-muted`. Input uses Obsidian default control ch
 - Vertical stack gap: `--size-4-3`.
 - Title row: flex, gap `--size-4-2`, align center, min-height 32.
 - Save / live region: hide (no min-height, no pad) when empty.
+
+### Select-option ledger
+
+- The section label and existing property-type glyph identify the list. Do not add a decorative heading or per-row list icon.
+- Leading rails are capability-based: 32px grip only when reorder works; 12px color only when color exists. Never reserve invisible tracks.
+- Name is always `minmax(0, 1fr)`; badge is `auto`; remove/check/cancel actions use separate 32px tracks.
+- Draft and add rows derive from the same capability grid as committed rows. The add action is left-aligned to the active list reading edge.
+
+### Native notice rail
+
+- Use Obsidian `Notice`; do not build or individually position plugin toasts.
+- Desktop uses one shared top-centered `.notice-container`, preserving native vertical stacking and dismissal.
+- Phone keeps Obsidian's native bottom placement and safe-area handling.
 
 ---
 

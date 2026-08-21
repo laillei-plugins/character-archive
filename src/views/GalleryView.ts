@@ -5,6 +5,7 @@ import {
   TFile,
   WorkspaceLeaf,
   setIcon,
+  Component,
 } from "obsidian";
 import type CharinfoPlugin from "../main";
 import {
@@ -21,35 +22,97 @@ import {
   setCharacterCoverUrl,
   setCharacterCoverNone,
   setCharacterField,
+  setCharacterList,
   setCharacterTags,
   setCoverPosition,
   COVER_NONE,
   isCoverNone,
 } from "../data/images";
-import { persistGenreOrder, renameGenre, resolveGroupOrder, moveInOrder, sortCharacters } from "../data/order";
+import {
+  persistGenreOrder,
+  renameGenre,
+  resolveGroupRouteOrder,
+  moveInOrder,
+  sortCharacters,
+} from "../data/order";
 import { EXAMPLE_ARCHIVE } from "../data/bundledTemplate";
+import type { CardPropertyId } from "../data/cardProperties";
 import {
-  propertyLabel,
-  propertyValue,
-  visibleCardProperties,
-  CARD_PROPERTY_DEFS,
-  type CardPropertyId,
-} from "../data/cardProperties";
+  applyGroupDeletion,
+  effectiveActiveFields,
+  ensureGroupSchema,
+  GroupDeletionBlockedError,
+  GroupOperationError,
+  fieldLabel,
+  fieldOptionLabel,
+  fieldValue,
+  isBuiltinFieldId,
+  isChipAxisField,
+  isFieldVisible,
+  normalizeArchiveKey,
+  normalizeGroupKey,
+  normalizeLibraryKey,
+  persistedGroupsForArchive,
+  planGroupDeletion,
+  projectSchemaFields,
+  reachableActiveFieldIds,
+  renameArchiveScope,
+  renameGroupRoute,
+  renameGroupScope,
+  resolveGroupSchema,
+  setFieldVisibility,
+  unionActiveFieldsForArchive,
+  type FieldDef,
+  type FieldOption,
+  type GroupSchemaRecord,
+  type GroupSchemaStore,
+} from "../data/groupSchema";
 import {
+  BatchGroupMoveError,
+  BatchMoveConflictError,
+  BatchRefreshFreeze,
+  MODAL_INERT_REGIONS,
+  batchEscapeAction,
+  batchInertActive,
+  batchModeSurface,
+  batchMoveFailureMessage,
+  batchMoveSuccessMessage,
+  batchNoticeLift,
+  describeDestinations,
+  disposeBatchDialog,
+  executeBatchGroupMove,
+  normalizeMoveGroup,
+  planBatchGroupMove,
+  reconcileBatchSelection,
+  runBatchTransaction,
+  type BatchModeSurface,
+  type BatchMoveEntry,
+  type BatchMoveOutcome,
+  type BatchMovePlan,
+  type BatchWriteResult,
+} from "../data/batchGroupMove";
+import {
+  FILTER_AXIS_IDS,
   axisFor,
+  axisLabel,
   getGalleryPageState,
   getGroupOrderFor,
+  getGroupRouteOrderFor,
   patchGalleryPageState,
+  removeGroupFromOrder,
+  renameGroupRouteInOrder,
   recordAxisValue,
   recordMatchesAxisChip,
   resolveAxisOption,
   setGroupOrderFor,
+  setGroupRouteOrderFor,
   setRecordAxisValue,
-  statusColorClass,
+  paintStatusColor,
   type ChipFilter,
   type FilterAxis,
   type PrimaryFilterProperty,
   type SortMode,
+  type StatusColorToken,
   type StatusDef,
 } from "../settings";
 import {
@@ -57,7 +120,7 @@ import {
   occupiedAxisOptionIds,
 } from "../data/filterAxis";
 import { normalizeChipFilter } from "../data/status";
-import { renderCleanBody } from "../ui/cleanBody";
+import { renderLivePeekBody } from "../ui/livePeekBody";
 import { CoverPickerModal } from "../ui/CoverPickerModal";
 import { CreateGalleryModal } from "../ui/CreateGalleryModal";
 import { RenameGenreModal } from "../ui/RenameGenreModal";
@@ -71,16 +134,28 @@ import {
   galleryPagePath,
   galleryWikiLink,
   getFilterAxisForPage,
+  listGalleryPagePathsForLibrary,
   readGalleryScope,
 } from "../page/galleryPage";
 import { ShareGalleryModal } from "../ui/ShareGalleryModal";
 import { AttrManageModal } from "../ui/AttrManageModal";
+import { BatchGroupMoveDialog } from "../ui/BatchGroupMoveDialog";
+import { GroupRenameDialog } from "../ui/GroupRenameDialog";
+import {
+  groupAddProblem,
+  groupRenameErrorMessage,
+  groupRenameProblem,
+  groupRenameSuccessMessage,
+  normalizeRenameInput,
+} from "../data/groupRename";
 
 export const VIEW_TYPE_CHARINFO_GALLERY = "charinfo-gallery";
 
 const NARROW_PX = 720;
 /** Tags shown on a card before collapsing the rest into `+n`. */
 const CARD_TAG_LIMIT = 3;
+/** Peek placeholder for an unset field — a muted em dash, not “비어 있음”. */
+const EMPTY_FIELD_MARK = "—";
 /** Narrow bottom-sheet snap heights, as a fraction of the viewport. */
 const SHEET_SNAPS = { low: 0.4, mid: 0.55, tall: 0.88 } as const;
 type SheetSnap = keyof typeof SHEET_SNAPS;
@@ -89,6 +164,61 @@ const SHEET_SNAP_VH: Record<SheetSnap, string> = {
   mid: "55vh",
   tall: "88vh",
 };
+/**
+ * Batch Notice lifetime. The narrow batch bar is raised for exactly this long
+ * so it never sits under the native Notice (see `.is-batch-notice`).
+ */
+const BATCH_NOTICE_MS = 6000;
+
+/**
+ * True when a note edit changed anything a card or the property chrome shows.
+ * Body-only edits answer false — those only patch the side panel.
+ */
+function cardProjectionChanged(
+  a: CharacterRecord,
+  b: CharacterRecord,
+): boolean {
+  return (
+    a.kind !== b.kind ||
+    a.이름 !== b.이름 ||
+    a.코드네임 !== b.코드네임 ||
+    a.본명 !== b.본명 ||
+    a.소속 !== b.소속 ||
+    a.장르 !== b.장르 ||
+    a.작품 !== b.작품 ||
+    a.그룹 !== b.그룹 ||
+    a.상태 !== b.상태 ||
+    a.관계 !== b.관계 ||
+    a.인연 !== b.인연 ||
+    a.cover !== b.cover ||
+    a.coverPosition !== b.coverPosition ||
+    a.order !== b.order ||
+    a.title !== b.title ||
+    a.태그.length !== b.태그.length ||
+    a.태그.some((tag, index) => tag !== b.태그[index]) ||
+    // Custom group fields live in `values`; an edit made in Obsidian's own
+    // Properties panel has to reach the card too.
+    customValuesChanged(a, b)
+  );
+}
+
+/** Any own frontmatter value (custom fields included) that differs. */
+function customValuesChanged(a: CharacterRecord, b: CharacterRecord): boolean {
+  const keys = new Set([...Object.keys(a.values), ...Object.keys(b.values)]);
+  for (const key of keys) {
+    const left = a.values[key];
+    const right = b.values[key];
+    if (Array.isArray(left) || Array.isArray(right)) {
+      const one = Array.isArray(left) ? left : left == null ? [] : [left];
+      const two = Array.isArray(right) ? right : right == null ? [] : [right];
+      if (one.length !== two.length) return true;
+      if (one.some((item, index) => item !== two[index])) return true;
+      continue;
+    }
+    if ((left ?? "") !== (right ?? "")) return true;
+  }
+  return false;
+}
 
 /**
  * File-backed gallery — bound to `Character Archive.md` so share/link plugins
@@ -109,6 +239,14 @@ export class GalleryView extends FileView {
   /** Card path whose tag checklist is open (so the trigger can toggle it). */
   private tagMenuPath = "";
   private detailRequestId = 0;
+  /** Field ids some reachable schema still lists — cached per painted scope. */
+  private reachableCache: { key: string; ids: Set<string> } | null = null;
+  /** Disposable Markdown render host for the side-panel body. */
+  private peekBodyChild: Component | null = null;
+  /** Monotonic token for note-region patches — stale reads must not commit. */
+  private noteRefreshGeneration = 0;
+  /** Image strip identity of the painted panel; only a change rebuilds it. */
+  private peekStripFingerprint = "";
   private resizeObserver: ResizeObserver | null = null;
   private isNarrow = false;
   private peekOpen = false;
@@ -120,6 +258,32 @@ export class GalleryView extends FileView {
     startH: number;
   } | null = null;
   private tipTimer: number | null = null;
+  /**
+   * 여러 캐릭터 그룹 이동 — one explicit mode with a **captured** scope.
+   *
+   * The scope is captured on entry and never re-read: search, a chip, or a
+   * repaint may hide a selected card, but only a real archive change ends the
+   * mode. `batchSelection` therefore holds paths, not records, and survives
+   * every repaint that does not change the archive.
+   */
+  private batchMode = false;
+  private batchScope: { library: string; archive: string } | null = null;
+  private batchSelection = new Set<string>();
+  private batchDialog: BatchGroupMoveDialog | null = null;
+  /** True from the first schema write until the transaction settles. */
+  private batchSaving = false;
+  /** Real per-view transaction guard — `suppressGalleryRefresh` is not one. */
+  private batchFreeze = new BatchRefreshFreeze();
+  private batchNoticeTimer: number | null = null;
+  private groupRenameDialog: GroupRenameDialog | null = null;
+  private groupRenameSaving = false;
+  private groupRenameSource = "";
+  /**
+   * Bumped by `onUnloadFile` / `onClose`. A storage callback that outlives its
+   * generation may still finish its writes, but must not touch this DOM.
+   */
+  private uiGeneration = 0;
+  private viewClosed = false;
   /** Serialize cover writes per character so rapid strip taps don't race. */
   private coverWriteChain = new Map<string, Promise<void>>();
   /** Latest cover intent per path (coalesce while a write is in flight). */
@@ -143,6 +307,25 @@ export class GalleryView extends FileView {
     return this.plugin.settings.sortMode;
   }
 
+  /**
+   * The one question every ordinary card handler asks: reorder, cover edit,
+   * detail open, property edit, context menu, add tile.
+   *
+   * Selection mode borrows the whole card, so these must be mutually exclusive
+   * with it — a single predicate is the only way that cannot drift apart.
+   */
+  private get cardEditActive(): boolean {
+    return this.batchSurface().cardEditActive;
+  }
+
+  /** The whole exclusion table for this mode pair — see `batchModeSurface`. */
+  private batchSurface(): BatchModeSurface {
+    return batchModeSurface({
+      editMode: this.editMode,
+      batchMode: this.batchMode,
+    });
+  }
+
   private pageKey(): string {
     return this.file?.path ?? galleryPagePath(this.plugin);
   }
@@ -163,13 +346,70 @@ export class GalleryView extends FileView {
   /**
    * Active chip axis for this page: FM `primaryFilter` when the note sets one,
    * else the global setting. Falls back to status when the axis has no options.
+   *
+   * A field no reachable schema lists any more is not a filterable axis, so the
+   * chip row falls back at **runtime** to the first axis this archive can
+   * actually answer. Page frontmatter and settings are left alone — only an
+   * explicit choice in 보기 may persist a replacement.
    */
   private filterAxis(): FilterAxis {
-    return getFilterAxisForPage(this.plugin.settings, this.resolvePageScope());
+    const requested = getFilterAxisForPage(
+      this.plugin.settings,
+      this.resolvePageScope(),
+    );
+    if (this.axisReachable(requested.propertyId)) return requested;
+    const reachable = this.reachableFieldIds();
+    for (const id of FILTER_AXIS_IDS) {
+      if (!reachable.has(id)) continue;
+      const axis = axisFor(this.plugin.settings, id);
+      if (axis.options.length > 0) return axis;
+    }
+    // Nothing to filter on: keep the requested axis. Occupancy is schema-aware,
+    // so the row collapses to 「전체」 instead of offering dormant values.
+    return requested;
   }
 
-  private propLabel(id: CardPropertyId): string {
-    return propertyLabel(id, this.plugin.settings.propertyDisplayNames);
+  /** Drop the per-render projection memo. */
+  private invalidateProjectionCaches(): void {
+    this.reachableCache = null;
+  }
+
+  /** Field ids at least one reachable schema still lists, memoized per scope. */
+  private reachableFieldIds(): Set<string> {
+    const key = `${this.pageLibrary()} ${normalizeArchiveKey(this.activeArchive())}`;
+    const cached = this.reachableCache;
+    if (cached && cached.key === key) return cached.ids;
+    const ids = reachableActiveFieldIds(
+      this.plugin.settings,
+      this.pageLibrary(),
+      normalizeArchiveKey(this.activeArchive()),
+      this.observedGroups(),
+    );
+    this.reachableCache = { key, ids };
+    return ids;
+  }
+
+  /** True when at least one reachable schema still lists this axis' field. */
+  private axisReachable(fieldId: string): boolean {
+    return this.reachableFieldIds().has(fieldId);
+  }
+
+  /** True when this record's own schema lists the axis field as active. */
+  private recordHasAxis(record: CharacterRecord, fieldId: string): boolean {
+    return effectiveActiveFields(this.recordSchema(record)).some(
+      (field) => field.id === fieldId,
+    );
+  }
+
+  /**
+   * Records whose schema actually carries this axis. Chip membership and the
+   * grid filter both read through it, so a value left dormant by a schema edit
+   * can never make a card match — or keep a chip alive.
+   */
+  private axisScopedRecords(axis: FilterAxis): CharacterRecord[] {
+    return this.records.filter((record) =>
+      this.recordHasAxis(record, axis.propertyId),
+    );
   }
 
   /**
@@ -178,7 +418,11 @@ export class GalleryView extends FileView {
    * Deliberately ignores `searchQuery` — typing must not move chip membership.
    */
   private occupiedOptions(axis: FilterAxis): Set<string> {
-    return occupiedAxisOptionIds(axis, this.records, this.activeArchive());
+    return occupiedAxisOptionIds(
+      axis,
+      this.axisScopedRecords(axis),
+      this.activeArchive(),
+    );
   }
 
   /** Axis options that actually have cards here, in vocabulary order. */
@@ -253,6 +497,11 @@ export class GalleryView extends FileView {
   async onUnloadFile(_file: TFile): Promise<void> {
     this.selected = null;
     this.peekOpen = false;
+    // A write already in flight keeps its storage guarantee; it just loses the
+    // right to paint. Bumping the generation is what revokes that right.
+    this.uiGeneration += 1;
+    this.closeGroupRenameDialog();
+    this.teardownBatchMode();
   }
 
   onPaneMenu(menu: Menu, source: string): void {
@@ -362,6 +611,8 @@ export class GalleryView extends FileView {
 
   async setActiveGenre(genre: string): Promise<void> {
     if (this.isArchivePinned()) return;
+    // The captured batch scope belongs to the archive we are leaving.
+    this.teardownBatchMode();
     patchGalleryPageState(this.plugin.settings, this.pageKey(), {
       activeGenre: genre,
     });
@@ -371,41 +622,157 @@ export class GalleryView extends FileView {
     this.leaf.setEphemeralState({ ...this.leaf.getEphemeralState() });
   }
 
+  /**
+   * Gallery notes whose library is this one, plus this page. Card-eye rows carry
+   * a page but no library, so this list is the only way an archive rename can
+   * tell *its* rows apart from a same-named archive in another library.
+   */
+  private libraryPagePaths(library: string): string[] {
+    const paths = new Set(
+      listGalleryPagePathsForLibrary(this.plugin, library),
+    );
+    paths.add(this.pageKey());
+    return [...paths].filter(Boolean);
+  }
+
+  /** Schema-side copy for a dry-run collision check. Never persisted. */
+  private schemaSnapshot(): GroupSchemaStore {
+    const s = this.plugin.settings;
+    return {
+      cardProperties: s.cardProperties.map((pref) => ({ ...pref })),
+      propertyDisplayNames: s.propertyDisplayNames,
+      groupSchemas: s.groupSchemas.map((record) => ({
+        ...record,
+        fields: record.fields.map((field) => ({ ...field })),
+      })),
+      fieldKeyLedgers: s.fieldKeyLedgers.map((ledger) => ({
+        ...ledger,
+        keys: [...ledger.keys],
+      })),
+      cardFieldVisibility: s.cardFieldVisibility.map((row) => ({ ...row })),
+      cardFieldOrder: s.cardFieldOrder.map((row) => ({
+        ...row,
+        order: [...row.order],
+      })),
+    };
+  }
+
+  /**
+   * Rename one archive: reject a collision, rewrite the notes, then commit
+   * every archive-scoped setting in **one** save.
+   *
+   * A merge into an existing archive is refused outright — rewritten records
+   * would collide on `(library, archive, group)` and normalization keeps only
+   * the first duplicate, so a group would silently lose its fields. The check
+   * runs on a copy of the schema store, before any note is touched.
+   */
   private async renameActiveGenre(from: string, to: string): Promise<void> {
+    const library = this.pageLibrary();
+    const prev = normalizeArchiveKey(from);
+    const next = normalizeArchiveKey(to);
+    if (prev === next) return;
+
+    const pagePaths = this.libraryPagePaths(library);
+    if (
+      this.genres().some((genre) => normalizeArchiveKey(genre) === next)
+    ) {
+      new Notice(
+        `아카이브 「${next}」가 이미 있어요. 다른 이름을 정해 주세요.`,
+      );
+      return;
+    }
+    try {
+      renameArchiveScope(this.schemaSnapshot(), library, prev, next, pagePaths);
+    } catch (error) {
+      new Notice(
+        `${error instanceof Error ? error.message : String(error)} · 다른 이름을 정해 주세요.`,
+      );
+      return;
+    }
+
     this.plugin.suppressGalleryRefresh = true;
     let count = 0;
     try {
-      count = await renameGenre(this.app, this.records, from, to);
-      if (this.activeArchive().trim() === from) {
-        patchGalleryPageState(this.plugin.settings, this.pageKey(), {
-          activeGenre: to,
-        });
-        this.plugin.settings.activeGenre = to;
-        await this.plugin.saveSettings();
-      }
+      count = await renameGenre(this.app, this.records, prev, next);
       if (this.isArchivePinned() && this.file) {
-        await this.app.fileManager.processFrontMatter(this.file, (fm) => {
-          fm.장르 = to;
-        });
+        try {
+          await this.app.fileManager.processFrontMatter(this.file, (fm) => {
+            fm.장르 = next;
+          });
+        } catch (error) {
+          // Put the cards back so the vault never holds two names at once.
+          await renameGenre(this.app, this.records, next, prev).catch(
+            (rollbackError) => {
+              console.error(
+                "[charinfo] 아카이브 이름 되돌리기 실패",
+                rollbackError,
+              );
+            },
+          );
+          throw error;
+        }
       }
-      const lib = this.pageLibrary();
-      const order = getGroupOrderFor(this.plugin.settings, lib, from);
-      if (order.length) {
-        setGroupOrderFor(this.plugin.settings, lib, to, order);
-        const byLib = { ...this.plugin.settings.groupOrderByLibrary[lib] };
-        delete byLib[from];
-        this.plugin.settings.groupOrderByLibrary = {
-          ...this.plugin.settings.groupOrderByLibrary,
-          [lib]: byLib,
-        };
-        await this.plugin.saveSettings();
-      }
+    } catch (error) {
+      // Notes are back where they started (best effort) — leave every
+      // archive-scoped setting untouched so nothing points at a name that
+      // does not exist.
+      console.error("[charinfo] 아카이브 이름 바꾸기 실패", error);
+      new Notice(
+        `아카이브 이름을 바꾸지 못했어요 · ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
     } finally {
       this.plugin.suppressGalleryRefresh = false;
     }
+
+    try {
+      await this.plugin.commitSettings((settings) => {
+        renameArchiveScope(settings, library, prev, next, pagePaths);
+        const order = getGroupOrderFor(settings, library, prev);
+        if (order.length) {
+          setGroupOrderFor(settings, library, next, order);
+          const byLib = { ...(settings.groupOrderByLibrary[library] ?? {}) };
+          delete byLib[prev];
+          settings.groupOrderByLibrary = {
+            ...settings.groupOrderByLibrary,
+            [library]: byLib,
+          };
+          if (library === normalizeLibraryKey(settings.libraryFolder)) {
+            const legacy = { ...settings.groupOrderByGenre };
+            delete legacy[prev];
+            legacy[next] = [...order];
+            settings.groupOrderByGenre = legacy;
+          }
+        }
+        for (const path of pagePaths) {
+          const state = getGalleryPageState(settings, path);
+          const genre = state.activeGenre?.trim() ?? "";
+          if (!genre || normalizeArchiveKey(genre) !== prev) continue;
+          patchGalleryPageState(settings, path, { activeGenre: next });
+        }
+        if (normalizeArchiveKey(settings.activeGenre) === prev) {
+          settings.activeGenre = next;
+        }
+        // Copy, never move: another library may still hold an archive of the
+        // old name that depends on this template.
+        const template = settings.characterTemplateByGenre[prev];
+        if (template && !settings.characterTemplateByGenre[next]) {
+          settings.characterTemplateByGenre = {
+            ...settings.characterTemplateByGenre,
+            [next]: template,
+          };
+        }
+      });
+    } catch (error) {
+      console.error("[charinfo] 아카이브 설정 저장 실패", error);
+      new Notice(
+        `노트는 「${next}」로 바꿨지만 설정 저장에 실패했어요 · ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
     new Notice(
       count
-        ? `아카이브 이름을 「${to}」로 바꿨어요 · 노트 ${count}개`
+        ? `아카이브 이름을 「${next}」로 바꿨어요 · 노트 ${count}개`
         : "이름을 바꿀 노트가 없어요",
     );
     await this.refresh();
@@ -415,6 +782,36 @@ export class GalleryView extends FileView {
   async onOpen(): Promise<void> {
     this.registerDomEvent(this.containerEl, "keydown", (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        // Batch owns Escape first, in exactly this order: a running write
+        // swallows the key, then the destination dialog, then selection mode.
+        const batch = batchEscapeAction({
+          saving: this.batchSaving,
+          dialogOpen: this.batchDialog?.isOpen ?? false,
+          selecting: this.batchMode,
+        });
+        if (batch === "consume") {
+          event.preventDefault();
+          return;
+        }
+        if (batch === "close-dialog") {
+          event.preventDefault();
+          this.closeBatchDialog({ restoreFocus: true });
+          return;
+        }
+        if (batch === "exit-selection") {
+          event.preventDefault();
+          this.setBatchMode(false);
+          return;
+        }
+        if (this.groupRenameSaving) {
+          event.preventDefault();
+          return;
+        }
+        if (this.groupRenameDialog?.isOpen) {
+          event.preventDefault();
+          this.closeGroupRenameDialog({ restoreFocus: true });
+          return;
+        }
         if (this.viewMenu) {
           this.viewMenu.close();
           event.preventDefault();
@@ -454,6 +851,10 @@ export class GalleryView extends FileView {
       window.clearTimeout(this.tipTimer);
       this.tipTimer = null;
     }
+    this.viewClosed = true;
+    this.uiGeneration += 1;
+    this.closeGroupRenameDialog();
+    this.teardownBatchMode();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     this.viewMenu?.close();
@@ -480,11 +881,16 @@ export class GalleryView extends FileView {
    * while the sheet is open (freeze: inert underneath).
    */
   private syncGalleryInert(): void {
-    const on = this.isNarrow && this.peekOpen;
-    for (const sel of [
-      ".charinfo-gallery__header",
-      ".charinfo-gallery__main",
-    ]) {
+    // The destination dialog is modal on every width, so it freezes the same
+    // regions the narrow sheet does — plus the batch bar that opened it.
+    const on = batchInertActive({
+      isNarrow: this.isNarrow,
+      peekOpen: this.peekOpen,
+      dialogOpen:
+        (this.batchDialog?.isOpen ?? false) ||
+        (this.groupRenameDialog?.isOpen ?? false),
+    });
+    for (const sel of MODAL_INERT_REGIONS) {
       const el = this.contentEl.querySelector(sel);
       if (!(el instanceof HTMLElement)) continue;
       if (on) el.setAttribute("inert", "");
@@ -566,6 +972,13 @@ export class GalleryView extends FileView {
     handle.addEventListener("pointercancel", endDrag);
   }
 
+  private unloadPeekBody(): void {
+    if (this.peekBodyChild) {
+      this.removeChild(this.peekBodyChild);
+      this.peekBodyChild = null;
+    }
+  }
+
   private closePeek(): void {
     this.closeTagMenu();
     this.sheetDrag = null;
@@ -578,6 +991,7 @@ export class GalleryView extends FileView {
     this.contentEl.querySelectorAll(".charinfo-card.is-selected").forEach((el) => {
       el.classList.remove("is-selected");
     });
+    this.unloadPeekBody();
     const detail = this.contentEl.querySelector(".charinfo-gallery__detail");
     if (detail instanceof HTMLElement) void this.renderDetail(detail);
   }
@@ -589,27 +1003,144 @@ export class GalleryView extends FileView {
     this.renderBody();
   }
 
+  /**
+   * Every card in the active archive, **before** search and chip filtering.
+   * Anything that decides whether a group or a field exists reads this — a chip
+   * must never make a section or a 보기 row disappear.
+   */
+  private archiveRecords(): CharacterRecord[] {
+    const archive = normalizeArchiveKey(this.activeArchive());
+    return this.records.filter(
+      (record) => normalizeArchiveKey(record.장르) === archive,
+    );
+  }
+
+  /** Groups that actually hold a card in this archive (unfiltered). */
+  private observedGroups(): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const record of this.archiveRecords()) {
+      const group = normalizeGroupKey(record.그룹);
+      if (seen.has(group)) continue;
+      seen.add(group);
+      out.push(group);
+    }
+    return out;
+  }
+
+  /**
+   * Persisted groups of this archive that hold no card at all. Pencil mode
+   * renders them so a group created in Book stays reachable before its first
+   * card exists; read mode and filter/search-empty results never invent one.
+   *
+   * 미분류 is excluded — it has no header of its own, so an empty one would be
+   * a stray add tile with nothing naming it.
+   */
+  private emptyPersistedGroups(): string[] {
+    const members = new Set(this.observedGroups());
+    const out: string[] = [];
+    for (const group of persistedGroupsForArchive(
+      this.plugin.settings,
+      this.pageLibrary(),
+      normalizeArchiveKey(this.activeArchive()),
+    )) {
+      if (!group || members.has(group)) continue;
+      out.push(group);
+    }
+    return out;
+  }
+
+  /**
+   * Named routes of this archive, in the stable section order: the group order
+   * the user arranged, then persisted schemas and observed cards. `""` is never
+   * in here — whether 기본 is a real route is the inventory's question.
+   */
+  private namedGroups(): string[] {
+    const archive = normalizeArchiveKey(this.activeArchive());
+    // Every route that exists: a persisted schema, or a card carrying the name.
+    const existing = new Set<string>();
+    for (const group of persistedGroupsForArchive(
+      this.plugin.settings,
+      this.pageLibrary(),
+      archive,
+    )) {
+      const name = normalizeGroupKey(group);
+      if (name) existing.add(name);
+    }
+    for (const record of this.archiveRecords()) {
+      const name = normalizeGroupKey(record.그룹);
+      if (name) existing.add(name);
+    }
+    const groups: string[] = [];
+    const seen = new Set<string>();
+    const push = (raw: string) => {
+      const group = normalizeGroupKey(raw);
+      if (!group || seen.has(group) || !existing.has(group)) return;
+      seen.add(group);
+      groups.push(group);
+    };
+    // The order the user arranged the sections in wins; the rest follows. The
+    // default route is decoded away here — this list is named groups only.
+    for (const group of getGroupRouteOrderFor(
+      this.plugin.settings,
+      this.pageLibrary(),
+      this.activeArchive().trim(),
+    )) {
+      push(group);
+    }
+    for (const group of existing) push(group);
+    return groups;
+  }
+
+  /**
+   * The canonical route order of this archive: every reachable route, `""`
+   * included at its own rank.
+   *
+   * One list, read by both surfaces. The drawer's chips and the gallery's
+   * sections rank by exactly this, computed from the **unfiltered** archive, so
+   * a search or a chip can never reorder anything and the two can never
+   * disagree after a reload.
+   */
+  private routeOrder(): string[] {
+    return resolveGroupRouteOrder(
+      getGroupRouteOrderFor(
+        this.plugin.settings,
+        this.pageLibrary(),
+        this.activeArchive().trim(),
+      ),
+      [...this.namedGroups(), ...this.emptyPersistedGroups()],
+    );
+  }
+
+  /** Cards routing to one group in this archive (`""` = the default route). */
+  private groupMemberCount(group: string): number {
+    const want = normalizeGroupKey(group);
+    return this.archiveRecords().filter(
+      (record) => normalizeGroupKey(record.그룹) === want,
+    ).length;
+  }
+
   private openAttrManage(): void {
-    const scope = this.resolvePageScope();
     new AttrManageModal(this.plugin, {
       records: this.records,
-      archive: this.activeArchive(),
-      pageAxis: scope.primaryFilter,
-      globalAxis: this.plugin.settings.primaryFilterProperty,
-      file: this.file,
-      onPageAxis: async (next) => {
-        if (this.file) {
-          await this.app.fileManager.processFrontMatter(this.file, (fm) => {
-            if (next == null) delete fm.primaryFilter;
-            else fm.primaryFilter = next;
-          });
-        }
-        patchGalleryPageState(this.plugin.settings, this.pageKey(), {
-          chipFilter: "all",
-          chipFilterProperty:
-            next ?? this.plugin.settings.primaryFilterProperty,
-        });
-        await this.plugin.saveSettings();
+      archive: normalizeArchiveKey(this.activeArchive()),
+      library: this.pageLibrary(),
+      selectedGroup: this.selected ? this.selected.그룹.trim() : null,
+      namedGroups: () => this.namedGroups(),
+      hasUngrouped: () => this.groupMemberCount("") > 0,
+      memberCount: (group) => this.groupMemberCount(group),
+      routeOrder: () => this.routeOrder(),
+      reorderRoutes: (order) => this.persistRouteOrder(order),
+      createGroup: (name) => this.createGroupRoute(name),
+      renameGroup: (from, to) => this.renameGroupRouteFromDrawer(from, to),
+      deleteGroup: (from, to) => this.deleteGroupWithReassign(from, to),
+      trashGroup: (from) => this.trashGroupRoute(from),
+      onSchemaSaved: (group) => {
+        this.plugin.reconcileGroupMembers(
+          this.pageLibrary(),
+          normalizeArchiveKey(this.activeArchive()),
+          group,
+        );
       },
       onChanged: () => {
         this.plugin.refreshOpenGalleries();
@@ -617,8 +1148,1004 @@ export class GalleryView extends FileView {
     }).open();
   }
 
+  /** Persist a route order the drawer arranged, then repaint every gallery. */
+  private async persistRouteOrder(order: readonly string[]): Promise<void> {
+    const genre = this.activeArchive().trim();
+    if (!genre) return;
+    await this.plugin.commitSettings((settings) => {
+      setGroupRouteOrderFor(settings, this.pageLibrary(), genre, order);
+    });
+  }
+
+  /**
+   * Create one group: persist its schema and append it at the canonical end of
+   * the route order, in one commit. Nothing is written to any note — a group
+   * with no cards is a real, reachable route.
+   */
+  private async createGroupRoute(name: string): Promise<void> {
+    const library = this.pageLibrary();
+    const archiveName = this.activeArchive().trim();
+    const archive = normalizeArchiveKey(this.activeArchive());
+    const target = normalizeGroupKey(name);
+    const problem = groupAddProblem({
+      name: target,
+      existing: this.namedGroups(),
+      defaultRouteVisible: true,
+    });
+    if (problem) throw new GroupOperationError(groupRenameErrorMessage(problem));
+    const order = [...this.routeOrder(), target];
+    await this.plugin.commitSettings((settings) => {
+      ensureGroupSchema(settings, library, archive, target);
+      if (archiveName) {
+        setGroupRouteOrderFor(settings, library, archiveName, order);
+      }
+    });
+    this.invalidateProjectionCaches();
+  }
+
+  /**
+   * Rename one route from the drawer. `from` may be `""`: naming the default
+   * route moves every note that carried no `그룹` onto the new name, and the
+   * schema identity travels with them.
+   */
+  private async renameGroupRouteFromDrawer(
+    from: string,
+    to: string,
+  ): Promise<void> {
+    if (this.groupRenameSaving) {
+      throw new GroupOperationError("이름 바꾸기가 아직 진행 중이에요.");
+    }
+    const source = normalizeGroupKey(from);
+    const target = normalizeRenameInput(to);
+    const problem = groupRenameProblem({
+      from: source,
+      to: target,
+      existing: this.namedGroups(),
+      allowDefaultSource: true,
+      defaultRouteVisible: true,
+    });
+    if (problem) throw new GroupOperationError(groupRenameErrorMessage(problem));
+    this.groupRenameSaving = true;
+    try {
+      const notes = await this.applyGroupRouteRename(source, target);
+      new Notice(groupRenameSuccessMessage(source, target, notes));
+    } finally {
+      this.groupRenameSaving = false;
+    }
+  }
+
+  /**
+   * Send every member note of one route to the trash, then drop the route.
+   *
+   * Deliberately not atomic, and it never claims to be: a file already in the
+   * trash stays there. So a partial run keeps the schema and the rank exactly as
+   * they were and reports the count that actually completed — the group is still
+   * there to try again, and the notes that moved follow Obsidian's own recovery
+   * setting.
+   */
+  private async trashGroupRoute(from: string): Promise<void> {
+    const library = this.pageLibrary();
+    const archiveName = this.activeArchive().trim();
+    const archive = normalizeArchiveKey(this.activeArchive());
+    const source = normalizeGroupKey(from);
+    const members = this.archiveRecords().filter(
+      (record) => normalizeGroupKey(record.그룹) === source,
+    );
+    const total = members.length;
+    const trashed = new Set<string>();
+    const forget = () => {
+      if (trashed.size === 0) return;
+      this.records = this.records.filter((record) => !trashed.has(record.path));
+      this.invalidateProjectionCaches();
+    };
+
+    this.plugin.suppressGalleryRefresh = true;
+    try {
+      for (const record of members) {
+        const file = this.app.vault.getAbstractFileByPath(record.path);
+        if (!(file instanceof TFile)) {
+          throw new Error(`노트를 찾지 못했어요: ${record.path}`);
+        }
+        await this.app.fileManager.trashFile(file);
+        trashed.add(record.path);
+      }
+    } catch (error) {
+      console.error("[charinfo] 그룹 노트 휴지통 이동 실패", error);
+      forget();
+      this.plugin.markGalleriesDirty();
+      throw new GroupOperationError(
+        `노트 ${total}개 중 ${trashed.size}개만 휴지통으로 보냈어요 · 그룹은 그대로 있어요`,
+      );
+    } finally {
+      this.plugin.suppressGalleryRefresh = false;
+    }
+
+    try {
+      await this.plugin.commitSettings((settings) => {
+        applyGroupDeletion(settings, library, archive, source);
+        if (archiveName) {
+          removeGroupFromOrder(settings, library, archiveName, source);
+        }
+      });
+    } catch (error) {
+      console.error("[charinfo] 그룹 삭제 저장 실패", error);
+      forget();
+      this.plugin.markGalleriesDirty();
+      throw new GroupOperationError(
+        `노트 ${trashed.size}개는 휴지통으로 보냈지만 그룹 설정을 지우지 못했어요 · 다시 시도해 주세요`,
+      );
+    }
+    forget();
+  }
+
+  /**
+   * Delete one named group by reassigning its records first.
+   *
+   * Order is the whole contract: plan every rewrite, apply them, then drop the
+   * schema and the group-order entry in **one** settings commit. If a note write
+   * or that commit fails, the notes already rewritten are rolled back to the
+   * source group and the schema/order are left untouched — so the group is
+   * either gone with its members moved, or exactly as it was. Retrying is safe:
+   * a re-plan sees only the members that still carry the old group.
+   *
+   * Group reassignment is deliberately different from explicit property
+   * removal: stored values are never deleted. A key the destination schema does
+   * not list simply stays dormant on the moved note.
+   */
+  private async deleteGroupWithReassign(
+    from: string,
+    to: string,
+  ): Promise<void> {
+    const library = this.pageLibrary();
+    const archive = normalizeArchiveKey(this.activeArchive());
+    const plan = planGroupDeletion(
+      this.plugin.settings,
+      library,
+      archive,
+      from,
+      to,
+      this.archiveRecords().map((record) => ({
+        path: record.path,
+        group: normalizeGroupKey(record.그룹),
+      })),
+      this.namedGroups(),
+    );
+    if (plan.blocked) {
+      throw new GroupDeletionBlockedError(
+        plan.blocked === "same-scope"
+          ? "다른 위치를 골라 주세요."
+          : "옮길 위치를 찾지 못했어요.",
+      );
+    }
+
+    const rewritten: string[] = [];
+    const write = async (
+      path: string,
+      expected: string,
+      next: string,
+    ): Promise<void> => {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) {
+        throw new Error(`노트를 찾지 못했어요: ${path}`);
+      }
+      await this.app.fileManager.processFrontMatter(file, (fm) => {
+        const current = normalizeGroupKey(
+          typeof fm.그룹 === "string" ? fm.그룹 : "",
+        );
+        if (current !== expected) {
+          throw new Error(`그룹이 다른 곳에서 바뀌었어요: ${file.basename}`);
+        }
+        fm.그룹 = next;
+      });
+    };
+    /** Best-effort return trip; reverse order and report anything stranded. */
+    const rollback = async (): Promise<number> => {
+      let failed = 0;
+      for (const path of [...rewritten].reverse()) {
+        try {
+          await write(path, plan.to, plan.from);
+        } catch (error) {
+          failed += 1;
+          console.error("[charinfo] 그룹 되돌리기 실패", path, error);
+        }
+      }
+      return failed;
+    };
+    const stranded = (failed: number): string =>
+      failed ? ` · 되돌리지 못한 노트 ${failed}개` : "";
+
+    this.plugin.suppressGalleryRefresh = true;
+    try {
+      for (const path of plan.moves) {
+        await write(path, plan.from, plan.to);
+        rewritten.push(path);
+      }
+    } catch (error) {
+      const failed = await rollback();
+      this.plugin.markGalleriesDirty();
+      throw new GroupOperationError(
+        `그룹을 지우지 못했어요${stranded(failed)} · ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      this.plugin.suppressGalleryRefresh = false;
+    }
+
+    try {
+      await this.plugin.commitSettings((settings) => {
+        // Destination creation belongs to this final transaction. Seeding it
+        // before note rewrites would leave settings changed when the first
+        // write fails, violating the delete operation's all-or-nothing promise.
+        if (plan.moves.length > 0) {
+          ensureGroupSchema(settings, library, archive, plan.to);
+        }
+        applyGroupDeletion(settings, library, archive, plan.from);
+        removeGroupFromOrder(
+          settings,
+          library,
+          this.activeArchive().trim(),
+          plan.from,
+        );
+      });
+    } catch (error) {
+      this.plugin.suppressGalleryRefresh = true;
+      let failed = 0;
+      try {
+        failed = await rollback();
+      } finally {
+        this.plugin.suppressGalleryRefresh = false;
+      }
+      this.plugin.markGalleriesDirty();
+      throw new GroupOperationError(
+        `설정을 저장하지 못했어요${stranded(failed)} · ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    for (const record of this.records) {
+      if (!plan.moves.includes(record.path)) continue;
+      record.그룹 = plan.to;
+      record.values.그룹 = plan.to;
+    }
+    if (plan.moves.length > 0) {
+      this.plugin.reconcileGroupMembers(library, archive, plan.to);
+    }
+    this.invalidateProjectionCaches();
+  }
+
+  private openGroupRenameDialog(group: string): void {
+    if (
+      !this.cardEditActive ||
+      this.batchDialog?.isOpen ||
+      this.batchSaving ||
+      this.groupRenameSaving
+    ) {
+      return;
+    }
+    const source = normalizeGroupKey(group);
+    if (!source) return;
+    this.closeGroupRenameDialog();
+    const dialog = new GroupRenameDialog({
+      host: this.contentEl,
+      group: source,
+      existing: this.namedGroups(),
+      onCancel: () =>
+        this.closeGroupRenameDialog({ restoreFocus: true, group: source }),
+      onSubmit: (next) => void this.runGroupRename(source, next),
+    });
+    this.groupRenameDialog = dialog;
+    this.groupRenameSource = source;
+    dialog.open();
+    this.syncGalleryInert();
+  }
+
+  private closeGroupRenameDialog(
+    opts: { restoreFocus?: boolean; group?: string } = {},
+  ): void {
+    const dialog = this.groupRenameDialog;
+    if (!dialog) return;
+    const restoreGroup = opts.group ?? this.groupRenameSource;
+    this.groupRenameDialog = null;
+    this.groupRenameSource = "";
+    dialog.close();
+    this.syncGalleryInert();
+    if (opts.restoreFocus && restoreGroup) this.focusGroupRenamePencil(restoreGroup);
+  }
+
+  private focusGroupRenamePencil(group: string): void {
+    const button = this.contentEl.querySelector(
+      `.charinfo-genre__rename[data-group="${CSS.escape(group)}"]`,
+    );
+    if (button instanceof HTMLElement) button.focus();
+  }
+
+  /** Rename one group without ever merging schemas or leaving half-written notes. */
+  private async runGroupRename(from: string, rawTo: string): Promise<void> {
+    if (this.groupRenameSaving) return;
+    const dialog = this.groupRenameDialog;
+    if (!dialog) return;
+    const to = normalizeRenameInput(rawTo);
+    const problem = groupRenameProblem({
+      from,
+      to,
+      existing: this.namedGroups(),
+    });
+    if (problem) {
+      dialog.showProblem(problem);
+      return;
+    }
+    if (normalizeGroupKey(from) === normalizeGroupKey(to)) {
+      this.closeGroupRenameDialog({ restoreFocus: true, group: from });
+      return;
+    }
+
+    const generation = this.uiGeneration;
+    const library = this.pageLibrary();
+    const archive = normalizeArchiveKey(this.activeArchive());
+    const source = normalizeGroupKey(from);
+    const target = normalizeGroupKey(to);
+    try {
+      renameGroupScope(this.schemaSnapshot(), library, archive, source, target);
+    } catch (error) {
+      const duplicate = this.namedGroups().some(
+        (group) => normalizeGroupKey(group) === target,
+      );
+      if (duplicate) dialog.showProblem("duplicate");
+      else new Notice(error instanceof Error ? error.message : String(error));
+      return;
+    }
+
+    this.groupRenameSaving = true;
+    dialog.beginSaving();
+    let notes = 0;
+    try {
+      notes = await this.applyGroupRouteRename(source, target);
+    } catch (error) {
+      this.groupRenameSaving = false;
+      if (this.uiAlive(generation)) {
+        dialog.endSaving();
+        new Notice(error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+    this.groupRenameSaving = false;
+    if (!this.uiAlive(generation)) {
+      this.plugin.markGalleriesDirty();
+      return;
+    }
+    this.closeGroupRenameDialog();
+    await this.refresh();
+    this.focusGroupRenamePencil(target);
+    new Notice(groupRenameSuccessMessage(source, target, notes));
+  }
+
+  /**
+   * The one identity move, shared by the gallery's pencil and the drawer.
+   *
+   * Rewrite every member note, then move the schema identity and the order slot
+   * in a single commit. `from` may be `""`. A failure at either step rolls the
+   * already-written notes back to `from` and throws a message the caller can
+   * show verbatim, so the vault is either fully renamed or exactly as it was.
+   * Returns how many notes were rewritten.
+   */
+  private async applyGroupRouteRename(
+    from: string,
+    to: string,
+  ): Promise<number> {
+    const library = this.pageLibrary();
+    const archiveName = this.activeArchive().trim();
+    const archive = normalizeArchiveKey(archiveName);
+    const source = normalizeGroupKey(from);
+    const target = normalizeGroupKey(to);
+    const paths = this.archiveRecords()
+      .filter((record) => normalizeGroupKey(record.그룹) === source)
+      .map((record) => record.path);
+    const rewritten: string[] = [];
+    const write = async (path: string, expected: string, next: string) => {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) throw new Error(`노트를 찾지 못했어요: ${path}`);
+      await this.app.fileManager.processFrontMatter(file, (fm) => {
+        const current = normalizeGroupKey(
+          typeof fm.그룹 === "string" ? fm.그룹 : "",
+        );
+        if (current !== expected) {
+          throw new Error(`그룹이 다른 곳에서 바뀌었어요: ${file.basename}`);
+        }
+        fm.그룹 = next;
+      });
+    };
+    const rollback = async (): Promise<number> => {
+      let failed = 0;
+      for (const path of [...rewritten].reverse()) {
+        try {
+          await write(path, target, source);
+        } catch (error) {
+          failed += 1;
+          console.error("[charinfo] 그룹 이름 되돌리기 실패", path, error);
+        }
+      }
+      return failed;
+    };
+    const stranded = (failed: number): string =>
+      failed ? ` · 되돌리지 못한 노트 ${failed}개` : "";
+
+    this.plugin.suppressGalleryRefresh = true;
+    try {
+      for (const path of paths) {
+        await write(path, source, target);
+        rewritten.push(path);
+      }
+    } catch (error) {
+      const failed = await rollback();
+      this.plugin.markGalleriesDirty();
+      throw new GroupOperationError(
+        `그룹 이름을 바꾸지 못했어요${stranded(failed)} · ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      this.plugin.suppressGalleryRefresh = false;
+    }
+
+    try {
+      await this.plugin.commitSettings((settings) => {
+        renameGroupRoute(settings, library, archive, source, target);
+        if (archiveName) {
+          renameGroupRouteInOrder(settings, library, archiveName, source, target);
+        }
+      });
+    } catch (error) {
+      this.plugin.suppressGalleryRefresh = true;
+      const failed = await rollback();
+      this.plugin.suppressGalleryRefresh = false;
+      this.plugin.markGalleriesDirty();
+      throw new GroupOperationError(
+        `설정을 저장하지 못했어요${stranded(failed)} · ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    for (const record of this.records) {
+      if (!paths.includes(record.path)) continue;
+      record.그룹 = target;
+      record.values.그룹 = target;
+    }
+    this.invalidateProjectionCaches();
+    return paths.length;
+  }
+
+  // ── 여러 캐릭터 그룹 이동 ────────────────────────────────────────────────
+  //
+  // Mode, captured scope, selection, the destination dialog, and the write
+  // transaction. Everything below assumes exactly one invariant: selection mode
+  // may exist only while `editMode` is true, and the header icon's active state
+  // is its only visible exit.
+
+  /**
+   * Enter or leave selection mode.
+   *
+   * Entering closes the detail panel and every popover — a card cannot be both
+   * a door and a checkbox — and captures `{ library, archive }`. Leaving is the
+   * idempotent teardown, so an already-torn-down mode is not an error.
+   */
+  private setBatchMode(enabled: boolean): void {
+    // A running transaction owns the mode until it settles.
+    if (this.batchSaving || this.groupRenameSaving) return;
+    if (enabled === this.batchMode) return;
+    if (enabled) {
+      if (!this.editMode) return;
+      this.closeGroupRenameDialog();
+      this.viewMenu?.close();
+      this.viewMenu = null;
+      this.closeTagMenu();
+      if (this.peekOpen || this.selected) this.closePeek();
+      this.batchScope = {
+        library: this.pageLibrary(),
+        archive: normalizeArchiveKey(this.activeArchive()),
+      };
+      this.batchSelection = new Set();
+      this.batchMode = true;
+    } else {
+      this.teardownBatchMode();
+    }
+    this.render();
+    this.focusBatchHeaderButton();
+  }
+
+  /** Idempotent teardown — safe from Escape, edit exit, unload, and close. */
+  private teardownBatchMode(): void {
+    this.closeBatchDialog();
+    this.clearBatchNoticeRaise();
+    this.batchMode = false;
+    this.batchScope = null;
+    this.batchSelection.clear();
+  }
+
+  /**
+   * Keep the captured scope honest after any records change.
+   *
+   * An archive change ends the mode outright; anything else only intersects the
+   * selection with what the archive still holds. Cards hidden by search or a
+   * chip are still in that list, so typing can never drop a selection.
+   */
+  private reconcileBatchScope(): void {
+    if (!this.batchMode) return;
+    const verdict = reconcileBatchSelection(
+      this.batchScope,
+      {
+        library: this.pageLibrary(),
+        archive: normalizeArchiveKey(this.activeArchive()),
+      },
+      this.batchSelection,
+      this.archiveRecords().map((record) => record.path),
+    );
+    if (verdict.teardown) {
+      this.teardownBatchMode();
+      return;
+    }
+    this.batchSelection = new Set(verdict.selection);
+  }
+
+  /** Selected cards of the captured archive, in the archive's stable order. */
+  private selectedBatchRecords(): CharacterRecord[] {
+    return this.archiveRecords().filter((record) =>
+      this.batchSelection.has(record.path),
+    );
+  }
+
+  private toggleBatchPick(path: string): void {
+    if (!this.batchMode || this.batchSaving) return;
+    if (this.batchSelection.has(path)) this.batchSelection.delete(path);
+    else this.batchSelection.add(path);
+    // Patch in place: a re-render here would take the focused card with it.
+    this.syncBatchCard(path);
+    this.syncBatchBar();
+  }
+
+  private clearBatchSelection(): void {
+    if (!this.batchMode || this.batchSaving) return;
+    const paths = [...this.batchSelection];
+    this.batchSelection.clear();
+    for (const path of paths) this.syncBatchCard(path);
+    this.syncBatchBar();
+    // 선택 해제 disables itself at zero, so focus lands on the mode exit —
+    // the one control that is always live in selection mode.
+    this.focusBatchHeaderButton();
+  }
+
+  private syncBatchCard(path: string): void {
+    const card = this.contentEl.querySelector(
+      `.charinfo-card[data-path="${CSS.escape(path)}"]`,
+    );
+    if (!(card instanceof HTMLElement)) return;
+    const picked = this.batchSelection.has(path);
+    card.toggleClass("is-picked", picked);
+    card.setAttribute("aria-checked", picked ? "true" : "false");
+  }
+
+  private renderBatchBar(root: HTMLElement): void {
+    const bar = root.createDiv({
+      cls: "charinfo-batch-bar",
+      attr: { role: "group", "aria-label": "선택한 캐릭터" },
+    });
+    bar.createDiv({
+      cls: "charinfo-batch-bar__count",
+      text: `${this.batchSelection.size}명 선택`,
+      attr: { role: "status" },
+    });
+    const actions = bar.createDiv({ cls: "charinfo-batch-bar__actions" });
+    const clear = actions.createEl("button", {
+      cls: "charinfo-text-btn charinfo-batch-bar__clear",
+      text: "선택 해제",
+      attr: { type: "button" },
+    });
+    clear.disabled = this.batchSelection.size === 0;
+    clear.addEventListener("click", () => this.clearBatchSelection());
+    const move = actions.createEl("button", {
+      cls: "charinfo-text-btn mod-cta charinfo-batch-bar__move",
+      text: "그룹 이동",
+      attr: { type: "button" },
+    });
+    move.disabled = this.batchSelection.size === 0;
+    move.addEventListener("click", () => this.openBatchDialog());
+  }
+
+  /** Count + disabled state only — the bar itself never rebuilds on a toggle. */
+  private syncBatchBar(): void {
+    const bar = this.contentEl.querySelector(".charinfo-batch-bar");
+    if (!(bar instanceof HTMLElement)) return;
+    const count = bar.querySelector(".charinfo-batch-bar__count");
+    if (count instanceof HTMLElement) {
+      count.setText(`${this.batchSelection.size}명 선택`);
+    }
+    const empty = this.batchSelection.size === 0;
+    for (const selector of [
+      ".charinfo-batch-bar__clear",
+      ".charinfo-batch-bar__move",
+    ]) {
+      const button = bar.querySelector(selector);
+      if (button instanceof HTMLButtonElement) button.disabled = empty;
+    }
+  }
+
+  private focusBatchHeaderButton(): void {
+    const button = this.contentEl.querySelector(
+      '.charinfo-gallery__icon-btn[data-charinfo="batch"]',
+    );
+    if (button instanceof HTMLElement) button.focus();
+  }
+
+  private focusBatchMoveButton(): void {
+    const button = this.contentEl.querySelector(".charinfo-batch-bar__move");
+    if (button instanceof HTMLElement) button.focus();
+  }
+
+  private openBatchDialog(): void {
+    if (!this.batchMode || this.batchSaving) return;
+    const selected = this.selectedBatchRecords();
+    if (selected.length === 0) return;
+    this.closeBatchDialog();
+    const rows = describeDestinations(
+      this.namedGroups(),
+      selected.map((record) => normalizeGroupKey(record.그룹)),
+      (group) => this.groupMemberCount(group),
+    );
+    const dialog = new BatchGroupMoveDialog({
+      host: this.contentEl,
+      selectedCount: selected.length,
+      rows,
+      onCancel: () => this.closeBatchDialog({ restoreFocus: true }),
+      onConfirm: (destination) => void this.runBatchGroupMove(destination),
+    });
+    this.batchDialog = dialog;
+    dialog.open();
+    this.syncGalleryInert();
+  }
+
+  private closeBatchDialog(opts: { restoreFocus?: boolean } = {}): void {
+    const dialog = this.batchDialog;
+    if (!dialog) return;
+    this.batchDialog = null;
+    // The opener lives inside the batch bar, which is inert while the dialog
+    // is mounted. Remove the modal and inert state before returning focus.
+    disposeBatchDialog({
+      dispose: () => dialog.close(),
+      releaseInert: () => this.syncGalleryInert(),
+      restoreFocus: opts.restoreFocus
+        ? () => this.focusBatchMoveButton()
+        : null,
+    });
+  }
+
+  /**
+   * The whole transaction, in the only order that cannot leave a half-move:
+   *
+   * 1. freeze this view's refresh — an external repaint must not land mid-write;
+   * 2. persist the destination schema through the **throwing** path, so a
+   *    settings failure aborts with zero note mutations;
+   * 3. write the notes sequentially, each one validated against the group the
+   *    plan read, rolling back in reverse on the first failure;
+   * 4. patch records and reconcile **only** after every write succeeded;
+   * 5. thaw, and flush exactly one refresh if anything was deferred or touched.
+   *
+   * The storage guarantee outlives the UI: if the leaf goes away mid-write, the
+   * writes still finish or roll back — they just stop painting.
+   */
+  private async runBatchGroupMove(destination: string): Promise<void> {
+    if (!this.batchMode || this.batchSaving) return;
+    const scope = this.batchScope;
+    const dialog = this.batchDialog;
+    if (!scope || !dialog) return;
+
+    const plan = this.planBatchMove(destination);
+    if (!plan || plan.total === 0) return;
+
+    const generation = this.uiGeneration;
+    this.batchSaving = true;
+    dialog.beginSaving();
+
+    await runBatchTransaction({
+      freeze: () => this.batchFreeze.freeze(),
+      perform: async () => {
+        // Preflight, not the swallow-and-continue wrapper: a destination whose
+        // schema failed to save must never receive a note.
+        await this.plugin.persistGroupSchema(
+          scope.library,
+          scope.archive,
+          plan.destination,
+        );
+        if (plan.moves.length === 0) {
+          return {
+            outcome: { changed: 0, applied: [], attempted: 0 },
+            touchedDisk: false,
+          };
+        }
+        return {
+          outcome: await executeBatchGroupMove(
+            plan,
+            (entry) => this.writeBatchGroup(entry, scope),
+            (entry, previousGroup) =>
+              this.rollbackBatchGroup(entry, previousGroup),
+          ),
+          touchedDisk: true,
+        };
+      },
+      thaw: () => this.batchFreeze.thaw(),
+      settle: () => {
+        this.batchSaving = false;
+      },
+      commit: (outcome: BatchMoveOutcome) => {
+        for (const move of outcome.applied) {
+          const record = this.records.find((item) => item.path === move.path);
+          if (!record) continue;
+          record.그룹 = plan.destination;
+          record.values.그룹 = plan.destination;
+        }
+        if (outcome.changed > 0) {
+          this.plugin.reconcileGroupMembers(
+            scope.library,
+            scope.archive,
+            plan.destination,
+          );
+        }
+        this.invalidateProjectionCaches();
+      },
+      uiAlive: () => this.uiAlive(generation),
+      markDirty: () => this.plugin.markGalleriesDirty(),
+      closeDialog: () => this.closeBatchDialog(),
+      exitSelection: () => this.teardownBatchMode(),
+      refresh: () => this.refresh(),
+      render: () => this.render(),
+      reportFailure: (failure: unknown) => {
+        this.reportBatchFailure(failure);
+        this.focusBatchMoveButton();
+      },
+      reportSuccess: (outcome: BatchMoveOutcome) => {
+        new Notice(
+          batchMoveSuccessMessage(outcome.changed, plan.destination),
+          BATCH_NOTICE_MS,
+        );
+        this.focusBatchHeaderButton();
+      },
+    });
+  }
+
+  /**
+   * Re-read the selection off `records` and plan against it. Every path is
+   * revalidated at write time too, so this is the plan, not the promise.
+   */
+  private planBatchMove(destination: string): BatchMovePlan | null {
+    try {
+      return planBatchGroupMove(
+        this.selectedBatchRecords().map((record) => ({
+          path: record.path,
+          group: normalizeGroupKey(record.그룹),
+        })),
+        normalizeMoveGroup(destination),
+      );
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  }
+
+  /** One error Notice, plus the paths a rollback could not restore. */
+  private reportBatchFailure(failure: unknown): void {
+    let notice: Notice;
+    if (failure instanceof BatchGroupMoveError) {
+      for (const item of failure.rollbackFailures) {
+        console.error("[charinfo] 그룹 되돌리기 실패", item.path, item.error);
+      }
+      notice = new Notice(batchMoveFailureMessage(failure), BATCH_NOTICE_MS);
+    } else {
+      console.error("[charinfo] 그룹 이동 실패", failure);
+      notice = new Notice(
+        `그룹을 바꾸지 못했어요 · ${failure instanceof Error ? failure.message : String(failure)}`,
+        BATCH_NOTICE_MS,
+      );
+    }
+    this.raiseBatchBarForNotice(notice);
+  }
+
+  /**
+   * Narrow screens stack the native Notice at the bottom, exactly where the
+   * batch bar lives. Raise the bar for the Notice's lifetime so the two keep
+   * their 12px separation instead of overlapping.
+   */
+  private raiseBatchBarForNotice(notice: Notice): void {
+    this.clearBatchNoticeRaise();
+    if (!this.batchMode) return;
+    this.contentEl.addClass("is-batch-notice");
+    window.requestAnimationFrame(() => {
+      if (!this.batchMode || !notice.noticeEl.isConnected) return;
+      const lift = batchNoticeLift({
+        galleryBottom: this.contentEl.getBoundingClientRect().bottom,
+        noticeTop: notice.noticeEl.getBoundingClientRect().top,
+      });
+      this.contentEl.style.setProperty(
+        "--charinfo-batch-notice-lift",
+        `${lift}px`,
+      );
+    });
+    this.batchNoticeTimer = window.setTimeout(() => {
+      this.batchNoticeTimer = null;
+      this.contentEl.removeClass("is-batch-notice");
+      this.contentEl.style.removeProperty("--charinfo-batch-notice-lift");
+    }, BATCH_NOTICE_MS);
+  }
+
+  private clearBatchNoticeRaise(): void {
+    if (this.batchNoticeTimer != null) {
+      window.clearTimeout(this.batchNoticeTimer);
+      this.batchNoticeTimer = null;
+    }
+    this.contentEl.removeClass("is-batch-notice");
+    this.contentEl.style.removeProperty("--charinfo-batch-notice-lift");
+  }
+
+  /** True while this DOM is still the DOM the transaction started against. */
+  private uiAlive(generation: number): boolean {
+    return !this.viewClosed && this.uiGeneration === generation;
+  }
+
+  /** True when this path still belongs to the captured library root. */
+  private withinBatchLibrary(path: string, library: string): boolean {
+    const root = normalizeLibraryKey(library);
+    if (!root) return true;
+    return path === root || path.startsWith(`${root}/`);
+  }
+
+  /**
+   * Write one note's `그룹`, refusing anything the plan did not read.
+   *
+   * Revalidation is against the **captured** library, archive, and source group,
+   * so a note that moved out from under the selection is a conflict, never an
+   * overwrite. Three outcomes, no fourth: already-there is a no-op,
+   * expected-group is a write, anything else is a conflict. `order` is never
+   * touched — the card keeps its position value and the section sorts it.
+   */
+  private async writeBatchGroup(
+    entry: BatchMoveEntry,
+    scope: { library: string; archive: string },
+  ): Promise<BatchWriteResult> {
+    const file = this.app.vault.getAbstractFileByPath(entry.path);
+    if (!(file instanceof TFile)) {
+      throw new BatchMoveConflictError(
+        entry.path,
+        `노트를 찾지 못했어요 · ${entry.path}`,
+      );
+    }
+    if (!this.withinBatchLibrary(entry.path, scope.library)) {
+      throw new BatchMoveConflictError(
+        entry.path,
+        `「${file.basename}」이(가) 이 서재 밖으로 옮겨졌어요.`,
+      );
+    }
+    const written: string[] = [];
+    // Collected, not thrown from inside the callback: the frontmatter writer
+    // owns that boundary, and a swallowed throw would read as a silent no-op.
+    const conflicts: BatchMoveConflictError[] = [];
+    const seen: string[] = [];
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      if (normalizeArchiveKey(fm.장르) !== scope.archive) {
+        conflicts.push(
+          new BatchMoveConflictError(
+            entry.path,
+            `「${file.basename}」의 아카이브가 그 사이에 바뀌었어요.`,
+          ),
+        );
+        return;
+      }
+      const current = normalizeMoveGroup(fm.그룹);
+      seen.push(current);
+      if (current === entry.destination) return;
+      if (current !== entry.expectedGroup) {
+        conflicts.push(
+          new BatchMoveConflictError(
+            entry.path,
+            `「${file.basename}」의 그룹이 그 사이에 바뀌었어요.`,
+          ),
+        );
+        return;
+      }
+      fm.그룹 = entry.destination;
+      written.push(current);
+    });
+    const conflict = conflicts[0];
+    if (conflict) throw conflict;
+    return {
+      changed: written.length > 0,
+      previousGroup: seen[0] ?? entry.expectedGroup,
+    };
+  }
+
+  /**
+   * Put one note back. Only our own value may be undone: if the group diverged
+   * again the write belongs to someone else, so it is reported, not overwritten.
+   */
+  private async rollbackBatchGroup(
+    entry: BatchMoveEntry,
+    previousGroup: string,
+  ): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(entry.path);
+    if (!(file instanceof TFile)) {
+      throw new BatchMoveConflictError(
+        entry.path,
+        `노트를 찾지 못해 되돌리지 못했어요 · ${entry.path}`,
+      );
+    }
+    const diverged: string[] = [];
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      const current = normalizeMoveGroup(fm.그룹);
+      if (current !== entry.destination) {
+        diverged.push(current);
+        return;
+      }
+      fm.그룹 = previousGroup;
+    });
+    if (diverged.length > 0) {
+      throw new BatchMoveConflictError(
+        entry.path,
+        `되돌리기 전에 그룹이 또 바뀌었어요 · ${entry.path}`,
+      );
+    }
+  }
+
+  /**
+   * One command for 보기’s page-filter chips: FM first, then settings.
+   * A settings-save failure rolls the frontmatter back.
+   */
+  private async setPageFilter(
+    next: PrimaryFilterProperty | null,
+  ): Promise<void> {
+    let prev = this.resolvePageScope().primaryFilter;
+    if (this.file) {
+      await this.app.fileManager.processFrontMatter(this.file, (fm) => {
+        const raw =
+          typeof fm.primaryFilter === "string"
+            ? fm.primaryFilter.trim()
+            : "";
+        prev = FILTER_AXIS_IDS.includes(raw as PrimaryFilterProperty)
+          ? (raw as PrimaryFilterProperty)
+          : null;
+        if (next == null) delete fm.primaryFilter;
+        else fm.primaryFilter = next;
+      });
+    }
+    try {
+      patchGalleryPageState(this.plugin.settings, this.pageKey(), {
+        chipFilter: "all",
+        chipFilterProperty:
+          next ?? this.plugin.settings.primaryFilterProperty,
+      });
+      await this.plugin.saveSettings();
+    } catch (error) {
+      if (this.file) {
+        await this.app.fileManager.processFrontMatter(this.file, (fm) => {
+          if (prev == null) delete fm.primaryFilter;
+          else fm.primaryFilter = prev;
+        });
+      }
+      throw error;
+    }
+  }
+
   setEditMode(enabled: boolean): void {
+    // Selection owns the Gallery Edit surface. This guard is deliberately at
+    // the public entry point, not only on the pencil, because the global
+    // command palette calls the same method. Saving can never be cancelled;
+    // while merely selecting, the active selection icon remains the sole exit.
+    if (this.groupRenameSaving) {
+      new Notice("그룹 이름 변경이 끝난 뒤 편집 모드를 바꿀 수 있어요.");
+      return;
+    }
+    if (this.batchMode) {
+      new Notice(
+        this.batchSaving
+          ? "그룹 이동이 끝난 뒤 편집 모드를 바꿀 수 있어요."
+          : "여러 선택을 끝낸 뒤 편집 모드를 바꿀 수 있어요.",
+      );
+      return;
+    }
     const turningOn = enabled && !this.editMode;
+    // Selection mode exists only inside Gallery Edit — leaving takes it down.
+    if (!enabled) this.teardownBatchMode();
+    if (!enabled) this.closeGroupRenameDialog();
     this.editMode = enabled;
     this.render();
     if (turningOn) {
@@ -666,19 +2193,145 @@ export class GalleryView extends FileView {
   }
 
   async refresh(): Promise<void> {
+    // A batch write is running: record the request and paint nothing. Scanning
+    // here would rebuild `records` from a half-written vault, and rendering
+    // would tear down the dialog the transaction is still holding.
+    if (this.batchFreeze.capture()) return;
+    // Read the dirty version first: an edit landing during the scan below must
+    // stay pending instead of being acknowledged away by this older pass.
+    const version = this.plugin.galleryRefreshVersion();
     this.records = await this.store.listCharacters(
       this.sortMode,
       this.pageLibrary(),
     );
     this.ensureActiveGenre();
+    this.reconcileBatchScope();
     if (this.selected) {
       this.selected =
         this.records.find((r) => r.path === this.selected?.path) ?? null;
     }
     // Status chips stay settings-owned. Unknown note values still render as
     // gray ghost pills — we do not auto-add them back after the user deletes.
-    this.plugin.acknowledgeGalleryRefresh();
+    this.plugin.acknowledgeGalleryRefresh(version);
     this.render();
+  }
+
+  /**
+   * A note under this gallery changed on disk (after Obsidian persisted it).
+   * Body-only edits patch the note-derived side-panel regions in place; a
+   * card/frontmatter projection change asks for a full gallery render.
+   * Returns true when a full refresh was requested.
+   */
+  async handleNoteChanged(path: string): Promise<boolean> {
+    // Our own transaction is writing these notes. Patching a card now would
+    // paint an intermediate group value that may still be rolled back.
+    if (this.batchFreeze.capture()) return false;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      this.plugin.markGalleriesDirty({ path });
+      return true;
+    }
+
+    const known = this.records.find((record) => record.path === path) ?? null;
+    let next: CharacterRecord | null = null;
+    try {
+      next = await this.store.readCharacter(file);
+    } catch {
+      // Keep last-good state; the next modify or manual refresh retries.
+      return false;
+    }
+
+    if (!known || !next || cardProjectionChanged(known, next)) {
+      this.plugin.markGalleriesDirty({ path });
+      return true;
+    }
+
+    if (this.selected?.path !== path) return false;
+    await this.refreshNoteRegions(known);
+    return false;
+  }
+
+  /** Cover + embedded/folder image identity of the panel's image strip. */
+  private imageFingerprint(
+    record: CharacterRecord,
+    markdown: string,
+  ): string {
+    const images = listCharacterImages(this.app, record, markdown);
+    return `${record.cover}\0${images.map((f) => f.path).join("\0")}`;
+  }
+
+  /**
+   * Patch only the note-derived regions of the open panel: body always, image
+   * strip when its fingerprint moved. The new body is staged hidden inside the
+   * panel and swapped in atomically, so a failed read or render leaves the last
+   * good DOM (and the sheet chrome) untouched.
+   */
+  private async refreshNoteRegions(record: CharacterRecord): Promise<void> {
+    const detail = this.contentEl.querySelector(".charinfo-gallery__detail");
+    if (!(detail instanceof HTMLElement)) return;
+    const liveBody = detail.querySelector(".charinfo-detail__body");
+    if (!(liveBody instanceof HTMLElement)) {
+      // The panel never finished painting — rebuild it wholesale.
+      await this.renderDetail(detail);
+      return;
+    }
+
+    const generation = ++this.noteRefreshGeneration;
+    const stale = () =>
+      generation !== this.noteRefreshGeneration ||
+      this.selected?.path !== record.path ||
+      !liveBody.isConnected;
+
+    let markdown: string;
+    try {
+      markdown = await this.app.vault.read(record.file);
+    } catch {
+      return;
+    }
+    if (stale()) return;
+
+    const stagedChild = new Component();
+    const staged = detail.createDiv({ cls: "charinfo-detail__body is-staging" });
+    this.addChild(stagedChild);
+    const discard = () => {
+      this.removeChild(stagedChild);
+      staged.remove();
+    };
+
+    try {
+      await renderLivePeekBody(
+        this.app,
+        stagedChild,
+        staged,
+        markdown,
+        record.path,
+      );
+    } catch {
+      discard();
+      return;
+    }
+    if (stale()) {
+      discard();
+      return;
+    }
+
+    this.unloadPeekBody();
+    liveBody.replaceWith(staged);
+    staged.removeClass("is-staging");
+    this.peekBodyChild = stagedChild;
+
+    const fingerprint = this.imageFingerprint(record, markdown);
+    if (fingerprint !== this.peekStripFingerprint) {
+      this.peekStripFingerprint = fingerprint;
+      const holder = document.createElement("div");
+      await this.renderImageStrip(holder, record, markdown);
+      const nextStrip = holder.firstElementChild;
+      const oldStrip = detail.querySelector(".charinfo-image-strip");
+      if (nextStrip instanceof HTMLElement) {
+        if (oldStrip instanceof HTMLElement) oldStrip.replaceWith(nextStrip);
+        else detail.insertBefore(nextStrip, staged);
+      }
+    }
   }
 
   private filtered(): CharacterRecord[] {
@@ -688,8 +2341,11 @@ export class GalleryView extends FileView {
     const chip = this.chipFilter;
     return this.records.filter((record) => {
       if (genre && record.장르 !== genre) return false;
-      if (chip !== "all" && !recordMatchesAxisChip(axis, record, chip)) {
-        return false;
+      if (chip !== "all") {
+        // A record whose schema dropped the axis must not match it by a value
+        // left dormant on the note.
+        if (!this.recordHasAxis(record, axis.propertyId)) return false;
+        if (!recordMatchesAxisChip(axis, record, chip)) return false;
       }
       if (!q) return true;
       const hay = [record.title, record.이름, record.코드네임, record.장르, record.그룹]
@@ -701,12 +2357,18 @@ export class GalleryView extends FileView {
 
   render(): void {
     const root = this.contentEl;
+    this.invalidateProjectionCaches();
     this.viewMenu?.close();
     this.viewMenu = null;
     this.closeTagMenu();
+    // A repaint invalidates the destination list (counts, group inventory), and
+    // `root.empty()` would orphan the dialog's DOM anyway. It cannot survive.
+    this.closeBatchDialog();
+    this.closeGroupRenameDialog();
     root.empty();
     root.addClass("charinfo-gallery");
     root.toggleClass("is-edit", this.editMode);
+    root.toggleClass("is-batch", this.batchMode);
     root.toggleClass("is-fit-image", this.plugin.settings.cardFitImage);
     root.toggleClass("is-narrow", this.isNarrow);
     root.toggleClass("is-peek-open", this.peekOpen);
@@ -717,11 +2379,14 @@ export class GalleryView extends FileView {
     this.syncGalleryInert();
     root.createDiv({ cls: "charinfo-gallery__body" });
     this.renderBody();
+    // The bar lives outside the body so search and chip repaints leave it be.
+    if (this.batchMode) this.renderBatchBar(root);
   }
 
   private renderBody(): void {
     const body = this.contentEl.querySelector(".charinfo-gallery__body");
     if (!(body instanceof HTMLElement)) return;
+    this.invalidateProjectionCaches();
     body.empty();
     const main = body.createDiv({ cls: "charinfo-gallery__main" });
     // Narrow only: dim layer under the sheet, above the (inert) grid.
@@ -803,12 +2468,19 @@ export class GalleryView extends FileView {
     }
     // Tags carry no color, so their chips drop the color dot.
     const isTagAxis = axis.propertyId === "tags";
-    const options: { id: string; label: string; cls: string }[] = [
-      { id: "all", label: "전체", cls: "is-all" },
+    /** `cls` for the colorless chips; `color` for the ones that carry a dot. */
+    const options: {
+      id: string;
+      label: string;
+      cls: string;
+      color: StatusColorToken | null;
+    }[] = [
+      { id: "all", label: "전체", cls: "is-all", color: null },
       ...this.visibleAxisOptions(axis).map((s) => ({
         id: s.id,
         label: s.label,
-        cls: isTagAxis ? "is-tag" : statusColorClass(s.color),
+        cls: isTagAxis ? "is-tag" : "",
+        color: isTagAxis ? null : s.color,
       })),
     ];
     for (const option of options) {
@@ -816,7 +2488,7 @@ export class GalleryView extends FileView {
       const chip = tokens.createEl("span", {
         cls:
           "charinfo-status-filter" +
-          ` ${option.cls}` +
+          (option.cls ? ` ${option.cls}` : "") +
           (active === option.id ? " is-active" : ""),
         attr: {
           role: "button",
@@ -825,7 +2497,8 @@ export class GalleryView extends FileView {
           "aria-pressed": active === option.id ? "true" : "false",
         },
       });
-      if (option.id !== "all" && !isTagAxis) {
+      if (option.color) {
+        paintStatusColor(chip, option.color);
         chip.createSpan({ cls: "charinfo-status__dot" });
       }
       chip.createSpan({ text: option.label });
@@ -911,16 +2584,16 @@ export class GalleryView extends FileView {
       }
 
       // Edit mode only — pencil is free here (mode toggle shows book-open while editing).
-      if (this.editMode && current) {
+      if (this.cardEditActive && current) {
         const renameBtn = genreRow.createEl("button", {
-          cls: "clickable-icon charinfo-gallery__genre-rename",
+          cls: "clickable-icon charinfo-icon-btn charinfo-gallery__genre-rename",
           attr: {
             type: "button",
             title: "아카이브 이름 바꾸기",
             "aria-label": "아카이브 이름 바꾸기",
           },
         });
-        setIcon(renameBtn, "type");
+        setIcon(renameBtn, "pencil");
         renameBtn.addEventListener("click", () => {
           if (!current) return;
           new RenameGenreModal(this.app, current, (to) =>
@@ -934,7 +2607,7 @@ export class GalleryView extends FileView {
     this.renderChipFilters(header);
 
     // Sort lives in the header only in edit; keep chips compact and labeled via aria.
-    if (this.editMode) {
+    if (this.cardEditActive) {
       const sort = header.createDiv({
         cls: "charinfo-gallery__sort",
         attr: { role: "group", "aria-label": "정렬" },
@@ -986,43 +2659,97 @@ export class GalleryView extends FileView {
 
     const actions = header.createDiv({ cls: "charinfo-gallery__actions" });
 
+    // Selection mode locks the pencil: the selection icon is the only exit.
+    const surface = this.batchSurface();
     const toggleBtn = actions.createEl("button", {
       cls:
         "clickable-icon charinfo-gallery__icon-btn" +
-        (this.editMode ? " is-active" : ""),
+        (this.editMode ? " is-active" : "") +
+        (surface.editToggleEnabled ? "" : " is-locked"),
       attr: {
         type: "button",
-        title: this.editMode
-          ? "읽기 모드로"
-          : "편집 모드 — 표시 순서를 바꿀 수 있어요",
-        "aria-label": this.editMode ? "읽기 모드" : "편집 모드",
+        title: this.batchMode
+          ? "여러 선택을 끝내면 읽기 모드로 바꿀 수 있어요"
+          : this.editMode
+            ? "읽기 모드로"
+            : "편집 모드 — 표시 순서를 바꿀 수 있어요",
+        "aria-label": this.batchMode
+          ? "읽기 모드 — 여러 선택을 끝내면 바꿀 수 있어요"
+          : this.editMode
+            ? "읽기 모드"
+            : "편집 모드",
+        "aria-disabled": this.batchMode ? "true" : "false",
         "data-charinfo": "edit",
       },
     });
+    toggleBtn.disabled = !surface.editToggleEnabled;
     setIcon(toggleBtn, "pencil");
     toggleBtn.addEventListener("click", () => this.setEditMode(!this.editMode));
 
-    const attrBtn = actions.createEl("button", {
+    // Directly after the pencil: selection is a mode *inside* Gallery Edit, and
+    // its active state is the only visible way back out.
+    const batchLabel = this.batchMode
+      ? "여러 캐릭터 선택 끝내기"
+      : "여러 캐릭터 선택";
+    const batchBtn = actions.createEl("button", {
       cls:
         "clickable-icon charinfo-gallery__icon-btn" +
+        (this.batchMode ? " is-active" : "") +
         (this.editMode ? "" : " is-locked"),
       attr: {
         type: "button",
         title: this.editMode
-          ? "속성 관리 — 보이는 이름과 값"
-          : "속성 관리 — 편집 모드에서 열려요",
+          ? batchLabel
+          : "여러 캐릭터 선택 — 편집 모드에서 열려요",
         "aria-label": this.editMode
-          ? "속성 관리"
-          : "속성 관리 — 편집 모드에서 열려요",
+          ? batchLabel
+          : "여러 캐릭터 선택 — 편집 모드에서 열려요",
+        "aria-pressed": this.batchMode ? "true" : "false",
         "aria-disabled": this.editMode ? "false" : "true",
+        "data-charinfo": "batch",
+      },
+    });
+    setIcon(batchBtn, "list-checks");
+    batchBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (!this.editMode) {
+        new Notice("편집 모드(연필)를 켜면 여러 캐릭터를 고를 수 있어요.");
+        toggleBtn.focus();
+        return;
+      }
+      this.setBatchMode(!this.batchMode);
+    });
+
+    const attrBtn = actions.createEl("button", {
+      cls:
+        "clickable-icon charinfo-gallery__icon-btn" +
+        (this.cardEditActive ? "" : " is-locked"),
+      attr: {
+        type: "button",
+        title: this.cardEditActive
+          ? "속성 관리 — 이 그룹의 항목"
+          : this.batchMode
+            ? "여러 선택을 끝내면 속성을 관리할 수 있어요"
+            : "속성 관리 — 편집 모드에서 열려요",
+        "aria-label": this.cardEditActive
+          ? "속성 관리"
+          : this.batchMode
+            ? "속성 관리 — 여러 선택을 끝내면 열려요"
+            : "속성 관리 — 편집 모드에서 열려요",
+        "aria-disabled": this.cardEditActive ? "false" : "true",
       },
     });
     setIcon(attrBtn, "book");
     attrBtn.addEventListener("click", (event) => {
       event.preventDefault();
-      if (!this.editMode) {
-        new Notice("편집 모드(연필)를 켜면 속성 관리를 열 수 있어요.");
-        toggleBtn.focus();
+      if (!this.cardEditActive) {
+        if (this.batchMode) {
+          new Notice("여러 선택을 끝내면 속성 관리를 열 수 있어요.");
+          batchBtn.focus();
+        } else {
+          new Notice("편집 모드(연필)를 켜면 속성 관리를 열 수 있어요.");
+          toggleBtn.focus();
+        }
         return;
       }
       this.openAttrManage();
@@ -1037,18 +2764,46 @@ export class GalleryView extends FileView {
       },
     });
     setIcon(viewBtn, "sliders-horizontal");
-    this.viewMenu = new ViewSettingsPopover(viewBtn, root, {
-      getLabel: (id) => this.propLabel(id),
-      getProperties: () => this.plugin.settings.cardProperties,
-      setProperties: async (next) => {
-        this.plugin.settings.cardProperties = next;
-        await this.plugin.saveSettings();
+    this.viewMenu = new ViewSettingsPopover(viewBtn, {
+      // Union of the archive's active fields in deterministic schema order.
+      // Observed groups come from the *unfiltered* archive: a chip or a search
+      // must not remove a row from 보기.
+      getFields: () => {
+        const rows = unionActiveFieldsForArchive(
+          this.plugin.settings,
+          this.pageLibrary(),
+          normalizeArchiveKey(this.activeArchive()),
+          this.pageKey(),
+          this.observedGroups(),
+        );
+        return rows.map((entry) => ({
+          fieldId: entry.fieldId,
+          label: entry.label,
+          visible: entry.visible,
+        }));
+      },
+      setVisible: async (fieldId, visible) => {
+        const page = this.pageKey();
+        const archive = normalizeArchiveKey(this.activeArchive());
+        await this.plugin.commitSettings((settings) => {
+          setFieldVisibility(settings, page, archive, fieldId, visible);
+        });
       },
       getFitImage: () => this.plugin.settings.cardFitImage,
       setFitImage: async (fit) => {
         this.plugin.settings.cardFitImage = fit;
         await this.plugin.saveSettings();
       },
+      getPageAxis: () => this.resolvePageScope().primaryFilter,
+      getGlobalAxis: () => this.plugin.settings.primaryFilterProperty,
+      axisName: (id) =>
+        axisLabel(id, this.plugin.settings.propertyDisplayNames),
+      axisReachable: (id) => this.axisReachable(id),
+      axisOptions: (id) =>
+        axisFor(this.plugin.settings, id).options.map(
+          (option) => option.label,
+        ),
+      setPageAxis: (next) => this.setPageFilter(next),
       onChange: () => {
         root.toggleClass("is-fit-image", this.plugin.settings.cardFitImage);
         this.renderBody();
@@ -1160,6 +2915,9 @@ export class GalleryView extends FileView {
         library: this.pageLibrary(),
       });
     };
+    // Adding a card is an edit action, and it reveals the new card in peek.
+    // Selection mode keeps the recovery routes and drops this one.
+    const canAdd = this.batchSurface().addCardVisible;
 
     // Filter hiding cards that exist → recover first, then add.
     if (filterDef && allCount > 0 && !hasSearch) {
@@ -1180,12 +2938,14 @@ export class GalleryView extends FileView {
         btn.addEventListener("click", () => void this.setChipFilter(s.id));
       }
 
-      const add = actions.createEl("button", {
-        text: "캐릭터 추가",
-        cls: "charinfo-gallery__empty-secondary",
-        attr: { type: "button" },
-      });
-      add.addEventListener("click", addCharacter);
+      if (canAdd) {
+        const add = actions.createEl("button", {
+          text: "캐릭터 추가",
+          cls: "charinfo-gallery__empty-secondary",
+          attr: { type: "button" },
+        });
+        add.addEventListener("click", addCharacter);
+      }
       return;
     }
 
@@ -1225,6 +2985,7 @@ export class GalleryView extends FileView {
       return;
     }
 
+    if (!canAdd) return;
     const add = actions.createEl("button", {
       text: "캐릭터 추가",
       cls: "mod-cta",
@@ -1235,18 +2996,40 @@ export class GalleryView extends FileView {
 
   private renderGroups(main: HTMLElement, records: CharacterRecord[]): void {
     // Section headers = non-empty `그룹` only (장르 is the top archive select).
-    const present = [...new Set(records.map((r) => r.그룹.trim()))];
     const genre = this.activeArchive().trim();
-    const preferred = resolveGroupOrder(
-      getGroupOrderFor(this.plugin.settings, this.pageLibrary(), genre),
-      present,
+    // Pencil mode also shows a group the user made but has not filled yet.
+    // Membership is read from the unfiltered archive, so a chip or a search can
+    // never invent an "empty" section for cards it merely hid.
+    const emptyGroups = this.editMode ? this.emptyPersistedGroups() : [];
+    // One ranking authority: the canonical route order, 기본 included. The
+    // default section is no longer pinned last — it holds whatever rank the
+    // group drawer gave it, and an unranked route still lands at the end.
+    const routeOrder = this.routeOrder();
+    const rank = new Map<string, number>();
+    routeOrder.forEach((route, index) => {
+      if (!rank.has(route)) rank.set(route, index);
+    });
+    const groups = this.store.groupByGroup(records, routeOrder.filter(Boolean));
+    const sections: { group: string; list: CharacterRecord[] }[] = [];
+    const rendered = new Set<string>();
+    for (const list of groups.values()) {
+      const group = list[0]?.그룹.trim() ?? "";
+      rendered.add(group);
+      sections.push({ group, list });
+    }
+    for (const group of emptyGroups) {
+      if (rendered.has(group)) continue;
+      rendered.add(group);
+      sections.push({ group, list: [] });
+    }
+    const unranked = routeOrder.length;
+    sections.sort(
+      (a, b) => (rank.get(a.group) ?? unranked) - (rank.get(b.group) ?? unranked),
     );
-    const groups = this.store.groupByGroup(records, preferred);
 
-    for (const [label, list] of groups) {
+    for (const { group: rawGroup, list } of sections) {
       const section = main.createDiv({ cls: "charinfo-genre" });
-      const rawGroup = list[0]?.그룹.trim() ?? "";
-      section.dataset.group = label;
+      section.dataset.group = rawGroup;
       section.dataset.groupRaw = rawGroup;
 
       if (rawGroup) {
@@ -1254,7 +3037,7 @@ export class GalleryView extends FileView {
         const heading = section.createDiv({ cls: "charinfo-genre__header" });
         const titleRow = heading.createDiv({ cls: "charinfo-genre__title-row" });
 
-        if (this.editMode) {
+        if (this.cardEditActive) {
           const handle = titleRow.createDiv({
             cls: "charinfo-genre__drag-handle",
             attr: {
@@ -1267,24 +3050,39 @@ export class GalleryView extends FileView {
 
         titleRow.createEl("h3", {
           text: rawGroup,
-          attr: { title: "그룹" },
+          attr: { title: rawGroup },
         });
         titleRow.createSpan({
           cls: "charinfo-genre__count",
           text: String(list.length),
         });
 
-        if (this.editMode) {
+        if (this.cardEditActive) {
+          const rename = titleRow.createEl("button", {
+            cls: "clickable-icon charinfo-icon-btn charinfo-genre__rename",
+            attr: {
+              type: "button",
+              title: "그룹 이름 바꾸기",
+              "aria-label": `「${rawGroup}」 그룹 이름 바꾸기`,
+              "data-group": rawGroup,
+            },
+          });
+          setIcon(rename, "pencil");
+          rename.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.openGroupRenameDialog(rawGroup);
+          });
           heading.addEventListener("contextmenu", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            this.openGroupContextMenu(event, rawGroup, preferred);
+            this.openGroupContextMenu(event, rawGroup, routeOrder);
           });
           attachHoldDrag(section, rawGroup, {
-            canDrag: () => this.editMode,
+            canDrag: () => this.cardEditActive,
             activation: "move",
             movePx: 4,
-            handleSelector: ".charinfo-genre__drag-handle, .charinfo-genre__header",
+            handleSelector: ".charinfo-genre__drag-handle",
             dropSelector: ".charinfo-genre[data-id]",
             ghostClass: "charinfo-genre-ghost",
             slotClass: "charinfo-genre-slot",
@@ -1300,7 +3098,7 @@ export class GalleryView extends FileView {
       for (const record of list) {
         this.renderCard(grid, record);
       }
-      if (this.editMode) {
+      if (this.cardEditActive) {
         this.renderAddCard(grid, rawGroup);
       }
     }
@@ -1374,12 +3172,9 @@ export class GalleryView extends FileView {
     const genre = this.activeArchive().trim();
     if (!genre || !fromId || !toId || fromId === toId) return;
 
-    const filtered = this.records.filter((r) => r.장르 === genre);
-    const present = [...new Set(filtered.map((r) => r.그룹.trim()))];
-    const current = resolveGroupOrder(
-      getGroupOrderFor(this.plugin.settings, this.pageLibrary(), genre),
-      present,
-    );
+    // The canonical order, so a rank the drawer gave 기본 survives a section
+    // drag that only ever moves named headers.
+    const current = this.routeOrder();
     const next = moveInOrder(current, fromId, toId, place);
     if (next.join("\0") === current.join("\0")) return;
 
@@ -1391,13 +3186,14 @@ export class GalleryView extends FileView {
     await this.persistGroupOrderForActive(next, false);
   }
 
+  /** Persist a route order (`""` allowed) and repaint unless the DOM moved. */
   private async persistGroupOrderForActive(
     order: string[],
     rerender = true,
   ): Promise<void> {
     const genre = this.activeArchive().trim();
     if (!genre) return;
-    setGroupOrderFor(this.plugin.settings, this.pageLibrary(), genre, order);
+    setGroupRouteOrderFor(this.plugin.settings, this.pageLibrary(), genre, order);
     await this.plugin.saveSettings();
     if (rerender) this.render();
   }
@@ -1449,27 +3245,57 @@ export class GalleryView extends FileView {
   }
 
   private renderCard(grid: HTMLElement, record: CharacterRecord): void {
+    // One table decides every handler below, so no branch here can drift out of
+    // step with selection mode.
+    const surface = this.batchSurface();
+    const picked = surface.cardPick && this.batchSelection.has(record.path);
     const card = grid.createDiv({
       cls:
         "charinfo-card" +
         (this.selected?.path === record.path ? " is-selected" : "") +
-        (this.editMode ? " is-editable" : ""),
+        (surface.cardEditActive ? " is-editable" : "") +
+        (surface.cardPick ? " charinfo-card--pick" : "") +
+        (picked ? " is-picked" : ""),
     });
     card.dataset.path = record.path;
-    card.addEventListener("click", () => {
-      if (this.suppressClick) {
-        this.suppressClick = false;
-        return;
-      }
-      // Re-tap selected card closes the side panel.
-      if (this.peekOpen && this.selected?.path === record.path) {
-        this.closePeek();
-        return;
-      }
-      this.selectCard(record);
-    });
 
-    if (this.editMode) {
+    if (surface.cardPick) {
+      // The card *is* the checkbox: no detail, no drag, no cover edit, no
+      // property control, no context menu. One meaning at a time.
+      card.setAttribute("role", "checkbox");
+      card.setAttribute("aria-checked", picked ? "true" : "false");
+      card.setAttribute("aria-label", `${record.title} 선택`);
+      card.tabIndex = 0;
+      const mark = card.createDiv({
+        cls: "charinfo-card__pick",
+        attr: { "aria-hidden": "true" },
+      });
+      setIcon(mark, "check");
+      card.addEventListener("click", (event) => {
+        event.preventDefault();
+        this.toggleBatchPick(record.path);
+      });
+      card.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        this.toggleBatchPick(record.path);
+      });
+    } else {
+      card.addEventListener("click", () => {
+        if (this.suppressClick) {
+          this.suppressClick = false;
+          return;
+        }
+        // Re-tap selected card closes the side panel.
+        if (this.peekOpen && this.selected?.path === record.path) {
+          this.closePeek();
+          return;
+        }
+        this.selectCard(record);
+      });
+    }
+
+    if (surface.cardEditMenu) {
       card.addEventListener("contextmenu", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -1485,7 +3311,7 @@ export class GalleryView extends FileView {
       });
       setIcon(handle, "grip-vertical");
       attachHoldDrag(card, record.path, {
-        canDrag: () => this.editMode,
+        canDrag: () => this.cardEditActive,
         activation: "move",
         movePx: 2,
         // Handle or title band — cover stays free for pan / picker.
@@ -1496,7 +3322,7 @@ export class GalleryView extends FileView {
           void this.handleReorder(fromPath, toPath, place);
         },
       });
-    } else {
+    } else if (surface.cardReadMenu) {
       // Read mode: still allow discovering cover change via context menu.
       card.addEventListener("contextmenu", (event) => {
         event.preventDefault();
@@ -1522,20 +3348,38 @@ export class GalleryView extends FileView {
       cover.createSpan({ text: "커버 없음", cls: "charinfo-card__cover-empty" });
     }
 
-    if (this.editMode) {
+    if (surface.cardCoverEdit) {
       this.attachCoverEdit(cover, coverImg, record);
     }
 
     const meta = card.createDiv({ cls: "charinfo-card__meta" });
     this.renderViewProperties(meta, record, {
-      interactiveStatus: this.editMode,
+      interactiveStatus: surface.interactiveStatus,
       surface: "card",
     });
   }
 
+  /** This card's group schema — the one source cards, peek and heal share. */
+  private recordSchema(record: CharacterRecord): GroupSchemaRecord {
+    return resolveGroupSchema(
+      this.plugin.settings,
+      this.pageLibrary(),
+      record.장르,
+      record.그룹,
+    );
+  }
+
+  private fieldDisplayLabel(field: FieldDef): string {
+    return fieldLabel(field, this.plugin.settings.propertyDisplayNames);
+  }
+
   /**
-   * Card: only eye-visible properties.
-   * Peek (side panel): every non-systemic property (CARD_PROPERTY_DEFS), ignoring eye toggles.
+   * Card and peek project the record's own group-schema order, with the card
+   * surface additionally applying 보기's eyes. Reordering in `속성 관리`
+   * therefore changes every presentation of that group, while 보기 only hides.
+   *
+   * Peek drops `이름` (the title owns it) and keeps empty rows — an empty row is
+   * the door for filling it in.
    */
   private renderViewProperties(
     parent: HTMLElement,
@@ -1553,78 +3397,103 @@ export class GalleryView extends FileView {
       if (id === primary.propertyId) return primary;
       return null;
     };
+    const editable = Boolean(opts.interactiveStatus);
+    const schema = this.recordSchema(record);
+    const order = effectiveActiveFields(schema).map((field) => field.id);
 
     if (opts.surface === "peek") {
-      for (const def of CARD_PROPERTY_DEFS) {
-        if (def.id === "name") continue; // title lives in peek header
-        if (def.id === "tags") {
-          // Multi-value: a chip cluster, not a pill. Hidden when empty in read.
-          if (!record.태그.length && !opts.interactiveStatus) continue;
-          const row = parent.createDiv({ cls: "charinfo-detail__prop" });
-          row.createSpan({
-            text: this.propLabel("tags"),
-            cls: "charinfo-detail__prop-label",
-          });
+      const fields = projectSchemaFields(order, schema, { skip: ["name"] });
+      for (const field of fields) {
+        const row = parent.createDiv({ cls: "charinfo-detail__prop" });
+        row.createSpan({
+          text: this.fieldDisplayLabel(field),
+          cls: "charinfo-detail__prop-label",
+        });
+        // `field.type` decides the control; being a chip axis decides only
+        // where the vocabulary comes from. A built-in carrying a scoped type
+        // override therefore gets the control its type asks for, still reading
+        // the global list — it never falls back to its default shape.
+        if (field.id === "tags" && field.type === "multi-select") {
+          if (!record.태그.length && !editable) {
+            this.paintEmptyField(row);
+            continue;
+          }
           this.renderTagCluster(row, record, {
-            interactive: opts.interactiveStatus,
+            interactive: editable,
             surface: "peek",
           });
           continue;
         }
-        const axis = pillAxis(def.id);
-        if (axis) {
-          // Peek always shows the pill, even when the value is unset.
-          const row = parent.createDiv({ cls: "charinfo-detail__prop" });
-          row.createSpan({
-            text: this.propLabel(def.id),
-            cls: "charinfo-detail__prop-label",
-          });
+        if (isChipAxisField(field) && field.type === "select") {
+          // Built-in chip axis → the shared pill, vocabulary from settings.
+          const axis = axisFor(
+            this.plugin.settings,
+            field.id as PrimaryFilterProperty,
+          );
+          const unset =
+            axis.propertyId !== "status" &&
+            !recordAxisValue(record, axis.propertyId).trim();
+          if (unset) {
+            const empty = this.paintEmptyField(row, {
+              editable,
+              action: `${axis.label} 바꾸기`,
+            });
+            if (editable && empty instanceof HTMLButtonElement) {
+              this.bindAxisMenu(empty, record, axis, "");
+            }
+            continue;
+          }
           const chips = row.createDiv({ cls: "charinfo-card__chips" });
-          this.renderAxisPill(chips, record, axis, {
-            interactive: opts.interactiveStatus,
-          });
+          this.renderAxisPill(chips, record, axis, { interactive: editable });
           continue;
         }
-        const value = propertyValue(record, def.id).trim();
-        if (!value) continue;
-        const row = parent.createDiv({ cls: "charinfo-detail__prop" });
-        row.createSpan({
-          text: this.propLabel(def.id),
-          cls: "charinfo-detail__prop-label",
-        });
-        row.createSpan({ text: value });
+        if (field.type === "select") {
+          this.renderFieldSelect(row, record, field, editable);
+          continue;
+        }
+        if (field.type === "multi-select") {
+          this.renderFieldCluster(row, record, field, editable);
+          continue;
+        }
+        this.renderFieldText(row, record, field, editable);
       }
       return;
     }
 
-    const prefs = visibleCardProperties(this.plugin.settings.cardProperties);
-    // Tags drive the chip row on this page → always show them, eye or not.
-    if (primary.propertyId === "tags" && !prefs.some((p) => p.id === "tags")) {
-      prefs.push({ id: "tags", visible: true });
-    }
-    for (const pref of prefs) {
-      if (pref.id === "name") {
-        const title = propertyValue(record, "name");
+    const pageKey = this.pageKey();
+    const archive = normalizeArchiveKey(this.activeArchive());
+    // Tags driving the chip row keep their eye exception — but they hold their
+    // persisted slot rather than being appended to the end of the strip.
+    const shown = projectSchemaFields(order, schema, {
+      visible: (fieldId) =>
+        isFieldVisible(this.plugin.settings, pageKey, archive, fieldId),
+      alwaysVisible: primary.propertyId === "tags" ? ["tags"] : [],
+    });
+    for (const field of shown) {
+      if (field.id === "name") {
+        const title = record.title;
         if (title) {
           parent.createDiv({ cls: "charinfo-card__title", text: title });
         }
         continue;
       }
-      if (pref.id === "tags") {
-        if (!record.태그.length && !opts.interactiveStatus) continue;
+      if (field.id === "tags" && field.type === "multi-select") {
+        if (!record.태그.length && !editable) continue;
         this.renderTagCluster(parent, record, {
-          interactive: opts.interactiveStatus,
+          interactive: editable,
           surface: "card",
         });
         continue;
       }
-      const axis = pillAxis(pref.id);
+      const axis = field.type === "select" && isBuiltinFieldId(field.id)
+        ? pillAxis(field.id as CardPropertyId)
+        : null;
       if (axis) {
         // Card pills follow the eye toggles. Unset non-status values stay hidden
         // in read mode; edit mode keeps the ghost so a value can be assigned.
         if (
           axis.propertyId !== "status" &&
-          !opts.interactiveStatus &&
+          !editable &&
           !recordAxisValue(record, axis.propertyId).trim()
         ) {
           continue;
@@ -1633,19 +3502,572 @@ export class GalleryView extends FileView {
           cls: "charinfo-card__chips",
         });
         this.renderAxisPill(chips, record, axis, {
-          interactive: opts.interactiveStatus,
+          interactive: editable,
         });
         continue;
       }
 
-      const value = propertyValue(record, pref.id).trim();
+      // Everything else reads as text on a card; peek is the fill door.
+      const value = this.fieldText(record, field);
       if (!value) continue;
       parent.createDiv({
         cls: "charinfo-card__prop",
         text: value,
-        attr: { "data-prop": pref.id },
+        attr: { "data-prop": field.id },
       });
     }
+  }
+
+  /**
+   * Display text for one field (option labels resolved, lists joined).
+   *
+   * A chip-axis built-in stores an option **id**, so it has to resolve through
+   * its axis vocabulary — otherwise a renamed 관계 / 인연 / 소속 keeps showing
+   * the raw id on the card. Unknown ids still show themselves.
+   */
+  private fieldText(record: CharacterRecord, field: FieldDef): string {
+    const raw = fieldValue(record, field);
+    if (Array.isArray(raw)) {
+      const labels =
+        field.id === "tags"
+          ? raw.map((id) => this.tagLabel(id))
+          : isChipAxisField(field)
+            ? raw.map((id) => this.axisOptionLabel(field.id, id))
+            : raw.map((id) => fieldOptionLabel(field, id));
+      return labels.filter(Boolean).join(", ");
+    }
+    const value = raw.trim();
+    if (!value) return "";
+    if (isChipAxisField(field)) return this.axisOptionLabel(field.id, value);
+    // Field-local vocabulary, built-in or custom: a non-chip built-in retyped to
+    // select owns its options like any other field. With no matching option the
+    // resolver returns the stored id, which is what a plain text field wants.
+    return fieldOptionLabel(field, value);
+  }
+
+  /** Chip-axis option label — the same resolver the chips and pills use. */
+  private axisOptionLabel(fieldId: string, optionId: string): string {
+    return resolveAxisOption(
+      axisFor(this.plugin.settings, fieldId as PrimaryFilterProperty),
+      optionId,
+    ).label;
+  }
+
+  /**
+   * The list this field offers, wherever it lives.
+   *
+   * A built-in chip axis keeps its global vocabulary even under a scoped type
+   * override — a 상태 turned multi-select still offers the archive's statuses,
+   * not an empty list. Everything else (custom fields, and a non-chip built-in
+   * retyped into a select) owns its options in its own `FieldDef`.
+   */
+  private fieldVocabulary(field: FieldDef): FieldOption[] {
+    if (isChipAxisField(field)) {
+      return axisFor(
+        this.plugin.settings,
+        field.id as PrimaryFilterProperty,
+      ).options.map((option) => ({ id: option.id, label: option.label }));
+    }
+    return field.options.map((option) => ({ ...option }));
+  }
+
+  /** One stored id as this field's vocabulary names it. */
+  private fieldVocabLabel(field: FieldDef, optionId: string): string {
+    if (field.id === "tags") return this.tagLabel(optionId);
+    if (isChipAxisField(field)) return this.axisOptionLabel(field.id, optionId);
+    return fieldOptionLabel(field, optionId);
+  }
+
+  private tagLabel(id: string): string {
+    return this.plugin.settings.tagVocab.find((tag) => tag.id === id)?.label ?? id;
+  }
+
+  /**
+   * Peek text value: click to edit when the pencil is on, muted placeholder
+   * when empty. `그룹` moves the card, so it commits through the move path.
+   */
+  private renderFieldText(
+    row: HTMLElement,
+    record: CharacterRecord,
+    field: FieldDef,
+    editable: boolean,
+  ): void {
+    const value = this.fieldText(record, field);
+    if (!editable) {
+      if (value) row.createSpan({ text: value });
+      else this.paintEmptyField(row);
+      return;
+    }
+    // `그룹` does not fill a value — it moves the card to another section.
+    const action =
+      field.id === "group"
+        ? "다른 그룹으로 옮기기"
+        : `${this.fieldDisplayLabel(field)} 채우기`;
+    const btn = row.createEl("button", {
+      cls: "charinfo-detail__prop-btn" + (value ? "" : " is-empty"),
+      text: value || EMPTY_FIELD_MARK,
+      attr: {
+        type: "button",
+        title: action,
+        "aria-label": action,
+      },
+    });
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const input = row.createEl("input", {
+        type: "text",
+        cls: "charinfo-detail__prop-input",
+        attr: { spellcheck: "false" },
+      });
+      input.value = value;
+      btn.remove();
+      let done = false;
+      const finish = (commit: boolean) => {
+        if (done) return;
+        done = true;
+        const next = input.value.trim();
+        input.remove();
+        if (commit && next !== value) {
+          void this.commitFieldText(record, field, next);
+          return;
+        }
+        this.renderFieldText(row, record, field, editable);
+      };
+      input.addEventListener("keydown", (event2) => {
+        if (event2.key === "Enter") {
+          event2.preventDefault();
+          finish(true);
+        }
+        if (event2.key === "Escape") {
+          event2.preventDefault();
+          finish(false);
+        }
+      });
+      input.addEventListener("blur", () => finish(true));
+      input.focus();
+      input.select();
+    });
+  }
+
+  private async commitFieldText(
+    record: CharacterRecord,
+    field: FieldDef,
+    value: string,
+  ): Promise<void> {
+    if (field.id === "group") {
+      await this.commitGroupChange(record, value);
+      return;
+    }
+    this.plugin.suppressGalleryRefresh = true;
+    try {
+      await setCharacterField(this.app, record.file, field.key, value);
+    } catch (error) {
+      new Notice(
+        `저장 실패: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    } finally {
+      this.plugin.suppressGalleryRefresh = false;
+    }
+    this.applyFieldToRecord(record, field, value);
+    this.repaintCardAndPeek(record);
+  }
+
+  /**
+   * Moving a card by typing its group: YAML first, then the destination schema
+   * (persist + reconcile), then repaint. Source-only keys stay dormant.
+   */
+  private async commitGroupChange(
+    record: CharacterRecord,
+    group: string,
+  ): Promise<void> {
+    const next = group.trim();
+    if (next === record.그룹.trim()) {
+      this.repaintCardAndPeek(record);
+      return;
+    }
+    this.plugin.suppressGalleryRefresh = true;
+    try {
+      await setCharacterField(this.app, record.file, "그룹", next);
+    } catch (error) {
+      new Notice(
+        `그룹 저장 실패: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      this.plugin.markGalleriesDirty({ path: record.path });
+      return;
+    } finally {
+      this.plugin.suppressGalleryRefresh = false;
+    }
+    record.그룹 = next;
+    record.values.그룹 = next;
+    await this.adoptDestinationSchema(record.장르, next);
+    this.renderBody();
+    const detail = this.contentEl.querySelector(".charinfo-gallery__detail");
+    if (detail instanceof HTMLElement) void this.renderDetail(detail);
+  }
+
+  /** Destination group's schema must exist before its members are reconciled. */
+  private async adoptDestinationSchema(
+    archive: string,
+    group: string,
+  ): Promise<void> {
+    const library = this.pageLibrary();
+    try {
+      await this.plugin.persistGroupSchema(library, archive, group);
+    } catch (error) {
+      console.error("[charinfo] 그룹 속성 저장 실패", error);
+      return;
+    }
+    this.plugin.reconcileGroupMembers(library, archive, group);
+  }
+
+  /** Keep the in-memory record in step with the write we just made. */
+  private applyFieldToRecord(
+    record: CharacterRecord,
+    field: FieldDef,
+    value: string | string[],
+  ): void {
+    if (Array.isArray(value)) {
+      if (field.id === "tags") {
+        record.태그 = [...value];
+        return;
+      }
+      record.values[field.key] = [...value];
+      // A built-in retyped to multi-select still owns a `string` typed field —
+      // `CharacterStore` flattens a YAML list the same way — so keep it in step
+      // or the title fallback and every text reader go stale until a reload.
+      this.syncTypedBuiltin(record, field.id, value.join(", "));
+      return;
+    }
+    record.values[field.key] = value;
+    this.syncTypedBuiltin(record, field.id, value);
+  }
+
+  /** Mirror one scalar write onto the built-in's own typed field. */
+  private syncTypedBuiltin(
+    record: CharacterRecord,
+    fieldId: string,
+    value: string,
+  ): void {
+    switch (fieldId) {
+      case "name":
+        record.이름 = value;
+        record.title = value || record.코드네임 || record.file.basename;
+        break;
+      case "group":
+        record.그룹 = value;
+        break;
+      case "codename":
+        record.코드네임 = value;
+        record.title = record.이름 || value || record.file.basename;
+        break;
+      case "realName":
+        record.본명 = value;
+        break;
+      case "affiliation":
+        record.소속 = value;
+        break;
+      case "relation":
+        record.관계 = value;
+        break;
+      case "bond":
+        record.인연 = value;
+        break;
+      case "status":
+        record.상태 = value;
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Repaint one card's property strip in place (no full grid render). */
+  private repaintCard(record: CharacterRecord): void {
+    const card = this.contentEl.querySelector(
+      `.charinfo-card[data-path="${CSS.escape(record.path)}"]`,
+    );
+    if (!(card instanceof HTMLElement)) return;
+    const meta = card.querySelector(".charinfo-card__meta");
+    if (!(meta instanceof HTMLElement)) return;
+    meta.empty();
+    this.renderViewProperties(meta, record, {
+      interactiveStatus: this.cardEditActive,
+      surface: "card",
+    });
+  }
+
+  /** Repaint the peek property block (only when this record is selected). */
+  private repaintPeekProps(record: CharacterRecord): void {
+    if (this.selected?.path !== record.path) return;
+    const props = this.contentEl.querySelector(".charinfo-detail__props");
+    if (!(props instanceof HTMLElement)) return;
+    props.empty();
+    props.createDiv({ cls: "charinfo-detail__props-label", text: "속성" });
+    this.renderViewProperties(props, record, {
+      interactiveStatus: this.cardEditActive,
+      surface: "peek",
+    });
+  }
+
+  private repaintCardAndPeek(record: CharacterRecord): void {
+    this.repaintCard(record);
+    this.repaintPeekProps(record);
+  }
+
+  /** Any select: the shared pill shape, over whichever list the field offers. */
+  private renderFieldSelect(
+    row: HTMLElement,
+    record: CharacterRecord,
+    field: FieldDef,
+    editable: boolean,
+  ): void {
+    const raw = fieldValue(record, field);
+    const stored = Array.isArray(raw) ? (raw[0] ?? "") : raw.trim();
+    // Unknown ids show themselves, so a removed option stays legible.
+    const label = stored ? this.fieldVocabLabel(field, stored) : EMPTY_FIELD_MARK;
+    const action = `${this.fieldDisplayLabel(field)} 바꾸기`;
+    if (!stored) {
+      const empty = this.paintEmptyField(row, {
+        editable,
+        action,
+      });
+      if (editable && empty instanceof HTMLButtonElement) {
+        const openMenu = (event: MouseEvent) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.openFieldSelectMenu(event, record, field, stored);
+        };
+        empty.addEventListener("click", openMenu);
+        empty.addEventListener("contextmenu", openMenu);
+      }
+      return;
+    }
+    const chips = row.createDiv({ cls: "charinfo-card__chips" });
+    if (!editable) {
+      const tag = chips.createSpan({
+        cls: "charinfo-status is-static is-gray",
+        attr: { "aria-label": label, "data-prop": field.id },
+      });
+      tag.createSpan({ cls: "charinfo-status__dot" });
+      tag.createSpan({ cls: "charinfo-status__label", text: label });
+      return;
+    }
+    const tag = chips.createEl("button", {
+      cls: "charinfo-status is-gray",
+      attr: {
+        type: "button",
+        "aria-label": label,
+        "data-prop": field.id,
+        title: action,
+      },
+    });
+    tag.createSpan({ cls: "charinfo-status__dot" });
+    tag.createSpan({ cls: "charinfo-status__label", text: label });
+    const openMenu = (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.openFieldSelectMenu(event, record, field, stored);
+    };
+    tag.addEventListener("click", openMenu);
+    tag.addEventListener("contextmenu", openMenu);
+  }
+
+  private openFieldSelectMenu(
+    event: MouseEvent,
+    record: CharacterRecord,
+    field: FieldDef,
+    stored: string,
+  ): void {
+    const menu = new Menu();
+    const vocabulary = this.fieldVocabulary(field);
+    for (const option of vocabulary) {
+      menu.addItem((item) =>
+        item
+          .setTitle(option.label)
+          .setChecked(option.id === stored)
+          .onClick(() => {
+            // The option **id** is stored, so a later rename keeps the value.
+            void this.commitFieldValue(record, field, option.id);
+          }),
+      );
+    }
+    if (vocabulary.length === 0) {
+      menu.addItem((item) =>
+        item.setTitle("고를 값이 없어요 · 책에서 추가").setDisabled(true),
+      );
+    }
+    menu.addItem((item) =>
+      item
+        .setTitle("없음")
+        .setChecked(!stored)
+        .onClick(() => {
+          void this.commitFieldValue(record, field, "");
+        }),
+    );
+    menu.showAtMouseEvent(event);
+  }
+
+  private async commitFieldValue(
+    record: CharacterRecord,
+    field: FieldDef,
+    value: string,
+  ): Promise<void> {
+    this.plugin.suppressGalleryRefresh = true;
+    try {
+      await setCharacterField(this.app, record.file, field.key, value);
+    } catch (error) {
+      new Notice(
+        `저장 실패: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    } finally {
+      this.plugin.suppressGalleryRefresh = false;
+    }
+    this.applyFieldToRecord(record, field, value);
+    this.repaintCardAndPeek(record);
+  }
+
+  /** Any multi-select: the tag cluster shape, over the field's own list. */
+  private renderFieldCluster(
+    row: HTMLElement,
+    record: CharacterRecord,
+    field: FieldDef,
+    editable: boolean,
+  ): void {
+    const wrap = row.createDiv({
+      cls: "charinfo-tags",
+      attr: { "data-prop": field.id },
+    });
+    this.fillFieldCluster(wrap, record, field, editable);
+  }
+
+  /**
+   * Refill one cluster. The popover anchors on the wrap, not the button, so the
+   * wrap must survive every toggle. The vocabulary is resolved once here, so a
+   * built-in retyped to multi-select offers its global list instead of nothing.
+   */
+  private fillFieldCluster(
+    wrap: HTMLElement,
+    record: CharacterRecord,
+    field: FieldDef,
+    editable: boolean,
+  ): void {
+    wrap.empty();
+    const vocabulary = this.fieldVocabulary(field);
+    const raw = fieldValue(record, field);
+    const ids = Array.isArray(raw) ? raw : raw.trim() ? [raw.trim()] : [];
+    for (const id of ids) {
+      const known = vocabulary.some((option) => option.id === id);
+      wrap.createSpan({
+        cls: "charinfo-tag" + (known ? "" : " is-ghost"),
+        text: this.fieldVocabLabel(field, id),
+      });
+    }
+    if (!editable) {
+      if (ids.length === 0) this.paintEmptyField(wrap);
+      return;
+    }
+    if (ids.length === 0) {
+      const empty = this.paintEmptyField(wrap, {
+        editable: true,
+        action: `${this.fieldDisplayLabel(field)} 고르기`,
+      });
+      empty.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const menuKey = `${record.path}#${field.id}`;
+        if (this.tagMenuPath === menuKey && this.tagMenu?.isOpen()) {
+          this.closeTagMenu();
+          return;
+        }
+        this.closeTagMenu();
+        this.tagMenuPath = menuKey;
+        this.tagMenu = new TagChecklistPopover(
+          wrap,
+          vocabulary,
+          {
+            getSelected: () => {
+              const current = fieldValue(record, field);
+              return Array.isArray(current) ? [...current] : [];
+            },
+            toggle: (id, next) => this.toggleFieldOption(record, field, id, next),
+          },
+        );
+        this.tagMenu.open();
+      });
+      return;
+    }
+    const trigger = wrap.createEl("button", {
+      cls: "charinfo-tag charinfo-tag--edit",
+      text: "+",
+      attr: {
+        type: "button",
+        title: `${this.fieldDisplayLabel(field)} 고르기`,
+        "aria-label": `${this.fieldDisplayLabel(field)} 고르기`,
+      },
+    });
+    const menuKey = `${record.path}#${field.id}`;
+    trigger.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (this.tagMenuPath === menuKey && this.tagMenu?.isOpen()) {
+        this.closeTagMenu();
+        return;
+      }
+      this.closeTagMenu();
+      this.tagMenuPath = menuKey;
+      this.tagMenu = new TagChecklistPopover(
+        wrap,
+        vocabulary,
+        {
+          getSelected: () => {
+            const current = fieldValue(record, field);
+            return Array.isArray(current) ? [...current] : [];
+          },
+          toggle: (id, next) => this.toggleFieldOption(record, field, id, next),
+        },
+      );
+      this.tagMenu.open();
+    });
+  }
+
+  private async toggleFieldOption(
+    record: CharacterRecord,
+    field: FieldDef,
+    id: string,
+    next: boolean,
+  ): Promise<void> {
+    const current = fieldValue(record, field);
+    const ids = Array.isArray(current) ? [...current] : [];
+    const wanted = next
+      ? ids.includes(id)
+        ? ids
+        : [...ids, id]
+      : ids.filter((item) => item !== id);
+    this.plugin.suppressGalleryRefresh = true;
+    try {
+      await setCharacterList(this.app, record.file, field.key, wanted);
+    } catch (error) {
+      new Notice(
+        `저장 실패: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    } finally {
+      this.plugin.suppressGalleryRefresh = false;
+    }
+    this.applyFieldToRecord(record, field, wanted);
+    this.repaintCard(record);
+    // Patch the cluster in place — a full peek repaint would drop the anchor
+    // the open checklist popover is positioned against.
+    const detail = this.contentEl.querySelector(".charinfo-gallery__detail");
+    if (!(detail instanceof HTMLElement)) return;
+    detail
+      .querySelectorAll(`.charinfo-tags[data-prop="${CSS.escape(field.id)}"]`)
+      .forEach((el) => {
+        if (!(el instanceof HTMLElement)) return;
+        this.fillFieldCluster(el, record, field, this.cardEditActive);
+      });
   }
 
   /**
@@ -1689,11 +4111,33 @@ export class GalleryView extends FileView {
         text: `+${hidden}`,
       });
     }
-    if (!opts.interactive) return;
+    if (!opts.interactive) {
+      if (opts.surface === "peek" && ids.length === 0) {
+        this.paintEmptyField(wrap);
+      }
+      return;
+    }
+
+    if (opts.surface === "peek" && ids.length === 0) {
+      const empty = this.paintEmptyField(wrap, {
+        editable: true,
+        action: "태그 고르기",
+      });
+      empty.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (this.tagMenuPath === record.path && this.tagMenu?.isOpen()) {
+          this.closeTagMenu();
+          return;
+        }
+        this.openTagChecklist(wrap, record);
+      });
+      return;
+    }
 
     const trigger = wrap.createEl("button", {
       cls: "charinfo-tag charinfo-tag--edit",
-      text: ids.length ? "+" : "태그",
+      text: "+",
       attr: {
         type: "button",
         title: "태그 고르기",
@@ -1720,7 +4164,6 @@ export class GalleryView extends FileView {
     this.tagMenuPath = record.path;
     this.tagMenu = new TagChecklistPopover(
       anchor,
-      this.contentEl,
       this.plugin.settings.tagVocab,
       {
         getSelected: () => [...record.태그],
@@ -1802,7 +4245,7 @@ export class GalleryView extends FileView {
         .forEach((el) => {
           if (!(el instanceof HTMLElement)) return;
           this.fillTagCluster(el, record, {
-            interactive: this.editMode,
+            interactive: this.cardEditActive,
             surface: scope.surface,
           });
         });
@@ -1820,12 +4263,12 @@ export class GalleryView extends FileView {
       axis,
       recordAxisValue(record, axis.propertyId),
     );
-    const colorCls = statusColorClass(option.color);
     if (!opts.interactive) {
       const tag = parent.createSpan({
-        cls: `charinfo-status is-static ${colorCls}`,
+        cls: "charinfo-status is-static",
         attr: { "aria-label": option.label, "data-prop": axis.propertyId },
       });
+      paintStatusColor(tag, option.color);
       tag.createSpan({ cls: "charinfo-status__dot" });
       tag.createSpan({
         cls: "charinfo-status__label",
@@ -1835,7 +4278,7 @@ export class GalleryView extends FileView {
     }
 
     const tag = parent.createEl("button", {
-      cls: `charinfo-status ${colorCls}`,
+      cls: "charinfo-status",
       attr: {
         type: "button",
         "aria-label": option.label,
@@ -1843,12 +4286,21 @@ export class GalleryView extends FileView {
         title: `${axis.label} 바꾸기`,
       },
     });
+    paintStatusColor(tag, option.color);
     tag.createSpan({ cls: "charinfo-status__dot" });
     tag.createSpan({
       cls: "charinfo-status__label",
       text: option.label,
     });
+    this.bindAxisMenu(tag, record, axis, option.id);
+  }
 
+  private bindAxisMenu(
+    tag: HTMLElement,
+    record: CharacterRecord,
+    axis: FilterAxis,
+    selectedId: string,
+  ): void {
     const openMenu = (event: MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
@@ -1857,7 +4309,7 @@ export class GalleryView extends FileView {
         menu.addItem((item) =>
           item
             .setTitle(s.label)
-            .setChecked(s.id === option.id)
+            .setChecked(s.id === selectedId)
             .onClick(() => {
               void this.setAxisValue(record, axis.propertyId, s.id);
             }),
@@ -1868,7 +4320,7 @@ export class GalleryView extends FileView {
         menu.addItem((item) =>
           item
             .setTitle("없음")
-            .setChecked(!option.id)
+            .setChecked(!selectedId)
             .onClick(() => {
               void this.setAxisValue(record, axis.propertyId, "");
             }),
@@ -1880,6 +4332,28 @@ export class GalleryView extends FileView {
     tag.addEventListener("contextmenu", openMenu);
   }
 
+  /** Quiet `-` for an unset peek field. Pencil mode keeps it clickable. */
+  private paintEmptyField(
+    parent: HTMLElement,
+    opts?: { editable?: boolean; action?: string },
+  ): HTMLElement {
+    if (!opts?.editable) {
+      return parent.createSpan({
+        cls: "charinfo-detail__prop-empty",
+        text: EMPTY_FIELD_MARK,
+      });
+    }
+    return parent.createEl("button", {
+      cls: "charinfo-detail__prop-btn is-empty",
+      text: EMPTY_FIELD_MARK,
+      attr: {
+        type: "button",
+        title: opts.action ?? "",
+        "aria-label": opts.action || EMPTY_FIELD_MARK,
+      },
+    });
+  }
+
   private async setAxisValue(
     record: CharacterRecord,
     propertyId: PrimaryFilterProperty,
@@ -1889,6 +4363,13 @@ export class GalleryView extends FileView {
     this.plugin.suppressGalleryRefresh = true;
     try {
       await setCharacterField(this.app, record.file, axis.fmKey, value);
+    } catch (error) {
+      // The note kept its old value — so must the record and the DOM. Painting
+      // the new pill here would leave the card lying until the next refresh.
+      new Notice(
+        `${axis.label} 저장 실패: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
     } finally {
       this.plugin.suppressGalleryRefresh = false;
     }
@@ -1918,19 +4399,6 @@ export class GalleryView extends FileView {
       axis,
       recordAxisValue(record, axis.propertyId),
     );
-    const colorCls = statusColorClass(option.color);
-    const colorTokens = [
-      "is-green",
-      "is-gray",
-      "is-amber",
-      "is-blue",
-      "is-red",
-      "is-violet",
-      "is-cyan",
-      "is-pink",
-      "is-on",
-      "is-off",
-    ];
     const card = this.contentEl.querySelector(
       `.charinfo-card[data-path="${CSS.escape(record.path)}"]`,
     );
@@ -1942,8 +4410,8 @@ export class GalleryView extends FileView {
       scope
         .querySelectorAll(`.charinfo-status[data-prop="${axis.propertyId}"]`)
         .forEach((el) => {
-          for (const c of colorTokens) el.classList.remove(c);
-          el.classList.add(colorCls);
+          if (!(el instanceof HTMLElement)) return;
+          paintStatusColor(el, option.color);
           const label = el.querySelector(".charinfo-status__label");
           if (label) label.setText(option.label);
           el.setAttribute("aria-label", option.label);
@@ -1952,6 +4420,10 @@ export class GalleryView extends FileView {
   }
 
   private selectCard(record: CharacterRecord): void {
+    // Selection mode owns the card. This is the single door to the detail
+    // panel, so refusing here closes every indirect route (create-and-reveal
+    // included) without each caller having to know about the mode.
+    if (this.batchMode) return;
     this.selected = record;
     this.peekOpen = true;
     this.applySheetSnap();
@@ -2577,8 +5049,35 @@ export class GalleryView extends FileView {
     const group = to.그룹;
     const genreChanged = from.장르 !== genre;
     const groupChanged = from.그룹 !== group;
-    from.장르 = genre;
-    from.그룹 = group;
+    const moved = genreChanged || groupChanged;
+
+    // A move changes which schema owns the card, so YAML goes first: memory and
+    // DOM must never claim the destination while storage still says source.
+    if (moved) {
+      this.plugin.suppressGalleryRefresh = true;
+      try {
+        await this.app.fileManager.processFrontMatter(from.file, (fm) => {
+          if (genreChanged) fm.장르 = genre;
+          if (groupChanged) fm.그룹 = group;
+        });
+      } catch (error) {
+        console.error(error);
+        new Notice(
+          `이동 실패: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        // Reload from disk — the card must stay where storage says it is.
+        this.plugin.markGalleriesDirty({ path: from.path });
+        await this.refresh();
+        return;
+      } finally {
+        this.plugin.suppressGalleryRefresh = false;
+      }
+      from.장르 = genre;
+      from.그룹 = group;
+      from.values.그룹 = group;
+      if (genre) from.values.장르 = genre;
+      await this.adoptDestinationSchema(genre, group);
+    }
 
     const inGenre = this.records.filter(
       (r) => r.장르 === genre && r.path !== fromPath,
@@ -2588,7 +5087,6 @@ export class GalleryView extends FileView {
     const insertAt = place === "before" ? toIndex : toIndex + 1;
     inGenre.splice(insertAt, 0, from);
 
-    // Instant visual reorder — don't wait for disk.
     this.moveDomItem(
       `.charinfo-card[data-path="${CSS.escape(fromPath)}"]`,
       `.charinfo-card[data-path="${CSS.escape(toPath)}"]`,
@@ -2600,13 +5098,12 @@ export class GalleryView extends FileView {
 
     this.plugin.suppressGalleryRefresh = true;
     try {
-      if (genreChanged || groupChanged) {
-        await this.app.fileManager.processFrontMatter(from.file, (fm) => {
-          if (genreChanged) fm.장르 = genre;
-          if (groupChanged) fm.그룹 = group;
-        });
-      }
       await persistGenreOrder(this.app, inGenre);
+    } catch (error) {
+      console.error(error);
+      new Notice("순서를 저장하지 못했어요.");
+      this.plugin.markGalleriesDirty({ path: from.path });
+      await this.refresh();
     } finally {
       this.plugin.suppressGalleryRefresh = false;
     }
@@ -2629,6 +5126,7 @@ export class GalleryView extends FileView {
     // The head owns the drag pointer capture and is about to be replaced.
     this.sheetDrag = null;
     this.contentEl.removeClass("is-sheet-dragging");
+    this.unloadPeekBody();
     detail.empty();
     if (!this.selected) {
       this.peekOpen = false;
@@ -2681,14 +5179,15 @@ export class GalleryView extends FileView {
       void this.shareCharacterNoteLink(record);
     });
 
-    // Side panel: all non-systemic properties (eye toggles are card-only).
+    // Side panel: every active field of this card's group, eyes ignored.
+    // The pencil decides whether the values are editable.
     const props = detail.createDiv({ cls: "charinfo-detail__props" });
     props.createDiv({
       cls: "charinfo-detail__props-label",
       text: "속성",
     });
     this.renderViewProperties(props, record, {
-      interactiveStatus: false,
+      interactiveStatus: this.cardEditActive,
       surface: "peek",
     });
     // Keep the section label even if only status remains; drop if truly empty.
@@ -2696,7 +5195,17 @@ export class GalleryView extends FileView {
       props.remove();
     }
 
-    const markdown = await this.app.vault.cachedRead(record.file);
+    // Peek is note-authoritative: read what Obsidian persisted, not the cache.
+    let markdown: string;
+    try {
+      markdown = await this.app.vault.read(record.file);
+    } catch {
+      detail.createDiv({
+        cls: "charinfo-detail__error",
+        text: "노트를 읽지 못했어요. 새로고침해 보세요.",
+      });
+      return;
+    }
     if (requestId !== this.detailRequestId || this.selected?.path !== record.path) {
       return;
     }
@@ -2705,9 +5214,34 @@ export class GalleryView extends FileView {
     if (requestId !== this.detailRequestId || this.selected?.path !== record.path) {
       return;
     }
+    this.peekStripFingerprint = this.imageFingerprint(record, markdown);
 
     const body = detail.createDiv({ cls: "charinfo-detail__body" });
-    renderCleanBody(body, markdown);
+    const bodyChild = new Component();
+    this.peekBodyChild = bodyChild;
+    this.addChild(bodyChild);
+    // A body-level render failure must not blank the sheet head or props.
+    try {
+      await renderLivePeekBody(
+        this.app,
+        bodyChild,
+        body,
+        markdown,
+        record.path,
+      );
+    } catch {
+      body.empty();
+      body.createDiv({
+        cls: "charinfo-detail__error",
+        text: "본문을 그리지 못했어요.",
+      });
+    }
+    if (
+      requestId !== this.detailRequestId ||
+      this.selected?.path !== record.path
+    ) {
+      if (this.peekBodyChild === bodyChild) this.unloadPeekBody();
+    }
   }
 
   /** Full-page note in this leaf. Gallery reloads (and refreshes) when you return. */
@@ -2726,27 +5260,28 @@ export class GalleryView extends FileView {
     }).open();
   }
 
+  /** `host` may be detached — a note-region patch stages the strip off-panel. */
   private async renderImageStrip(
-    detail: HTMLElement,
+    host: HTMLElement,
     record: CharacterRecord,
     markdown: string,
   ): Promise<void> {
     const images = listCharacterImages(this.app, record, markdown);
 
-    const strip = detail.createDiv({
-      cls:
-        "charinfo-image-strip" + (this.editMode ? " is-editable" : ""),
+    const editable = this.cardEditActive;
+    const strip = host.createDiv({
+      cls: "charinfo-image-strip" + (editable ? " is-editable" : ""),
     });
     const head = strip.createDiv({ cls: "charinfo-image-strip__head" });
     head.createDiv({
       cls: "charinfo-image-strip__label",
-      text: this.editMode ? "이미지 · 탭하면 커버" : "이미지",
+      text: editable ? "이미지 · 탭하면 커버" : "이미지",
     });
 
     if (images.length === 0) {
       strip.createDiv({
         cls: "charinfo-image-strip__empty",
-        text: this.editMode
+        text: editable
           ? "이미지가 없어요. 노트에 넣은 뒤 새로고침하세요."
           : "이미지 없음",
       });
@@ -2783,14 +5318,14 @@ export class GalleryView extends FileView {
 
       thumb.addEventListener("click", (event) => {
         event.stopPropagation();
-        if (!this.editMode) return;
+        if (!this.cardEditActive) return;
         // Instant paint; quiet strip tap (no Notice spam).
         void this.changeCover(record, image, false, { quiet: true });
       });
 
-      if (this.editMode && images.length > 1) {
+      if (editable && images.length > 1) {
         attachHoldDrag(thumb, image.path, {
-          canDrag: () => this.editMode,
+          canDrag: () => this.cardEditActive,
           activation: "hold",
           holdMs: 240,
           dropSelector: ".charinfo-thumb",

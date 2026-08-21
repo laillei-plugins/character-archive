@@ -1,31 +1,51 @@
-import { setIcon } from "obsidian";
-import type {
-  CardPropertyId,
-  CardPropertyPref,
-} from "../data/cardProperties";
-import { propertyLabel } from "../data/cardProperties";
-import { attachHoldDrag } from "./holdDrag";
+import { Notice, setIcon } from "obsidian";
+import {
+  FILTER_AXIS_IDS,
+  type PrimaryFilterProperty,
+} from "../settings";
+import { placeAnchoredPopover } from "./typeMenuPlacement";
+
+/** One 보기 row: a field of the current page + active archive. */
+export interface ViewFieldRow {
+  fieldId: string;
+  label: string;
+  visible: boolean;
+}
 
 export interface ViewSettingsPopoverHandlers {
-  getProperties: () => CardPropertyPref[];
-  setProperties: (next: CardPropertyPref[]) => void | Promise<void>;
+  /** Active fields for this gallery page + archive, label-suffixed. */
+  getFields: () => ViewFieldRow[];
+  setVisible: (fieldId: string, visible: boolean) => void | Promise<void>;
   getFitImage: () => boolean;
   setFitImage: (fit: boolean) => void | Promise<void>;
-  getLabel?: (id: CardPropertyId) => string;
+  getPageAxis: () => PrimaryFilterProperty | null;
+  getGlobalAxis: () => PrimaryFilterProperty;
+  axisName: (id: PrimaryFilterProperty) => string;
+  axisReachable: (id: PrimaryFilterProperty) => boolean;
+  axisOptions: (id: PrimaryFilterProperty) => string[];
+  setPageAxis: (next: PrimaryFilterProperty | null) => void | Promise<void>;
   onChange: () => void;
 }
 
+let viewSettingsPopoverId = 0;
+
 /**
- * Flat view menu: properties + fit toggle on one screen (no drill-down).
+ * 보기: visibility for one gallery page + archive, plus this page’s chip filter.
+ * Field order belongs to each group's schema and is edited in `속성 관리`.
  */
 export class ViewSettingsPopover {
   private panel: HTMLElement | null = null;
   private onDocPointer: ((e: PointerEvent) => void) | null = null;
   private onKey: ((e: KeyboardEvent) => void) | null = null;
+  private onScroll: ((event: Event) => void) | null = null;
+  private pending = false;
+  private pageAxisOverride: PrimaryFilterProperty | null | undefined;
+  private axisFocusKey = "";
+  private readonly axisRadioName =
+    `charinfo-page-axis-${++viewSettingsPopoverId}`;
 
   constructor(
     private anchor: HTMLElement,
-    private host: HTMLElement,
     private handlers: ViewSettingsPopoverHandlers,
   ) {}
 
@@ -45,19 +65,20 @@ export class ViewSettingsPopover {
       document.removeEventListener("keydown", this.onKey);
       this.onKey = null;
     }
+    if (this.onScroll) {
+      document.removeEventListener("scroll", this.onScroll, true);
+      this.onScroll = null;
+    }
   }
 
   private open(): void {
     this.close();
-    const panel = this.host.createDiv({ cls: "charinfo-view-menu" });
+    this.pageAxisOverride = undefined;
+    const panel = document.body.createDiv({ cls: "charinfo-view-menu" });
     this.panel = panel;
 
-    const rect = this.anchor.getBoundingClientRect();
-    const hostRect = this.host.getBoundingClientRect();
-    panel.style.top = `${rect.bottom - hostRect.top + 6}px`;
-    panel.style.right = `${hostRect.right - rect.right}px`;
-
     this.render(panel);
+    this.placePanel();
 
     this.onDocPointer = (event) => {
       if (!(event.target instanceof Node)) return;
@@ -69,6 +90,14 @@ export class ViewSettingsPopover {
     this.onKey = (event) => {
       if (event.key === "Escape") this.close();
     };
+    this.onScroll = (event) => {
+      if (event.target instanceof Node && panel.contains(event.target)) return;
+      if (!this.anchor.isConnected) {
+        this.close();
+        return;
+      }
+      this.placePanel();
+    };
     window.setTimeout(() => {
       if (this.onDocPointer) {
         document.addEventListener("pointerdown", this.onDocPointer, true);
@@ -76,7 +105,28 @@ export class ViewSettingsPopover {
       if (this.onKey) {
         document.addEventListener("keydown", this.onKey);
       }
+      if (this.onScroll) {
+        document.addEventListener("scroll", this.onScroll, true);
+      }
     }, 0);
+  }
+
+  private placePanel(): void {
+    const panel = this.panel;
+    if (!panel?.isConnected || !this.anchor.isConnected) return;
+    panel.style.removeProperty("max-height");
+    const placement = placeAnchoredPopover(
+      this.anchor.getBoundingClientRect(),
+      panel.getBoundingClientRect(),
+      window.innerWidth,
+      window.innerHeight,
+      { anchorGap: 6, align: "end" },
+    );
+    panel.setCssStyles({
+      top: `${Math.round(placement.top)}px`,
+      left: `${Math.round(placement.left)}px`,
+      maxHeight: `${Math.floor(placement.maxHeight)}px`,
+    });
   }
 
   private render(panel: HTMLElement): void {
@@ -84,19 +134,25 @@ export class ViewSettingsPopover {
     panel.createDiv({ cls: "charinfo-view-menu__title", text: "카드에 보일 항목" });
     panel.createDiv({
       cls: "charinfo-view-menu__hint",
-      text: "눈 아이콘으로 카드에 보일 항목을 고릅니다. 옆 패널에는 항상 전부 표시됩니다.",
+      text: "순서는 속성 관리에서 정해요.",
     });
 
     const list = panel.createDiv({ cls: "charinfo-prop-list" });
-    const prefs = this.handlers.getProperties().map((p) => ({ ...p }));
-
     const rerender = () => {
-      list.empty();
-      for (const pref of prefs) {
-        this.renderPropRow(list, prefs, pref, rerender);
-      }
+      if (!panel.isConnected) return;
+      this.render(panel);
     };
-    rerender();
+    const rows = this.handlers.getFields();
+    if (rows.length === 0) {
+      list.createDiv({
+        cls: "charinfo-view-menu__hint",
+        text: "이 아카이브에 보일 항목이 없어요.",
+      });
+    } else {
+      for (const row of rows) this.renderRow(list, row, rerender);
+    }
+
+    this.renderPageFilter(panel, rerender);
 
     const fit = this.handlers.getFitImage();
     const row = panel.createDiv({ cls: "charinfo-view-menu__toggle-row" });
@@ -114,81 +170,228 @@ export class ViewSettingsPopover {
       },
     });
     toggle.createSpan({ cls: "charinfo-view-menu__switch-knob" });
+    toggle.disabled = this.pending;
     toggle.addEventListener("click", () => {
       const next = !this.handlers.getFitImage();
       void this.handlers.setFitImage(next);
       this.render(panel);
       this.handlers.onChange();
     });
+
+    if (this.axisFocusKey && !this.pending) {
+      const focusKey = this.axisFocusKey;
+      this.axisFocusKey = "";
+      panel
+        .querySelector<HTMLInputElement>(`[data-focus="${focusKey}"]`)
+        ?.focus();
+    }
+    this.placePanel();
   }
 
-  private renderPropRow(
+  private renderPageFilter(panel: HTMLElement, rerender: () => void): void {
+    const section = panel.createDiv({ cls: "charinfo-view-menu__filter" });
+    section.createDiv({
+      cls: "charinfo-view-menu__title",
+      text: "맨 위 필터 칩",
+    });
+    section.createDiv({
+      cls: "charinfo-view-menu__hint",
+      text: "갤러리 맨 위 칩에 쓸 속성을 고르세요.",
+    });
+    const pageAxis =
+      this.pageAxisOverride === undefined
+        ? this.handlers.getPageAxis()
+        : this.pageAxisOverride;
+    const globalAxis = this.handlers.getGlobalAxis();
+    const axes = FILTER_AXIS_IDS.map((id) => {
+      const reachable = this.handlers.axisReachable(id);
+      const options = this.handlers.axisOptions(id);
+      return {
+        id,
+        reachable,
+        options,
+        available: reachable && (id === "status" || options.length > 0),
+      };
+    });
+    const group = section.createEl("fieldset", {
+      cls: "charinfo-view-menu__axis-group",
+      attr: {
+        role: "radiogroup",
+        "aria-label": "맨 위 필터 칩",
+        ...(this.pending ? { "aria-busy": "true" } : {}),
+      },
+    });
+    this.axisRadio(group, {
+      active: pageAxis == null,
+      label: "기본값 사용",
+      note: `전체 설정을 따라요 · 현재: ${this.handlers.axisName(globalAxis)}`,
+      value: "default",
+      disabled: this.pending,
+      onPick: () => this.commitPageAxis(null, rerender),
+    });
+    group.createDiv({
+      cls: "charinfo-view-menu__axis-sublabel",
+      text: "이 페이지만 바꾸기",
+    });
+    for (const axis of axes) {
+      const pinnedUnavailable = pageAxis === axis.id && !axis.available;
+      if (!axis.available && !pinnedUnavailable) continue;
+      const note = axis.available
+        ? this.axisPreview(axis.options)
+        : axis.reachable
+          ? "현재 선택됨 · 속성 관리에서 선택 항목을 추가해 주세요."
+          : "현재 선택됨 · 이 아카이브에서 쓰지 않는 속성이에요.";
+      this.axisRadio(group, {
+        active: pageAxis === axis.id,
+        label: this.handlers.axisName(axis.id),
+        note,
+        value: axis.id,
+        disabled: this.pending,
+        onPick: () => this.commitPageAxis(axis.id, rerender),
+      });
+    }
+
+    const emptyAxes = axes.filter(
+      (axis) =>
+        !axis.available && axis.reachable && pageAxis !== axis.id,
+    );
+    const unreachableAxes = axes.filter(
+      (axis) => !axis.reachable && pageAxis !== axis.id,
+    );
+    if (emptyAxes.length > 0 || unreachableAxes.length > 0) {
+      const footer = section.createDiv({
+        cls: "charinfo-view-menu__axis-footer",
+      });
+      if (emptyAxes.length > 0) {
+        footer.createDiv({
+          text: `${emptyAxes
+            .map((axis) => this.handlers.axisName(axis.id))
+            .join(" · ")}: 속성 관리에서 선택 항목을 추가하면 쓸 수 있어요.`,
+        });
+      }
+      if (unreachableAxes.length > 0) {
+        footer.createDiv({
+          text: `${unreachableAxes
+            .map((axis) => this.handlers.axisName(axis.id))
+            .join(" · ")}: 이 아카이브에서 쓰지 않는 속성이에요.`,
+        });
+      }
+    }
+  }
+
+  private axisPreview(options: string[]): string {
+    const labels = options.map((label) => label.trim()).filter(Boolean);
+    const preview = ["전체", ...labels.slice(0, 2)].join(" · ");
+    const rest = labels.length - 2;
+    return rest > 0 ? `${preview} · 외 ${rest}개` : preview;
+  }
+
+  private axisRadio(
+    host: HTMLElement,
+    opts: {
+      active: boolean;
+      label: string;
+      note: string;
+      value: string;
+      disabled: boolean;
+      onPick: () => void;
+    },
+  ): void {
+    const row = host.createEl("label", {
+      cls:
+        "charinfo-view-menu__axis-row" +
+        (opts.active ? " is-active" : ""),
+    });
+    const radio = row.createEl("input", {
+      type: "radio",
+      attr: {
+        name: this.axisRadioName,
+        value: opts.value,
+        "data-focus": `axis-${opts.value}`,
+      },
+    });
+    radio.checked = opts.active;
+    radio.disabled = opts.disabled;
+    row.createSpan({
+      cls: "charinfo-view-menu__axis-name",
+      text: opts.label,
+    });
+    row.createSpan({
+      cls: "charinfo-view-menu__axis-note",
+      text: opts.note,
+      attr: { title: opts.note },
+    });
+    radio.addEventListener("change", () => {
+      if (!radio.checked || this.pending) return;
+      this.axisFocusKey = `axis-${opts.value}`;
+      opts.onPick();
+    });
+  }
+
+  private commitPageAxis(
+    next: PrimaryFilterProperty | null,
+    rerender: () => void,
+  ): void {
+    if (this.pending) return;
+    const current =
+      this.pageAxisOverride === undefined
+        ? this.handlers.getPageAxis()
+        : this.pageAxisOverride;
+    if ((current ?? null) === (next ?? null)) return;
+    this.pageAxisOverride = next;
+    this.pending = true;
+    rerender();
+    void Promise.resolve(this.handlers.setPageAxis(next))
+      .then(() => {
+        this.pending = false;
+        this.close();
+        this.handlers.onChange();
+      })
+      .catch(() => {
+        this.pending = false;
+        this.pageAxisOverride = current;
+        new Notice("필터 저장에 실패했어요. 다시 시도해 주세요.");
+        rerender();
+      });
+  }
+
+  private renderRow(
     list: HTMLElement,
-    prefs: CardPropertyPref[],
-    pref: CardPropertyPref,
+    field: ViewFieldRow,
     rerender: () => void,
   ): void {
     const row = list.createDiv({
-      cls: "charinfo-prop-row" + (pref.visible ? " is-visible" : " is-hidden"),
+      cls:
+        "charinfo-prop-row" +
+        (field.visible ? " is-visible" : " is-hidden"),
     });
-    row.dataset.id = pref.id;
-
-    const handle = row.createDiv({
-      cls: "charinfo-prop-row__handle",
-      attr: { title: "드래그해서 순서 변경", "aria-label": "순서" },
-    });
-    setIcon(handle, "grip-vertical");
 
     row.createDiv({
       cls: "charinfo-prop-row__label",
-      text: (this.handlers.getLabel ?? propertyLabel)(pref.id),
+      text: field.label,
     });
 
     const eye = row.createEl("button", {
       cls: "charinfo-prop-row__eye",
       attr: {
         type: "button",
-        title: pref.visible ? "카드에서 숨기기" : "카드에 보이기",
-        "aria-pressed": pref.visible ? "true" : "false",
+        title: field.visible ? "카드에서 숨기기" : "카드에 보이기",
+        "aria-pressed": field.visible ? "true" : "false",
       },
     });
-    setIcon(eye, pref.visible ? "eye" : "eye-off");
+    setIcon(eye, field.visible ? "eye" : "eye-off");
+    eye.disabled = this.pending;
     eye.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      pref.visible = !pref.visible;
-      void this.persist(prefs);
-      rerender();
-      this.handlers.onChange();
-    });
-
-    attachHoldDrag(row, pref.id, {
-      canDrag: () => true,
-      activation: "move",
-      movePx: 4,
-      dropSelector: ".charinfo-prop-row",
-      ghostClass: "charinfo-prop-row-ghost",
-      slotClass: "charinfo-prop-row-slot",
-      onReorder: (fromId, toId, place) => {
-        const from = prefs.findIndex((p) => p.id === fromId);
-        const to = prefs.findIndex((p) => p.id === toId);
-        if (from < 0 || to < 0 || from === to) return;
-        const [item] = prefs.splice(from, 1);
-        if (!item) return;
-        let insertAt = prefs.findIndex((p) => p.id === toId);
-        if (insertAt < 0) return;
-        if (place === "after") insertAt += 1;
-        prefs.splice(insertAt, 0, item);
-        void this.persist(prefs);
+      // Repaint from the saved rows, not from the click — the write is queued
+      // behind any other settings mutation, so reading back early would lie.
+      void Promise.resolve(
+        this.handlers.setVisible(field.fieldId, !field.visible),
+      ).then(() => {
         rerender();
         this.handlers.onChange();
-      },
+      });
     });
   }
-
-  private async persist(prefs: CardPropertyPref[]): Promise<void> {
-    await this.handlers.setProperties(prefs.map((p) => ({ ...p })));
-  }
 }
-
-export type { CardPropertyId };
