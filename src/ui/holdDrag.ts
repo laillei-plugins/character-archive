@@ -13,6 +13,8 @@ export interface HoldDragHandlers {
   movePx?: number;
   handleSelector?: string;
   ignoreSelector?: string;
+  /** Optional ancestor that contains every valid drop target. */
+  dropRootSelector?: string;
 }
 
 export function attachHoldDrag(
@@ -421,10 +423,12 @@ export function attachHoldDrag(
     const h = rect.height;
 
     const parent = el.parentElement;
-    gridEl =
-      (parent?.closest(".charinfo-grid, .charinfo-image-strip__row") as
-        | HTMLElement
-        | null) ?? parent;
+    gridEl = handlers.dropRootSelector
+      ? ((parent?.closest(handlers.dropRootSelector) as HTMLElement | null) ??
+        parent)
+      : ((parent?.closest(".charinfo-grid, .charinfo-image-strip__row") as
+          | HTMLElement
+          | null) ?? parent);
     placeholder = makePlaceholder(w, h);
     ghost = makeGhost(w, h);
     parent?.insertBefore(placeholder, el);

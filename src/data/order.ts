@@ -21,23 +21,213 @@ export function sortCharacters(
   return copy;
 }
 
-/** Rewrite `order` only for cards whose value actually changes. */
-export async function persistGenreOrder(
-  app: App,
-  ordered: CharacterRecord[],
-): Promise<void> {
-  const writes: Promise<void>[] = [];
+/* ------------------------------------------------- immediate card reorder */
+
+/**
+ * One card's durable rank, captured at drop time.
+ *
+ * Frozen, and holding a number rather than a record, on purpose: a queued
+ * gesture must write the rank *its* drop decided, not whatever `record.order`
+ * says by the time the write runs. A later drop has already moved that field.
+ */
+export interface OrderWrite {
+  readonly path: string;
+  readonly file: TFile;
+  readonly order: number;
+}
+
+/** What a card drop means, resolved against the records the user can see. */
+export interface CardReorderPlan {
+  from: CharacterRecord;
+  to: CharacterRecord;
+  /** The destination 장르 and 그룹, read off `to` before anything mutates. */
+  genre: string;
+  group: string;
+  genreChanged: boolean;
+  groupChanged: boolean;
+  /** True when the card also changes which 장르/그룹 schema owns it. */
+  moved: boolean;
+  /** The destination group's new visible arrangement, `from` already spliced in. */
+  ordered: CharacterRecord[];
+}
+
+/**
+ * The arrangement a card drop implies, or `null` when the drop is not an edit.
+ *
+ * Pure: nothing is mutated here, so the caller decides when the commit happens
+ * — and it can happen synchronously, which is the whole point. `records` must
+ * be in view order (`sortCharacters` output), because that is what "the
+ * position the card was already in" means.
+ *
+ * `null` covers the three non-edits: an unknown card, an unknown target, and a
+ * drop that lands where the card already sat *and* changes no group or genre.
+ * A same-position drop across a group boundary is still a real move, so it is
+ * not folded in here.
+ */
+export function planCardReorder(
+  records: readonly CharacterRecord[],
+  fromPath: string,
+  toPath: string,
+  place: "before" | "after",
+): CardReorderPlan | null {
+  const from = records.find((r) => r.path === fromPath);
+  const to = records.find((r) => r.path === toPath);
+  if (!from || !to || from === to) return null;
+
+  const genre = to.장르;
+  const group = to.그룹.trim();
+  const genreChanged = from.장르 !== genre;
+  const groupChanged = from.그룹.trim() !== group;
+  const moved = genreChanged || groupChanged;
+
+  // Cards are rendered and dragged inside group grids. Rank only the target
+  // grid: a card from another group may be numerically interleaved in the
+  // genre-wide array, but it is not a visible neighbour and must not turn a
+  // same-position drop into a write.
+  const inDestination = (record: CharacterRecord): boolean =>
+    record.장르 === genre && record.그룹.trim() === group;
+  const before = records.filter(inDestination).map((r) => r.path);
+  const ordered = records.filter(
+    (r) => inDestination(r) && r.path !== fromPath,
+  );
+  const toIndex = ordered.findIndex((r) => r.path === toPath);
+  if (toIndex < 0) return null;
+  ordered.splice(place === "before" ? toIndex : toIndex + 1, 0, from);
+
+  if (!moved && sameArrangement(before, ordered)) return null;
+  return { from, to, genre, group, genreChanged, groupChanged, moved, ordered };
+}
+
+/** True when a reordered list is the arrangement that was already on screen. */
+function sameArrangement(
+  before: readonly string[],
+  after: readonly CharacterRecord[],
+): boolean {
+  if (before.length !== after.length) return false;
+  return after.every((record, index) => record.path === before[index]);
+}
+
+/**
+ * Commit normalized manual ranks to the records and return what storage owes.
+ *
+ * Synchronous, and it must stay that way: the sort that rebuilds the gallery
+ * reads `record.order`, so assigning after the first `await` is exactly the bug
+ * where a repaint rebuilds the pre-drop order. Only changed ranks are returned,
+ * so a card that already held its slot is not rewritten.
+ */
+export function commitOrderValues(
+  ordered: readonly CharacterRecord[],
+): OrderWrite[] {
+  const writes: OrderWrite[] = [];
   ordered.forEach((record, index) => {
     const next = (index + 1) * 10;
     if (record.order === next) return;
     record.order = next;
     writes.push(
-      app.fileManager.processFrontMatter(record.file, (fm) => {
-        fm.order = next;
-      }),
+      Object.freeze({ path: record.path, file: record.file, order: next }),
     );
   });
-  if (writes.length) await Promise.all(writes);
+  return writes;
+}
+
+/** Write one drop's captured ranks. Nothing to write is not a write. */
+export async function writeOrderValues(
+  app: App,
+  writes: readonly OrderWrite[],
+): Promise<void> {
+  if (writes.length === 0) return;
+  const results = await Promise.allSettled(
+    writes.map((write) =>
+      app.fileManager.processFrontMatter(write.file, (fm) => {
+        fm.order = write.order;
+      }),
+    ),
+  );
+  // Promise.all would release the serialized lane as soon as one write failed,
+  // even though its sibling writes were still running. Wait for every write in
+  // this gesture, then fail the gesture so a newer drop cannot be overtaken by
+  // an older slow completion.
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failure) throw failure.reason;
+}
+
+/** Brackets on the lane's active window, plus its one report. */
+export interface ReorderLaneHooks {
+  onActivate?: () => void;
+  onDrain?: (outcome: { failed: boolean }) => void;
+}
+
+/**
+ * Per-view reorder persistence lane.
+ *
+ * A drop is authoritative in memory and on screen before anything reaches this
+ * lane, so the lane owes storage exactly two things.
+ *
+ * Gesture order: tasks run strictly FIFO, so the newest drop writes last and
+ * the durable vault ends up agreeing with the last thing the user did. A
+ * rejected task never breaks the chain — the gesture behind it still writes.
+ *
+ * A window: the lane is `active` from the first enqueue until it drains, and
+ * that span is the only one in which the view's own `order` writes can come
+ * back as metadata events describing a half-written vault. `onActivate` and
+ * `onDrain` bracket exactly that span, so the guard cannot outlive it and
+ * cannot silence a refresh the lane is not responsible for.
+ *
+ * Failure is reported once per span, on drain, with the flag — not per task.
+ * Three rapid drops that all fail are one thing that went wrong, not three.
+ */
+export class ReorderLane {
+  private tail: Promise<void> = Promise.resolve();
+  private running = 0;
+  private failed = false;
+  /**
+   * Assigned in the body, not as a parameter property: this module is loaded
+   * straight from TypeScript by `node --test`, and type stripping cannot emit
+   * the assignment a parameter property implies.
+   */
+  private readonly hooks: ReorderLaneHooks;
+
+  constructor(hooks: ReorderLaneHooks = {}) {
+    this.hooks = hooks;
+  }
+
+  /** True while at least one gesture is queued or writing. */
+  get active(): boolean {
+    return this.running > 0;
+  }
+
+  /** Gestures still in the lane, including the one writing now. */
+  get depth(): number {
+    return this.running;
+  }
+
+  /**
+   * Queue one gesture's persistence.
+   *
+   * The returned promise settles when *this* gesture is done and never rejects:
+   * a drop the user is already looking at cannot be taken back by throwing.
+   */
+  enqueue(task: () => Promise<void>): Promise<void> {
+    if (this.running === 0) {
+      this.failed = false;
+      this.hooks.onActivate?.();
+    }
+    this.running += 1;
+    const done = this.tail.then(task).catch((error) => {
+      this.failed = true;
+      console.error("[charinfo] 순서 저장 실패", error);
+    });
+    this.tail = done;
+    return done.then(() => {
+      this.running -= 1;
+      if (this.running > 0) return;
+      const failed = this.failed;
+      this.failed = false;
+      this.hooks.onDrain?.({ failed });
+    });
+  }
 }
 
 export async function setCharacterGenre(

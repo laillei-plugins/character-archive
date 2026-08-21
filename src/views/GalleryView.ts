@@ -29,11 +29,14 @@ import {
   isCoverNone,
 } from "../data/images";
 import {
-  persistGenreOrder,
+  commitOrderValues,
+  planCardReorder,
   renameGenre,
+  ReorderLane,
   resolveGroupRouteOrder,
   moveInOrder,
   sortCharacters,
+  writeOrderValues,
 } from "../data/order";
 import { EXAMPLE_ARCHIVE } from "../data/bundledTemplate";
 import type { CardPropertyId } from "../data/cardProperties";
@@ -284,6 +287,25 @@ export class GalleryView extends FileView {
    */
   private uiGeneration = 0;
   private viewClosed = false;
+  /**
+   * Reorder persistence, serialized per view.
+   *
+   * A drop is already committed to `records` and to the DOM before anything is
+   * queued here, so the lane only has to keep gesture order and to hold the
+   * refresh guard for exactly as long as this view's own `order` writes are
+   * still settling. `orderFreeze` is that guard: while the lane is active every
+   * refresh request collapses into one deferred bit, which is flushed on drain
+   * — the moment the vault finally agrees with what the screen already showed.
+   */
+  private orderFreeze = new BatchRefreshFreeze();
+  private orderLane = new ReorderLane({
+    onActivate: () => this.orderFreeze.freeze(),
+    onDrain: (outcome) => this.settleOrderLane(outcome.failed),
+  });
+  /** Invalidates a vault scan that began before a newer local drop. */
+  private reorderRevision = 0;
+  /** Newest gesture's UI generation — what the drain is allowed to repaint. */
+  private orderLaneGeneration = 0;
   /** Serialize cover writes per character so rapid strip taps don't race. */
   private coverWriteChain = new Map<string, Promise<void>>();
   /** Latest cover intent per path (coalesce while a write is in flight). */
@@ -780,6 +802,7 @@ export class GalleryView extends FileView {
   }
 
   async onOpen(): Promise<void> {
+    this.viewClosed = false;
     this.registerDomEvent(this.containerEl, "keydown", (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         // Batch owns Escape first, in exactly this order: a running write
@@ -2193,17 +2216,38 @@ export class GalleryView extends FileView {
   }
 
   async refresh(): Promise<void> {
+    // A scan can outlive the FileView that started it. Closed views no longer
+    // own a DOM, so they must neither start nor finish a render pass.
+    if (this.viewClosed) return;
+    const generation = this.uiGeneration;
     // A batch write is running: record the request and paint nothing. Scanning
     // here would rebuild `records` from a half-written vault, and rendering
     // would tear down the dialog the transaction is still holding.
     if (this.batchFreeze.capture()) return;
+    // Our own `order` writes are still settling: the vault would answer with a
+    // half-written arrangement, and the screen already holds the finished one.
+    if (this.orderFreeze.capture()) return;
     // Read the dirty version first: an edit landing during the scan below must
     // stay pending instead of being acknowledged away by this older pass.
     const version = this.plugin.galleryRefreshVersion();
-    this.records = await this.store.listCharacters(
+    const reorderRevision = this.reorderRevision;
+    const records = await this.store.listCharacters(
       this.sortMode,
       this.pageLibrary(),
     );
+    if (!this.uiAlive(generation)) return;
+    // The scan may have started before a drop and resumed afterward. Re-check
+    // the guards before committing its snapshot; otherwise old metadata can
+    // replace the synchronously committed order even though the entry check
+    // above passed. A revision mismatch after a fast drain starts one clean
+    // follow-up scan instead of accepting the stale result.
+    if (this.batchFreeze.capture()) return;
+    if (this.orderFreeze.capture()) return;
+    if (reorderRevision !== this.reorderRevision) {
+      if (this.uiAlive(generation)) void this.refresh();
+      return;
+    }
+    this.records = records;
     this.ensureActiveGenre();
     this.reconcileBatchScope();
     if (this.selected) {
@@ -2226,6 +2270,9 @@ export class GalleryView extends FileView {
     // Our own transaction is writing these notes. Patching a card now would
     // paint an intermediate group value that may still be rolled back.
     if (this.batchFreeze.capture()) return false;
+    // Same for a drop's own writes — `order` is part of the card projection, so
+    // every note the lane touches comes back here asking for a repaint.
+    if (this.orderFreeze.capture()) return false;
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) {
       this.plugin.markGalleriesDirty({ path });
@@ -3314,6 +3361,9 @@ export class GalleryView extends FileView {
         canDrag: () => this.cardEditActive,
         activation: "move",
         movePx: 2,
+        // Cards may move between subgroup grids while the gallery is editing.
+        // Other attachHoldDrag consumers keep their local-container behavior.
+        dropRootSelector: ".charinfo-gallery__main",
         // Handle or title band — cover stays free for pan / picker.
         handleSelector: ".charinfo-card__drag-handle, .charinfo-card__meta",
         ignoreSelector: ".charinfo-card__cover",
@@ -3707,16 +3757,26 @@ export class GalleryView extends FileView {
     if (detail instanceof HTMLElement) void this.renderDetail(detail);
   }
 
-  /** Destination group's schema must exist before its members are reconciled. */
+  /**
+   * Destination group's schema must exist before its members are reconciled.
+   *
+   * `library` may be passed in by a caller whose work outlives the gesture that
+   * started it: reading the page scope late would answer with the default
+   * library once the leaf has let go of its file.
+   */
   private async adoptDestinationSchema(
     archive: string,
     group: string,
+    library = this.pageLibrary(),
+    options: { propagateFailure?: boolean } = {},
   ): Promise<void> {
-    const library = this.pageLibrary();
     try {
       await this.plugin.persistGroupSchema(library, archive, group);
     } catch (error) {
       console.error("[charinfo] 그룹 속성 저장 실패", error);
+      // Reorder persistence owns one consolidated failure Notice and durable
+      // reload. Other callers keep the existing best-effort behavior.
+      if (options.propagateFailure) throw error;
       return;
     }
     this.plugin.reconcileGroupMembers(library, archive, group);
@@ -5030,83 +5090,102 @@ export class GalleryView extends FileView {
     else parent.insertBefore(fromEl, toEl.nextSibling);
   }
 
-  private async handleReorder(
+  /**
+   * A dropped card is authoritative before storage hears about it.
+   *
+   * Everything down to the first `await` is the commit: the record's own
+   * 장르/그룹, the normalized `order` values the new arrangement implies, the
+   * re-sorted `records`, and the DOM move. That order is the fix — the manual
+   * sort reads `record.order`, so ranking before assigning let any repaint
+   * rebuild the pre-drop arrangement until the frontmatter writes landed.
+   *
+   * Storage then catches up inside `orderLane`, silently and in gesture order,
+   * behind a refresh guard scoped to exactly that window. A cross-group drop
+   * writes its 장르/그룹 and adopts the destination schema in the *same* lane
+   * task, ahead of its own ranks, so the two can never interleave with the next
+   * gesture's writes. Success says nothing; only failure speaks, once, on drain.
+   */
+  private handleReorder(
     fromPath: string,
     toPath: string,
     place: "before" | "after",
   ): Promise<void> {
+    const plan = planCardReorder(this.records, fromPath, toPath, place);
+    // No target, or the card landed back where it was: nothing to write.
+    if (!plan) return Promise.resolve();
+
+    const { from, genre, group, genreChanged, groupChanged, moved } = plan;
+    this.reorderRevision += 1;
+    let sortModeChanged = false;
     if (this.sortMode !== "manual") {
+      // Freezing the arrangement the user is looking at *is* the drop, so the
+      // mode flips with it. The settings write is storage's problem, not the
+      // gesture's — it rides the lane with everything else.
       this.plugin.settings.sortMode = "manual";
-      await this.plugin.saveSettings();
+      sortModeChanged = true;
       this.showGalleryTip("표시 순서를 「자유」로 맞춰 두고, 지금 자리를 저장해요");
     }
 
-    const from = this.records.find((r) => r.path === fromPath);
-    const to = this.records.find((r) => r.path === toPath);
-    if (!from || !to) return;
-
-    const genre = to.장르;
-    const group = to.그룹;
-    const genreChanged = from.장르 !== genre;
-    const groupChanged = from.그룹 !== group;
-    const moved = genreChanged || groupChanged;
-
-    // A move changes which schema owns the card, so YAML goes first: memory and
-    // DOM must never claim the destination while storage still says source.
     if (moved) {
-      this.plugin.suppressGalleryRefresh = true;
-      try {
-        await this.app.fileManager.processFrontMatter(from.file, (fm) => {
-          if (genreChanged) fm.장르 = genre;
-          if (groupChanged) fm.그룹 = group;
-        });
-      } catch (error) {
-        console.error(error);
-        new Notice(
-          `이동 실패: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        // Reload from disk — the card must stay where storage says it is.
-        this.plugin.markGalleriesDirty({ path: from.path });
-        await this.refresh();
-        return;
-      } finally {
-        this.plugin.suppressGalleryRefresh = false;
-      }
       from.장르 = genre;
       from.그룹 = group;
       from.values.그룹 = group;
       if (genre) from.values.장르 = genre;
-      await this.adoptDestinationSchema(genre, group);
     }
 
-    const inGenre = this.records.filter(
-      (r) => r.장르 === genre && r.path !== fromPath,
-    );
-    const toIndex = inGenre.findIndex((r) => r.path === toPath);
-    if (toIndex < 0) return;
-    const insertAt = place === "before" ? toIndex : toIndex + 1;
-    inGenre.splice(insertAt, 0, from);
-
+    const writes = commitOrderValues(plan.ordered);
+    this.records = sortCharacters(this.records, "manual");
     this.moveDomItem(
       `.charinfo-card[data-path="${CSS.escape(fromPath)}"]`,
       `.charinfo-card[data-path="${CSS.escape(toPath)}"]`,
       place,
     );
     this.syncGroupSectionChrome();
+    if (moved) this.invalidateProjectionCaches();
 
-    this.records = sortCharacters(this.records, "manual");
+    // Captured with the gesture: the lane may still be writing after the leaf
+    // has let go of its file, and the page scope would answer differently then.
+    const library = this.pageLibrary();
+    this.orderLaneGeneration = this.uiGeneration;
+    return this.orderLane.enqueue(async () => {
+      if (sortModeChanged) await this.plugin.saveSettings();
+      if (moved) {
+        await this.app.fileManager.processFrontMatter(from.file, (fm) => {
+          if (genreChanged) fm.장르 = genre;
+          if (groupChanged) fm.그룹 = group;
+        });
+        await this.adoptDestinationSchema(genre, group, library, {
+          propagateFailure: true,
+        });
+      }
+      // `writes` was frozen at drop time: re-reading `record.order` here would
+      // hand this gesture the ranks a *later* drop has since assigned, and the
+      // lane's whole promise is that the newest gesture is the one that wins.
+      await writeOrderValues(this.app, writes);
+    });
+  }
 
-    this.plugin.suppressGalleryRefresh = true;
-    try {
-      await persistGenreOrder(this.app, inGenre);
-    } catch (error) {
-      console.error(error);
+  /**
+   * The reorder lane drained: the vault is done agreeing with the screen.
+   *
+   * The guard lifts here and nowhere else, so a self-generated `order` event
+   * describing a half-written vault can never repaint, and an *external* edit
+   * that arrived during the window is not lost — it flushes as one refresh.
+   * A failed span reports once and then reloads durable order, because the only
+   * order still worth trusting is the one storage actually kept.
+   */
+  private settleOrderLane(failed: boolean): void {
+    const deferred = this.orderFreeze.thaw();
+    // The leaf may have gone while the writes finished. They kept their storage
+    // guarantee; they lost the right to paint.
+    if (!this.uiAlive(this.orderLaneGeneration)) return;
+    if (failed) {
       new Notice("순서를 저장하지 못했어요.");
-      this.plugin.markGalleriesDirty({ path: from.path });
-      await this.refresh();
-    } finally {
-      this.plugin.suppressGalleryRefresh = false;
+      this.plugin.markGalleriesDirty();
+      void this.refresh();
+      return;
     }
+    if (deferred) void this.refresh();
   }
 
   /** After cross-group DOM moves: drop empty sections. */
@@ -5115,6 +5194,11 @@ export class GalleryView extends FileView {
       if (!(section instanceof HTMLElement)) return;
       const grid = section.querySelector(".charinfo-grid");
       if (!(grid instanceof HTMLElement)) return;
+      const cardCount = grid.querySelectorAll(
+        ".charinfo-card:not(.charinfo-card--add)",
+      ).length;
+      const count = section.querySelector(".charinfo-genre__count");
+      if (count instanceof HTMLElement) count.textContent = String(cardCount);
       if (grid.childElementCount === 0) {
         section.remove();
       }
