@@ -431,7 +431,8 @@ export async function setCharacterField(
 
 /**
  * Write a character's tag ids. Dedicated array writer — `setCharacterField`
- * would store a string. An empty list removes the key instead of leaving `[]`.
+ * would store a string. Clearing every tag writes `태그: []`; the key belongs to
+ * the fixed archive schema, so it is never deleted.
  */
 export async function setCharacterTags(
   app: App,
@@ -447,11 +448,31 @@ export async function setCharacterTags(
     next.push(id);
   }
   await app.fileManager.processFrontMatter(file, (fm) => {
-    if (next.length === 0) {
-      delete fm.태그;
-      return;
-    }
     fm.태그 = next;
+  });
+}
+
+/**
+ * Write a custom multi-select field as a YAML list. Same contract as
+ * `setCharacterTags`: an empty selection writes `[]` (the key belongs to the
+ * group schema, so it is never deleted), and ids are stored, never labels.
+ */
+export async function setCharacterList(
+  app: App,
+  file: TFile,
+  key: string,
+  ids: string[],
+): Promise<void> {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const raw of ids) {
+    const id = raw.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    next.push(id);
+  }
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    fm[key] = next;
   });
 }
 
@@ -534,6 +555,7 @@ export async function healCharacterCardFields(
         coverPosition: "50% 50%",
         order: 0,
         title: file.basename,
+        values: Object.create(null) as Record<string, string | string[]>,
       };
       const images = listCharacterImages(app, stub, text);
       if (images[0]) {

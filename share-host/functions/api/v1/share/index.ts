@@ -1,48 +1,18 @@
-/** @typedef {{ GALLERIES: KVNamespace, UPLOAD_KEY?: string }} Env */
-
-const MAX_BYTES = 12_000_000;
-
-/**
- * @param {string | null} raw
- * @returns {"7d" | "30d" | "permanent"}
- */
-function parseTtl(raw) {
-  if (raw === "7d" || raw === "30d" || raw === "permanent") return raw;
-  return "30d";
-}
-
-/** @param {"7d" | "30d" | "permanent"} ttl */
-function ttlSeconds(ttl) {
-  if (ttl === "7d") return 7 * 86400;
-  if (ttl === "30d") return 30 * 86400;
-  return 365 * 86400;
-}
-
-function randomToken(len = 12) {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  let out = "";
-  for (const b of bytes) out += b.toString(36);
-  return out.slice(0, len);
-}
-
-/**
- * @param {Request} request
- * @param {Env} env
- */
-function authorizeUpload(request, env) {
-  const key = env.UPLOAD_KEY?.trim();
-  // No server secret → public create (plugin ships without a shared key).
-  if (!key) return true;
-  const header = request.headers.get("authorization") || "";
-  const m = header.match(/^Bearer\s+(.+)$/i);
-  return Boolean(m && m[1]?.trim() === key);
-}
+import {
+  authorizeUpload,
+  isCharacterArchiveHtml,
+  maxBytes,
+  parseTtl,
+  randomHexToken,
+  ttlSeconds,
+  type Env,
+} from "../../../_lib/share";
 
 /**
  * POST /api/v1/share — create a new share. Returns manageKey once (keep in Obsidian).
  * @param {{ request: Request, env: Env }} context
  */
-export async function onRequestPost({ request, env }) {
+export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   if (!authorizeUpload(request, env)) {
     return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
@@ -51,15 +21,21 @@ export async function onRequestPost({ request, env }) {
   if (!buf.byteLength) {
     return Response.json({ ok: false, error: "empty body" }, { status: 400 });
   }
-  if (buf.byteLength > MAX_BYTES) {
+  if (buf.byteLength > maxBytes(env)) {
     return Response.json({ ok: false, error: "too large" }, { status: 413 });
   }
 
   const ttl = parseTtl(request.headers.get("x-charinfo-ttl"));
   const seconds = ttlSeconds(ttl);
-  const id = randomToken(12);
-  const manageKey = randomToken(24);
+  const id = randomHexToken(16);
+  const manageKey = randomHexToken(32);
   const html = new TextDecoder().decode(buf);
+  if (!isCharacterArchiveHtml(html)) {
+    return Response.json(
+      { ok: false, error: "invalid Character Archive share" },
+      { status: 400 },
+    );
+  }
   const expiresAt =
     ttl === "permanent" ? null : new Date(Date.now() + seconds * 1000).toISOString();
 
@@ -83,4 +59,4 @@ export async function onRequestPost({ request, env }) {
     expiresAt,
     ttl,
   });
-}
+};

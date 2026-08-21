@@ -10,21 +10,23 @@ Optional Cloudflare host for public gallery HTML.
 
 ```bash
 # Optional — only if you want to lock creates on your own host
-npx wrangler secret put UPLOAD_KEY
+npx wrangler pages secret put UPLOAD_KEY
 ```
 
 Do not bake a shared secret into the distributed plugin.
+The open default service validates the Character Archive document marker, but
+operators should also apply a Cloudflare rate-limit rule to `POST /api/v1/share`.
 
 ## API
 
 - `POST /api/v1/share` — create
+- `PUT /api/v1/share/:id` — update with its management key
+- `DELETE /api/v1/share/:id` — stop with its management key
 - `GET /g/:id` — public HTML
 - Storage: Workers KV (`GALLERIES`)
 
-Set `PUBLIC_ORIGIN` if the public URL is not the worker origin.
-
-TTL `permanent` is stored for one year (KV limit). Label it honestly in the UI as 상시 / 1 year.
+TTL `permanent` is the backward-compatible wire value for one-year storage. Label it as `1 year` / `1년`, never as permanent.
 
 ## Deploy
 
-Point `wrangler.toml` at your own KV namespace, then deploy. The plugin default public origin is `https://character-archive.pages.dev`.
+Point `wrangler.toml` at your own KV namespace, then run `npm run deploy`. The plugin default public origin is `https://character-archive.pages.dev`.

@@ -3,6 +3,7 @@ import type { SortMode } from "../settings";
 import { sortCharacters } from "./order";
 import { parseTagIds } from "./tags";
 import { COVER_NONE, firstRemoteImageEmbed, isCoverNone } from "./images";
+import { NEVER_CREATE_KEYS } from "./propertySchema";
 
 export interface CharacterRecord {
   file: TFile;
@@ -25,6 +26,12 @@ export interface CharacterRecord {
   coverPosition: string;
   order: number;
   title: string;
+  /**
+   * Every own frontmatter value except systemic keys and `kind` — the storage
+   * side of custom group fields. Lists stay lists (태그, multi-select); anything
+   * else is read as text. Built-ins keep their typed fields above in sync.
+   */
+  values: Record<string, string | string[]>;
 }
 
 function asString(value: unknown): string {
@@ -33,6 +40,25 @@ function asString(value: unknown): string {
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return value.map(asString).filter(Boolean).join(", ");
   return String(value);
+}
+
+/**
+ * Frontmatter as the group schema reads it: every own key except the systemic
+ * ones. A null-prototype object so a note key like `__proto__` stays inert data.
+ */
+function readValues(data: Record<string, unknown>): Record<string, string | string[]> {
+  const values: Record<string, string | string[]> = Object.create(null);
+  const skip = new Set<string>([...NEVER_CREATE_KEYS, "kind", "언급"]);
+  for (const key of Object.keys(data)) {
+    if (skip.has(key)) continue;
+    const raw = data[key];
+    if (Array.isArray(raw)) {
+      values[key] = raw.map(asString).filter((item) => item.trim());
+      continue;
+    }
+    values[key] = asString(raw);
+  }
+  return values;
 }
 
 function parseCover(raw: string): string {
@@ -152,6 +178,7 @@ export class CharacterStore {
       coverPosition: parseCoverPosition(data.coverPosition ?? data.cover_position),
       order,
       title: displayTitle(partial),
+      values: readValues(data),
     };
   }
 

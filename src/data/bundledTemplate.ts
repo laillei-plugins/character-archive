@@ -79,6 +79,7 @@ order: 0
 ## 메모
 
 갤러리 시트에는 안 나옵니다. 메모·링크·체크리스트를 자유롭게 두세요.
+제목을 바꿔 숨기려면 그 제목 **바로 위**에 \`<!-- charinfo:private -->\` 를 두세요.
 `;
 
 export function fillCharacterTemplate(

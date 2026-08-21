@@ -13,3 +13,4 @@ dist/
 .codex/
 share-host/node_modules/
 share-host/.wrangler/
+test-results/

@@ -1,5 +1,6 @@
 import {
   App,
+  Modal,
   normalizePath,
   Notice,
   PluginSettingTab,
@@ -19,10 +20,76 @@ import {
   resetChipFilters,
   DEFAULT_WEB_SHARE_HOSTED_BASE_URL,
   normalizeWebShareHostedBaseUrl,
+  clearWebShareForPage,
+  type WebShareLastState,
 } from "../settings";
 import { copyTextToClipboard } from "../page/galleryPage";
 import { isImgurPluginAvailable } from "../media/imgurAdapter";
 import { isGithubShareConfigured } from "../share/githubPages";
+import {
+  clearLastShareIfSameUrl,
+  hasUnclaimedLegacyWebShare,
+} from "../share/webShareState";
+import {
+  deleteHostedShare,
+  hostedShareBaseFromUrl,
+  uploadKeyForHostedTarget,
+} from "../share/hostedShare";
+
+class StopHostedShareModal extends Modal {
+  constructor(
+    app: App,
+    private readonly label: string,
+    private readonly url: string,
+    private readonly onConfirm: () => Promise<void>,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    this.setTitle("공유 중지할까요?");
+    contentEl.createEl("p", {
+      text: `${this.label}의 공개 페이지를 서버에서 지웁니다. 이미 열린 사본은 잠시 남을 수 있어요.`,
+    });
+    contentEl.createEl("p", {
+      cls: "setting-item-description",
+      text: this.url,
+    });
+
+    let cancelButton: { setDisabled(value: boolean): unknown } | null = null;
+    let stopButton: { setDisabled(value: boolean): unknown } | null = null;
+    new Setting(contentEl)
+      .addButton((button) => {
+        cancelButton = button;
+        button.setButtonText("취소").onClick(() => this.close());
+      })
+      .addButton((button) => {
+        stopButton = button;
+        button
+          .setButtonText("공유 중지")
+          .setWarning()
+          .onClick(async () => {
+            cancelButton?.setDisabled(true);
+            stopButton?.setDisabled(true);
+            try {
+              await this.onConfirm();
+              this.close();
+            } catch (error) {
+              console.error(error);
+              new Notice("멈추지 못했어요. 링크는 아직 열려 있어요.");
+              cancelButton?.setDisabled(false);
+              stopButton?.setDisabled(false);
+            }
+          });
+      });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
 
 export class CharinfoSettingTab extends PluginSettingTab {
   plugin: CharinfoPlugin;
@@ -226,7 +293,7 @@ export class CharinfoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName("웹 공유").setHeading();
     containerEl.createEl("p", {
-      text: "기본 공유 주소로 바로 링크를 만들 수 있어요. 다른 서버를 쓸 때만 주소를 바꾸세요. GitHub는 선택이에요.",
+      text: "공유를 누를 때만 선택한 카드 정보와 표지를 기본 공개 서버에 올려 링크를 만들어요. 다른 서버를 쓸 때만 주소를 바꾸세요. GitHub는 선택이에요.",
       cls: "setting-item-description",
     });
 
@@ -268,7 +335,7 @@ export class CharinfoSettingTab extends PluginSettingTab {
         dropdown
           .addOption("7d", "7일")
           .addOption("30d", "30일")
-          .addOption("permanent", "상시")
+          .addOption("permanent", "1년")
           .setValue(this.plugin.settings.webShareHostedTtl)
           .onChange(async (value: string) => {
             this.plugin.settings.webShareHostedTtl =
@@ -277,18 +344,7 @@ export class CharinfoSettingTab extends PluginSettingTab {
           }),
       );
 
-    const lastUrl = this.plugin.settings.webShareLastUrl.trim();
-    if (lastUrl) {
-      new Setting(containerEl)
-        .setName("마지막 갤러리 링크")
-        .setDesc(lastUrl)
-        .addButton((btn) =>
-          btn.setButtonText("복사").onClick(async () => {
-            const ok = await copyTextToClipboard(lastUrl);
-            new Notice(ok ? "링크 복사됨" : "복사 실패");
-          }),
-        );
-    }
+    this.renderHostedShareLedger(containerEl);
 
     const ghReady = isGithubShareConfigured(this.plugin.settings);
     new Setting(containerEl)
@@ -313,6 +369,145 @@ export class CharinfoSettingTab extends PluginSettingTab {
           this.display();
         }),
       );
+  }
+
+  private managedHostedShares(): Array<{
+    key: string | null;
+    state: WebShareLastState;
+    label: string;
+    sourceStatus: string;
+  }> {
+    const characterPrefix = "@character/";
+    const entries: Array<{
+      key: string | null;
+      state: WebShareLastState;
+      label: string;
+      sourceStatus: string;
+      parsedAt: number | null;
+      index: number;
+    }> = Object.entries(this.plugin.settings.webShareByPage)
+      .map(([key, state], index) => {
+        const character = key.startsWith(characterPrefix);
+        const sourcePath = character ? key.slice(characterPrefix.length) : key;
+        const filename = sourcePath.split("/").pop() || sourcePath;
+        const basename = filename.replace(/\.md$/i, "") || "이름 없는 노트";
+        const parsedAt = Date.parse(state.at);
+        return {
+          key,
+          state,
+          label: `${character ? "캐릭터" : "갤러리"} · ${basename}`,
+          sourceStatus: this.app.vault.getAbstractFileByPath(sourcePath)
+            ? ""
+            : "원본 노트 없음",
+          parsedAt: Number.isFinite(parsedAt) ? parsedAt : null,
+          index,
+        };
+      });
+
+    const legacyUrl = this.plugin.settings.webShareLastUrl.trim();
+    const legacyId = this.plugin.settings.webShareLastId.trim();
+    const legacyManageKey = this.plugin.settings.webShareLastManageKey.trim();
+    if (
+      legacyUrl &&
+      legacyId &&
+      legacyManageKey &&
+      hasUnclaimedLegacyWebShare(this.plugin.settings)
+    ) {
+      const at = this.plugin.settings.webShareLastAt.trim();
+      const parsedAt = Date.parse(at);
+      entries.push({
+        key: null,
+        state: {
+          url: legacyUrl,
+          id: legacyId,
+          manageKey: legacyManageKey,
+          at,
+          htmlVersion: this.plugin.settings.webShareHtmlVersion,
+        },
+        label: "이전 링크",
+        sourceStatus: "원본 노트 연결 안 됨",
+        parsedAt: Number.isFinite(parsedAt) ? parsedAt : null,
+        index: entries.length,
+      });
+    }
+
+    return entries
+      .sort((a, b) => {
+        if (a.parsedAt === null && b.parsedAt !== null) return 1;
+        if (a.parsedAt !== null && b.parsedAt === null) return -1;
+        if (a.parsedAt !== null && b.parsedAt !== null && a.parsedAt !== b.parsedAt) {
+          return b.parsedAt - a.parsedAt;
+        }
+        return a.index - b.index;
+      })
+      .map(({ parsedAt: _parsedAt, index: _index, ...entry }) => entry);
+  }
+
+  private renderHostedShareLedger(containerEl: HTMLElement): void {
+    const entries = this.managedHostedShares();
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: entries.length
+        ? "노트를 옮기거나 지워도 여기서 공개 링크를 확인하고 멈출 수 있어요."
+        : "공개 중인 링크가 없어요.",
+    });
+
+    for (const entry of entries) {
+      const description = document.createDocumentFragment();
+      description.createDiv({ text: entry.state.url });
+      if (entry.sourceStatus) description.createDiv({ text: entry.sourceStatus });
+
+      new Setting(containerEl)
+        .setName(entry.label)
+        .setDesc(description)
+        .addButton((button) =>
+          button.setButtonText("복사").onClick(async () => {
+            const ok = await copyTextToClipboard(entry.state.url);
+            new Notice(ok ? "링크를 복사했어요." : "링크를 복사하지 못했어요.");
+          }),
+        )
+        .addButton((button) => {
+          button
+            .setButtonText("공유 중지")
+            .setWarning()
+            .setDisabled(
+              !entry.state.id.trim() ||
+                !entry.state.manageKey.trim() ||
+                !hostedShareBaseFromUrl(entry.state.url),
+            )
+            .onClick(() => {
+              new StopHostedShareModal(
+                this.app,
+                entry.label,
+                entry.state.url,
+                () => this.stopHostedShare(entry.key, entry.state),
+              ).open();
+            });
+        });
+    }
+  }
+
+  private async stopHostedShare(
+    key: string | null,
+    state: WebShareLastState,
+  ): Promise<void> {
+    const targetBaseUrl = hostedShareBaseFromUrl(state.url);
+    if (!targetBaseUrl) throw new Error("공유 링크 주소를 확인할 수 없어요.");
+    await deleteHostedShare({
+      baseUrl: targetBaseUrl,
+      id: state.id,
+      manageKey: state.manageKey,
+      uploadKey: uploadKeyForHostedTarget(
+        targetBaseUrl,
+        this.plugin.settings.webShareHostedBaseUrl,
+        this.plugin.settings.webShareHostedUploadKey,
+      ),
+    });
+    if (key) clearWebShareForPage(this.plugin.settings, key);
+    clearLastShareIfSameUrl(this.plugin.settings, state.url);
+    await this.plugin.saveSettings();
+    new Notice("공유를 중지했어요. 이미 열린 사본은 잠시 남을 수 있어요.");
+    this.display();
   }
 
   private renderFilterSettings(containerEl: HTMLElement): void {

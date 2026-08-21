@@ -9,11 +9,16 @@ import type {
 import {
   SHARE_ATTR_HEADER,
   clearWebShareForPage,
-  discardStaleWebShareForPage,
   getGroupOrderFor,
   getWebShareForPage,
   setWebShareForPage,
 } from "../settings";
+import {
+  characterWebShareStatePath,
+  clearLastShareIfSameUrl,
+  isWebShareStateStale,
+  recordLastShareUnlessLegacy,
+} from "../share/webShareState";
 import {
   buildSharePayload,
   collectPanelHeaders,
@@ -33,8 +38,10 @@ import {
 } from "../share/githubPages";
 import {
   deleteHostedShare,
+  hostedShareBaseFromUrl,
   isHostedShareConfigured,
   updateHostedShare,
+  uploadKeyForHostedTarget,
   uploadToHostedShare,
 } from "../share/hostedShare";
 import {
@@ -92,13 +99,14 @@ export class ShareGalleryModal extends Modal {
   private sessionUrl = "";
   private durationRow: HTMLElement | null = null;
   private advancedOpen = false;
+  private pendingGithubToken: string;
   private panelHeaders: Set<string>;
   private availableHeaders: string[] = [SHARE_ATTR_HEADER];
   private headerChipsEl: HTMLElement | null = null;
   private selectionLocked: boolean;
   /**
-   * Explicit single-character share (not “gallery with one card”). Create-only
-   * for hosted credentials — must not Update/Delete the gallery page’s link.
+   * Explicit single-character share (not “gallery with one card”). Its hosted
+   * credential uses a character-note key and never touches the gallery link.
    */
   private characterShare: boolean;
   private selectedArchives: Set<string>;
@@ -123,6 +131,7 @@ export class ShareGalleryModal extends Modal {
       slugifyLinkName(title) ||
       "gallery";
     this.hostedTtl = plugin.settings.webShareHostedTtl;
+    this.pendingGithubToken = plugin.settings.webShareGithubToken;
     this.panelHeaders = new Set(
       plugin.settings.webSharePanelHeaders.length
         ? plugin.settings.webSharePanelHeaders
@@ -146,12 +155,14 @@ export class ShareGalleryModal extends Modal {
 
   /** Gallery note path this share is scoped to (credentials key). */
   private pageSharePath(): string {
+    if (this.characterShare) {
+      return characterWebShareStatePath(this.records[0]?.file.path ?? "");
+    }
     return this.pageFile?.path ?? galleryPagePath(this.plugin);
   }
 
-  /** Page-scoped hosted link usable for Update/Stop (null for character share). */
+  /** Share-scoped hosted link usable for Update/Stop. */
   private pageHostedShare(): WebShareLastState | null {
-    if (this.characterShare) return null;
     return getWebShareForPage(this.plugin.settings, this.pageSharePath());
   }
 
@@ -244,7 +255,6 @@ export class ShareGalleryModal extends Modal {
     contentEl.empty();
     contentEl.addClass("charinfo-share-modal");
     this.modalEl.addClass("charinfo-share-modal-shell");
-    this.discardStaleLastUrl();
 
     if (this.panel === "hosted") {
       this.hostMode = "hosted";
@@ -260,40 +270,6 @@ export class ShareGalleryModal extends Modal {
     } else {
       this.renderGithubPublish(contentEl);
     }
-  }
-
-  /** Old share HTML (pre redesign) must not be offered as the current link. */
-  private discardStaleLastUrl(): void {
-    const s = this.plugin.settings;
-    // Character share never owns page credentials.
-    if (this.characterShare) {
-      if (s.webShareHtmlVersion !== SHARE_HTML_VERSION) {
-        this.sessionUrl = "";
-        s.webShareHtmlVersion = SHARE_HTML_VERSION;
-        void this.plugin.saveSettings();
-      }
-      return;
-    }
-    const path = this.pageSharePath();
-    const dropped = discardStaleWebShareForPage(
-      s,
-      path,
-      SHARE_HTML_VERSION,
-    );
-    // Also clear ambiguous legacy globals when the HTML format moved.
-    if (s.webShareHtmlVersion !== SHARE_HTML_VERSION) {
-      this.sessionUrl = "";
-      s.webShareLastId = "";
-      s.webShareLastManageKey = "";
-      // Keep lastUrl only if a fresh page record still has one.
-      const page = getWebShareForPage(s, path);
-      if (!page?.url) s.webShareLastUrl = "";
-      s.webShareLastAt = page?.at ?? "";
-      s.webShareHtmlVersion = SHARE_HTML_VERSION;
-      void this.plugin.saveSettings();
-      return;
-    }
-    if (dropped) void this.plugin.saveSettings();
   }
 
   onClose(): void {
@@ -320,18 +296,16 @@ export class ShareGalleryModal extends Modal {
     }
 
     const page = this.pageHostedShare();
+    const stale = isWebShareStateStale(page, SHARE_HTML_VERSION);
     const lastUrl =
       this.sessionUrl.trim() ||
       page?.url.trim() ||
-      // Read-only legacy URL when ownership could not be claimed to a page.
-      (!this.characterShare && !page
-        ? this.plugin.settings.webShareLastUrl.trim()
-        : "");
+      "";
     const canManage = Boolean(
-      !this.characterShare &&
-        lastUrl &&
+      lastUrl &&
         page?.id.trim() &&
-        page?.manageKey.trim(),
+        page?.manageKey.trim() &&
+        hostedShareBaseFromUrl(page.url),
     );
     /** Managed link is live — update/stop only; create appears after stop. */
     const hasLiveLink = canManage;
@@ -339,10 +313,17 @@ export class ShareGalleryModal extends Modal {
     root.createDiv({
       cls: "charinfo-share-modal__lead",
       text: hasLiveLink
-        ? "공개 링크가 있어요. 내용을 바꾼 뒤 업데이트하거나, 공유를 중지할 수 있어요."
+        ? stale
+          ? "이 공개 링크는 이전 형식이에요. 지금 형식으로 업데이트하거나 공유를 중지할 수 있어요."
+          : "공개 링크가 있어요. 내용을 바꾼 뒤 업데이트하거나, 공유를 중지할 수 있어요."
         : lastUrl
           ? "예전에 만든 링크는 이 기기에서 갱신·중지할 수 없어요. 새 링크를 만드세요."
           : "넣을 아카이브·그룹과 범위를 고른 뒤 공유하세요.",
+    });
+
+    root.createDiv({
+      cls: "charinfo-share-modal__hint",
+      text: "공유하면 선택한 카드 정보와 표지가 공개 페이지로 올라가요. 링크가 있는 사람은 누구나 볼 수 있어요.",
     });
 
     if (hasLiveLink && lastUrl) {
@@ -707,7 +688,7 @@ export class ShareGalleryModal extends Modal {
     const options: { id: HostedShareTtl; label: string }[] = [
       { id: "7d", label: "7일" },
       { id: "30d", label: "30일" },
-      { id: "permanent", label: "상시" },
+      { id: "permanent", label: "1년" },
     ];
     for (const opt of options) {
       const selected = this.hostedTtl === opt.id;
@@ -889,7 +870,7 @@ export class ShareGalleryModal extends Modal {
       text: "「GitHub에서 키 만들기」를 눌러 브라우저를 엽니다.",
     });
     list.createEl("li", {
-      text: "초록 버튼 Generate token 을 누릅니다. (repo 칸이 이미 체크돼 있으면 그대로 두세요.)",
+      text: "초록 버튼 Generate token 을 누릅니다. (public_repo 칸이 이미 체크돼 있으면 그대로 두세요.)",
     });
     list.createEl("li", {
       text: "화면에 나온 긴 글자(키)를 복사한 뒤, 아래 칸에 붙여넣고 「연결하기」를 누릅니다.",
@@ -918,9 +899,9 @@ export class ShareGalleryModal extends Modal {
         spellcheck: "false",
       },
     });
-    paste.value = this.plugin.settings.webShareGithubToken;
+    paste.value = this.pendingGithubToken;
     paste.addEventListener("input", () => {
-      this.plugin.settings.webShareGithubToken = paste.value.trim();
+      this.pendingGithubToken = paste.value.trim();
     });
 
     this.renderPrimaryAction(root, "연결하기", () => void this.saveGithubConnect());
@@ -944,7 +925,7 @@ export class ShareGalleryModal extends Modal {
     this.setBusyUi(true);
     this.setStatus("연결 중…");
     try {
-      const token = this.plugin.settings.webShareGithubToken.trim();
+      const token = this.pendingGithubToken.trim();
       const setup = await setupGithubShareFromToken(token);
       this.plugin.settings.webShareGithubToken = token;
       this.plugin.settings.webShareGithubRepo = setup.repo;
@@ -977,7 +958,8 @@ export class ShareGalleryModal extends Modal {
     const displayUrl = this.githubShareDisplayUrl();
     const hasPublished =
       Boolean(this.sessionUrl.trim()) ||
-      this.isGithubPagesUrl(this.plugin.settings.webShareLastUrl.trim());
+      this.isGithubPagesUrl(this.plugin.settings.webShareLastUrl.trim()) ||
+      Boolean(this.plugin.settings.webShareGithubPath.trim());
 
     root.createDiv({
       cls: "charinfo-share-modal__lead",
@@ -1110,7 +1092,15 @@ export class ShareGalleryModal extends Modal {
       statuses: this.plugin.settings.statuses,
       filterProperty: axis.propertyId,
       filterOptions: axis.options,
+      // Every chip-axis vocabulary, so a non-primary built-in (관계 / 인연 /
+      // 소속) publishes its renamed label instead of the stored option id.
+      axisSource: this.plugin.settings,
       propertyDisplayNames: this.plugin.settings.propertyDisplayNames,
+      // Group schemas decide which fields each card publishes; eyes are read
+      // per (page, archive) for the card previews only.
+      schemaSource: this.plugin.settings,
+      library,
+      pagePath: this.pageFile?.path ?? "",
     });
     return renderShareHtml(payload);
   }
@@ -1126,7 +1116,11 @@ export class ShareGalleryModal extends Modal {
     const pagePath = this.pageSharePath();
     const pageShare = this.pageHostedShare();
     if (update) {
-      if (this.characterShare || !pageShare?.id.trim() || !pageShare.manageKey.trim()) {
+      if (
+        !pageShare?.id.trim() ||
+        !pageShare.manageKey.trim() ||
+        !hostedShareBaseFromUrl(pageShare.url)
+      ) {
         new Notice("업데이트할 링크 열쇠가 없어요. 새 링크를 만드세요.");
         return;
       }
@@ -1143,41 +1137,50 @@ export class ShareGalleryModal extends Modal {
         this.setStatus(
           `${update ? "업데이트" : "올리는 중"}… ${Math.round(html.length / 1024)} KB`,
         );
+        const targetBaseUrl = update
+          ? hostedShareBaseFromUrl(pageShare!.url)
+          : this.plugin.settings.webShareHostedBaseUrl;
         const result = update
           ? await updateHostedShare(html, {
-              baseUrl: this.plugin.settings.webShareHostedBaseUrl,
+              baseUrl: targetBaseUrl,
               id: pageShare!.id,
               manageKey: pageShare!.manageKey,
-              uploadKey: this.plugin.settings.webShareHostedUploadKey,
+              uploadKey: uploadKeyForHostedTarget(
+                targetBaseUrl,
+                this.plugin.settings.webShareHostedBaseUrl,
+                this.plugin.settings.webShareHostedUploadKey,
+              ),
               ttl: this.hostedTtl,
             })
           : await uploadToHostedShare(html, {
-              baseUrl: this.plugin.settings.webShareHostedBaseUrl,
-              uploadKey: this.plugin.settings.webShareHostedUploadKey,
+              baseUrl: targetBaseUrl,
+              uploadKey: uploadKeyForHostedTarget(
+                targetBaseUrl,
+                this.plugin.settings.webShareHostedBaseUrl,
+                this.plugin.settings.webShareHostedUploadKey,
+              ),
               ttl: this.hostedTtl,
-            });
+        });
         url = result.url;
         const at = new Date().toISOString();
-        const manageKey = result.manageKey || pageShare?.manageKey || "";
-        if (!this.characterShare) {
-          setWebShareForPage(this.plugin.settings, pagePath, {
-            url,
-            id: result.id,
-            manageKey,
-            at,
-            htmlVersion: SHARE_HTML_VERSION,
-          });
-        }
-        // Settings “last link” mirror only — Update never reads these globals.
-        this.plugin.settings.webShareLastUrl = url;
-        this.plugin.settings.webShareLastAt = at;
-        this.plugin.settings.webShareLastId = "";
-        this.plugin.settings.webShareLastManageKey = "";
+        const manageKey =
+          result.manageKey || (update ? pageShare?.manageKey : "") || "";
+        setWebShareForPage(this.plugin.settings, pagePath, {
+          url,
+          id: result.id,
+          manageKey,
+          at,
+          htmlVersion: SHARE_HTML_VERSION,
+        });
+        const ttlLabel =
+          result.ttl === "permanent"
+            ? "1년"
+            : result.ttl === "7d"
+              ? "7일"
+              : "30일";
         note = update
           ? "같은 링크 내용이 갱신됐어요."
-          : result.ttl === "permanent"
-            ? "링크 생성됨."
-            : `링크 생성됨 · ${result.ttl} 유지.`;
+          : `링크 생성됨 · ${ttlLabel} 유지.`;
       } else {
         if (!isGithubShareConfigured(this.plugin.settings)) {
           throw new Error("먼저 GitHub를 연결하세요.");
@@ -1194,17 +1197,18 @@ export class ShareGalleryModal extends Modal {
         url = result.url;
         this.plugin.settings.webShareLinkSlug = slug;
         this.plugin.settings.webShareGithubPath = path;
-        this.plugin.settings.webShareLastId = "";
-        this.plugin.settings.webShareLastManageKey = "";
         note = result.updated
           ? `「${slug}」 갱신됨. 약 1분 후 새로고침.`
           : `「${slug}」 게시됨.`;
       }
 
       this.sessionUrl = url;
-      this.plugin.settings.webShareLastUrl = url;
-      this.plugin.settings.webShareLastAt = new Date().toISOString();
-      this.plugin.settings.webShareHtmlVersion = SHARE_HTML_VERSION;
+      recordLastShareUnlessLegacy(
+        this.plugin.settings,
+        url,
+        new Date().toISOString(),
+        SHARE_HTML_VERSION,
+      );
       this.plugin.settings.webSharePanelHeaders = [...this.panelHeaders];
       this.plugin.settings.webShareHost = this.hostMode;
       await this.plugin.saveSettings();
@@ -1239,7 +1243,8 @@ export class ShareGalleryModal extends Modal {
     const pageShare = this.pageHostedShare();
     const id = pageShare?.id.trim() ?? "";
     const manageKey = pageShare?.manageKey.trim() ?? "";
-    if (this.characterShare || !id || !manageKey) {
+    const targetBaseUrl = hostedShareBaseFromUrl(pageShare?.url ?? "");
+    if (!id || !manageKey || !targetBaseUrl) {
       new Notice("중지할 링크 열쇠가 없어요.");
       return;
     }
@@ -1248,22 +1253,23 @@ export class ShareGalleryModal extends Modal {
     this.setStatus("공유 중지 중…");
     try {
       await deleteHostedShare({
-        baseUrl: this.plugin.settings.webShareHostedBaseUrl,
+        baseUrl: targetBaseUrl,
         id,
         manageKey,
-        uploadKey: this.plugin.settings.webShareHostedUploadKey,
+        uploadKey: uploadKeyForHostedTarget(
+          targetBaseUrl,
+          this.plugin.settings.webShareHostedBaseUrl,
+          this.plugin.settings.webShareHostedUploadKey,
+        ),
       });
       this.sessionUrl = "";
       clearWebShareForPage(this.plugin.settings, this.pageSharePath());
-      this.plugin.settings.webShareLastUrl = "";
-      this.plugin.settings.webShareLastId = "";
-      this.plugin.settings.webShareLastManageKey = "";
-      this.plugin.settings.webShareLastAt = "";
+      clearLastShareIfSameUrl(this.plugin.settings, pageShare?.url ?? "");
       await this.plugin.saveSettings();
-      new Notice("공유 중지됨 · 링크가 더 이상 열리지 않아요.");
+      new Notice("공유 중지됨 · 이미 열린 사본은 잠시 남을 수 있어요.");
       this.busy = false;
       this.onOpen();
-      this.setStatus("공유가 중지됐어요.");
+      this.setStatus("공유가 중지됐어요. 캐시된 사본은 잠시 남을 수 있어요.");
     } catch (error) {
       console.error(error);
       this.setStatus(

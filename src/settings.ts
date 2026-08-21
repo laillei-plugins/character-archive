@@ -23,6 +23,28 @@ import {
   normalizePropertyDisplayNames,
   type PropertyDisplayNames,
 } from "./data/propertyLabels";
+import {
+  normalizeCardFieldOrder,
+  normalizeCardFieldVisibility,
+  normalizeFieldKeyLedgers,
+  normalizeGroupKey,
+  normalizeGroupSchemas,
+  seedBuiltinVisibility,
+  type CardFieldOrder,
+  type CardFieldVisibility,
+  type FieldKeyLedger,
+  type GroupSchemaRecord,
+} from "./data/groupSchema";
+import { renameGroupOrderList } from "./data/groupRename";
+import {
+  decodeRouteOrder,
+  encodeGroupRoute,
+  encodeRouteOrder,
+} from "./data/order";
+import {
+  characterWebShareStatePath,
+  remapWebShareRecord,
+} from "./share/webShareState";
 
 /** Vault-relative path normalize (no Obsidian import in settings). */
 function normalizePath(path: string): string {
@@ -41,6 +63,10 @@ export type {
   SelectVocab,
   TagDef,
   PropertyDisplayNames,
+  GroupSchemaRecord,
+  FieldKeyLedger,
+  CardFieldVisibility,
+  CardFieldOrder,
 };
 export {
   TAG_FRONTMATTER_KEY,
@@ -49,12 +75,20 @@ export {
 } from "./data/tags";
 export {
   DEFAULT_STATUSES,
+  STATUS_COLOR_CLASSES,
   STATUS_COLOR_TOKENS,
+  STATUS_CUSTOM_COLOR_CLASS,
+  STATUS_CUSTOM_COLOR_VAR,
+  isCustomStatusColor,
+  isStatusColorPreset,
+  normalizeStatusColor,
+  paintStatusColor,
   resolveStatus,
   statusColorClass,
   suggestStatusId,
   adoptUnknownStatuses,
   guessStatusColor,
+  type StatusColorPreset,
   type StatusColorToken,
 } from "./data/status";
 export {
@@ -90,8 +124,10 @@ export const DEFAULT_WEB_SHARE_HOSTED_BASE_URL =
   "https://character-archive.pages.dev";
 export type HostedShareTtl = "7d" | "30d" | "permanent";
 /**
- * Side-panel property set when the 「속성」 header chip is on.
- * Card strip always mirrors Obsidian eye toggles (`cardProperties`).
+ * @deprecated The side panel publishes every active field either way.
+ * `"preview"` is still accepted from stored settings and behaves as `"all"`:
+ * card eyes are a card-preview rule and never narrow the panel. The card strip
+ * keeps following the scoped eyes in `cardFieldVisibility`.
  */
 export type WebSharePanelPropsMode = "preview" | "all";
 /** Frontmatter attrs header chip label in share advanced options. */
@@ -111,7 +147,7 @@ export interface GalleryPageState {
 }
 
 /**
- * Last public share published from one gallery page.
+ * Last public share published from one gallery page or character note.
  * `id` + `manageKey` are what make a link updatable/stoppable, so they must
  * never be shared across pages.
  */
@@ -178,18 +214,41 @@ export interface CharinfoSettings {
    */
   galleryPageState: Record<string, GalleryPageState>;
   /**
-   * Card-preview property visibility/order (eye toggles).
-   * Side panel always lists every non-systemic property.
-   * (Persisted key kept as cardProperties for migration.)
+   * Legacy card-preview property prefs (eye toggles + old order).
+   * Migration seed only: it supplies the built-in **order** of a group's lazy
+   * baseline, and `seedBuiltinVisibility` copies its eyes into scoped rows once.
+   * Nothing reads it live — 보기 both reads and writes `cardFieldVisibility`.
    */
   cardProperties: CardPropertyPref[];
+  /**
+   * Per `(library, archive, group)` field schema — what Book decides.
+   * Array store on purpose: group names are user strings, never object keys.
+   */
+  groupSchemas: GroupSchemaRecord[];
+  /**
+   * Every custom YAML key ever allocated per `(library, archive)`.
+   * A removed field's key stays here so it can never be handed out twice.
+   */
+  fieldKeyLedgers: FieldKeyLedger[];
+  /**
+   * Card eye state per `(gallery page, archive, field id)`. No order.
+   * Missing row → `name`/`status` on, other built-ins off, custom on.
+   */
+  cardFieldVisibility: CardFieldVisibility[];
+  /**
+   * Legacy per-page order retained for settings compatibility. Current cards,
+   * peek, and public share use the active group schema order; the UI neither
+   * reads nor writes this collection.
+   */
+  cardFieldOrder: CardFieldOrder[];
   /**
    * Notion Fit image: true = contain whole image; false = cover crop.
    */
   cardFitImage: boolean;
   /**
    * Status vocabulary for `상태` (filter chips + card pills).
-   * Color is a preset token, not freeform hex.
+   * Color is a preset token or one canonical `#RRGGBB` the user picked; every
+   * stored value passes `normalizeStatusColor` on load.
    */
   statuses: StatusDef[];
   /** Default `상태` for new characters (must exist in `statuses`). */
@@ -229,10 +288,13 @@ export interface CharinfoSettings {
   webShareHostedTtl: HostedShareTtl;
   /**
    * Which note H2 headers (+ 「속성」) appear in the public side panel.
-   * Card preview always follows Obsidian eye toggles.
+   * The card strip follows the scoped card eyes; the panel does not.
    */
   webSharePanelHeaders: string[];
-  /** When 「속성」 is included: eyes vs all frontmatter fields. */
+  /**
+   * Legacy toggle. Kept for stored-settings compatibility — the 「속성」 panel
+   * always publishes this card's group's active fields.
+   */
   webSharePanelProps: WebSharePanelPropsMode;
   /** GitHub PAT (repo contents:write). Stored in plugin data — treat as secret. */
   webShareGithubToken: string;
@@ -258,9 +320,9 @@ export interface CharinfoSettings {
    */
   webShareHtmlVersion: number;
   /**
-   * Last published link per gallery note path. Update / stop must read *this*
-   * page's record; the global `webShareLast*` fields above are legacy
-   * read-only fallback (display) so gallery A can never manage gallery B.
+   * Last published link per gallery-note key or character-note key. Update /
+   * stop must read *this* record; the global `webShareLast*` fields above are
+   * legacy read-only fallback (display) so one share can never manage another.
    */
   webShareByPage: Record<string, WebShareLastState>;
 }
@@ -282,6 +344,10 @@ export const DEFAULT_SETTINGS: CharinfoSettings = {
   groupOrderByLibrary: {},
   galleryPageState: {},
   cardProperties: DEFAULT_CARD_PROPERTIES.map((p) => ({ ...p })),
+  groupSchemas: [],
+  fieldKeyLedgers: [],
+  cardFieldVisibility: [],
+  cardFieldOrder: [],
   cardFitImage: false,
   statuses: DEFAULT_STATUSES.map((s) => ({ ...s })),
   defaultStatusId: "Off",
@@ -410,7 +476,8 @@ export function claimLegacyWebShareIfUnambiguous(
       htmlVersion: settings.webShareHtmlVersion,
     },
   };
-  // Moved, not copied — keep URL/at for the read-only Settings row.
+  // Moved, not copied — the page record now owns the management credential.
+  // Keep URL/at only as a compatibility mirror; never use it for ownership.
   settings.webShareLastId = "";
   settings.webShareLastManageKey = "";
   return true;
@@ -583,6 +650,27 @@ export function migrateSettings(
     vaultMediaFolder = DEFAULT_SETTINGS.vaultMediaFolder;
   }
 
+  // `cardProperties` stays as the migration seed; it is never wiped, and no
+  // group schema is created eagerly here — an unseen group lazily takes this
+  // normalized order as its baseline the first time it is resolved. Its eyes
+  // reach the live surfaces only through the `seedBuiltinVisibility` rows below.
+  const cardProperties = normalizeCardProperties(
+    src.cardProperties ?? DEFAULT_SETTINGS.cardProperties,
+  );
+  const visibilityPairs = Object.entries(galleryPageState)
+    .map(([page, state]) => ({
+      page,
+      archive: state.activeGenre?.trim() || activeGenre,
+    }))
+    .filter((pair) => Boolean(pair.page));
+  const cardFieldVisibility = seedBuiltinVisibility(
+    normalizeCardFieldVisibility(
+      (src as { cardFieldVisibility?: unknown }).cardFieldVisibility,
+    ),
+    visibilityPairs,
+    cardProperties,
+  );
+
   const merged: CharinfoSettings = {
     ...DEFAULT_SETTINGS,
     ...src,
@@ -596,8 +684,18 @@ export function migrateSettings(
     characterTemplateByGenre: normalizeTemplateByGenre(
       (src as { characterTemplateByGenre?: unknown }).characterTemplateByGenre,
     ),
-    cardProperties: normalizeCardProperties(
-      src.cardProperties ?? DEFAULT_SETTINGS.cardProperties,
+    cardProperties,
+    groupSchemas: normalizeGroupSchemas(
+      (src as { groupSchemas?: unknown }).groupSchemas,
+    ),
+    fieldKeyLedgers: normalizeFieldKeyLedgers(
+      (src as { fieldKeyLedgers?: unknown }).fieldKeyLedgers,
+    ),
+    cardFieldVisibility,
+    // No seeding: an absent order row *is* the baseline order, so writing one
+    // here would only freeze today's built-in list into storage.
+    cardFieldOrder: normalizeCardFieldOrder(
+      (src as { cardFieldOrder?: unknown }).cardFieldOrder,
     ),
     cardFitImage: Boolean(src.cardFitImage),
     statuses,
@@ -818,6 +916,18 @@ export function forgetChipFilterOption(
   settings.galleryPageState = next;
 }
 
+/**
+ * The default-route sentinel and its codec live in `data/order.ts` — the token
+ * exists only for the stored order, and that module has no run-time imports, so
+ * one focused test can freeze both the codec and the ranking that reads it.
+ * Re-exported here because storage callers reach for the settings surface.
+ */
+export {
+  DEFAULT_ROUTE_TOKEN,
+  decodeGroupRoute,
+  encodeGroupRoute,
+} from "./data/order";
+
 /** Read group order for a library + archive. */
 export function getGroupOrderFor(
   settings: CharinfoSettings,
@@ -858,6 +968,94 @@ export function setGroupOrderFor(
   }
 }
 
+/**
+ * Read the canonical route order: the stored list, decoded, so the default
+ * route reads as `""` instead of its storage token.
+ */
+export function getGroupRouteOrderFor(
+  settings: CharinfoSettings,
+  library: string,
+  genre: string,
+): string[] {
+  return decodeRouteOrder(getGroupOrderFor(settings, library, genre));
+}
+
+/** Persist the canonical route order. `""` is written as the reserved token. */
+export function setGroupRouteOrderFor(
+  settings: CharinfoSettings,
+  library: string,
+  genre: string,
+  routes: readonly string[],
+): void {
+  setGroupOrderFor(settings, library, genre, encodeRouteOrder(routes));
+}
+
+/**
+ * Replace one route in place without changing any other rank. `from` may be
+ * `""` — renaming the default route keeps the slot the user dragged it to,
+ * because the token and the new name occupy the same index.
+ *
+ * A route with no stored rank keeps none: unranked already means "after
+ * everything ranked", which is exactly where the renamed route belongs.
+ */
+export function renameGroupRouteInOrder(
+  settings: CharinfoSettings,
+  library: string,
+  genre: string,
+  from: string,
+  to: string,
+): void {
+  const source = encodeGroupRoute(from);
+  const target = normalizeGroupKey(to);
+  if (!target || source === target) return;
+  const current = getGroupOrderFor(settings, library, genre);
+  if (!current.some((name) => normalizeGroupKey(name) === source)) return;
+  const next = renameGroupOrderList(current, source, target);
+  setGroupOrderFor(settings, library, genre, next);
+}
+
+/**
+ * Drop one route from the archive's section order (both the live
+ * library-scoped map and the legacy per-archive mirror).
+ *
+ * Part of the group-deletion commit: the schema record and this entry have to
+ * disappear together, or a deleted group would keep a rank and reappear as an
+ * empty section the moment 편집 모드 lists persisted groups again. `group` may
+ * be `""` — the default route's rank is stored under its token, and dropping
+ * that rank returns 기본 to the canonical end.
+ */
+export function removeGroupFromOrder(
+  settings: CharinfoSettings,
+  library: string,
+  genre: string,
+  group: string,
+): void {
+  const target = encodeGroupRoute(group);
+  const lib = normalizePath(library);
+  const g = genre.trim();
+  const drop = (list: string[] | undefined): string[] | null => {
+    if (!list) return null;
+    const next = list.filter((name) => normalizeGroupKey(name) !== target);
+    return next.length === list.length ? null : next;
+  };
+
+  const byLib = settings.groupOrderByLibrary[lib];
+  const nextLib = drop(byLib?.[g]);
+  if (byLib && nextLib) {
+    settings.groupOrderByLibrary = {
+      ...settings.groupOrderByLibrary,
+      [lib]: { ...byLib, [g]: nextLib },
+    };
+  }
+  const nextLegacy = drop(settings.groupOrderByGenre[g]);
+  if (nextLegacy) {
+    settings.groupOrderByGenre = {
+      ...settings.groupOrderByGenre,
+      [g]: nextLegacy,
+    };
+  }
+}
+
 export function getGalleryPageState(
   settings: CharinfoSettings,
   pagePath: string,
@@ -891,10 +1089,8 @@ export function forgetGalleryPageState(
     const { [key]: _drop, ...rest } = settings.galleryPageState;
     settings.galleryPageState = rest;
   }
-  // The note is gone, so its published link can no longer be managed from the
-  // app; keeping the credentials would only risk attaching them to a new note
-  // that later takes the same path.
-  clearWebShareForPage(settings, key);
+  // Keep any hosted-share credential. The public object survives local note
+  // deletion, so dropping its key here would make early unpublish impossible.
 }
 
 /** Move remembered UI when a gallery note is renamed/moved. */
@@ -902,10 +1098,11 @@ export function remapGalleryPageState(
   settings: CharinfoSettings,
   fromPath: string,
   toPath: string,
-): void {
+): boolean {
   const from = normalizePath(fromPath);
   const to = normalizePath(toPath);
-  if (from === to) return;
+  if (from === to) return false;
+  let changed = false;
   const prev = settings.galleryPageState[from];
   if (prev) {
     const { [from]: _drop, ...rest } = settings.galleryPageState;
@@ -916,8 +1113,10 @@ export function remapGalleryPageState(
         ...rest[to],
       },
     };
+    changed = true;
   }
-  remapWebShareByPage(settings, from, to);
+  if (remapWebShareByPage(settings, from, to)) changed = true;
+  return changed;
 }
 
 /** Keep a published link manageable after its gallery note moves. */
@@ -925,12 +1124,25 @@ function remapWebShareByPage(
   settings: CharinfoSettings,
   from: string,
   to: string,
-): void {
-  const prev = settings.webShareByPage[from];
-  if (!prev) return;
-  const { [from]: _drop, ...rest } = settings.webShareByPage;
-  // A record already sitting at the destination wins (same rule as page state).
-  settings.webShareByPage = { ...rest, [to]: rest[to] ?? prev };
+): boolean {
+  if (!from || !to || from === to) return false;
+  const remapped = remapWebShareRecord(settings.webShareByPage, from, to);
+  if (!remapped.changed) return false;
+  settings.webShareByPage = remapped.records;
+  return true;
+}
+
+/** Keep a character share manageable after its character note moves. */
+export function remapCharacterWebShareState(
+  settings: CharinfoSettings,
+  fromPath: string,
+  toPath: string,
+): boolean {
+  return remapWebShareByPage(
+    settings,
+    characterWebShareStatePath(fromPath),
+    characterWebShareStatePath(toPath),
+  );
 }
 
 /** This page's last published link, or null when it never published / cleared. */
@@ -964,19 +1176,4 @@ export function clearWebShareForPage(
   if (!settings.webShareByPage[key]) return;
   const { [key]: _drop, ...rest } = settings.webShareByPage;
   settings.webShareByPage = rest;
-}
-
-/**
- * Share HTML from an older format must not be offered as this page's current
- * link. Returns true when a stale record was dropped.
- */
-export function discardStaleWebShareForPage(
-  settings: CharinfoSettings,
-  pagePath: string,
-  currentHtmlVersion: number,
-): boolean {
-  const entry = getWebShareForPage(settings, pagePath);
-  if (!entry || entry.htmlVersion === currentHtmlVersion) return false;
-  clearWebShareForPage(settings, pagePath);
-  return true;
 }

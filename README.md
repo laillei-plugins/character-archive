@@ -1,6 +1,6 @@
 # Character Archive
 
-Card gallery for character notes in your vault. Notes stay local.
+Card gallery for character notes in your vault. Notes stay local unless you explicitly use Web share.
 
 Each card shows a cover, status, relationships, body text, and prompts. Open the note when you want to edit in depth.
 
@@ -69,7 +69,11 @@ Starter sample paths may use Korean names (`예시`, `첫 카드`). Section head
 
 ## Web share
 
-The globe button uploads the cards you selected. Host the page yourself (Cloudflare Worker or GitHub Pages) and put the origin plus upload key in settings. This plugin does not ship a public host.
+Web share is optional and runs only when you press a publish button. The globe button shows exactly which cards and panel sections will be included. Publishing uploads the selected card data, selected note sections, prompts when selected, and embedded covers as a public HTML page. Anyone with the link can view it.
+
+By default, the plugin uses the maintainer-operated service at `https://character-archive.pages.dev`. It accepts share creation without an account; updating or deleting a page still requires the separate management key saved by the plugin. Hosted links last 30 days by default; you can choose 7 days, 30 days, or 1 year, and stop a hosted share from the same gallery or character share. You can instead use your own compatible Cloudflare host or publish to GitHub Pages.
+
+Ordinary gallery use has no telemetry and makes no share upload. See [Privacy](./PRIVACY.md) for network use, retention, credentials, and deletion details.
 
 ## License
 

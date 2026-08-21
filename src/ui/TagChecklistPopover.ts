@@ -1,5 +1,6 @@
 import { setIcon } from "obsidian";
 import type { TagDef } from "../settings";
+import { placeAnchoredPopover } from "./typeMenuPlacement";
 
 export interface TagChecklistHandlers {
   /** Tag ids currently on the record. */
@@ -18,12 +19,11 @@ export class TagChecklistPopover {
   private panel: HTMLElement | null = null;
   private onDocPointer: ((e: PointerEvent) => void) | null = null;
   private onKey: ((e: KeyboardEvent) => void) | null = null;
-  private onScroll: (() => void) | null = null;
+  private onScroll: ((event: Event) => void) | null = null;
   private busy = false;
 
   constructor(
     private anchor: HTMLElement,
-    private host: HTMLElement,
     private vocab: TagDef[],
     private handlers: TagChecklistHandlers,
   ) {}
@@ -35,28 +35,14 @@ export class TagChecklistPopover {
 
   open(): void {
     this.close();
-    const panel = this.host.createDiv({
+    const panel = document.body.createDiv({
       cls: "charinfo-view-menu charinfo-tag-menu",
       attr: { role: "group", "aria-label": "태그 고르기" },
     });
     this.panel = panel;
 
-    const rect = this.anchor.getBoundingClientRect();
-    const hostRect = this.host.getBoundingClientRect();
-    const left = Math.max(
-      8,
-      Math.min(rect.left - hostRect.left, hostRect.width - 232),
-    );
-    panel.style.left = `${left}px`;
-    panel.style.top = `${rect.bottom - hostRect.top + 6}px`;
-
     this.render();
-
-    // Flip above the anchor when the panel would be clipped at the bottom.
-    const height = panel.offsetHeight;
-    if (rect.bottom + height + 6 > hostRect.bottom && rect.top - height - 6 > hostRect.top) {
-      panel.style.top = `${rect.top - hostRect.top - height - 6}px`;
-    }
+    this.placePanel();
 
     this.onDocPointer = (event) => {
       if (!(event.target instanceof Node)) return;
@@ -68,8 +54,11 @@ export class TagChecklistPopover {
     this.onKey = (event) => {
       if (event.key === "Escape") this.close();
     };
-    // The panel is host-absolute — scrolling the grid would leave it floating.
-    this.onScroll = () => this.close();
+    // A fixed overlay closes when its anchor moves out from under it.
+    this.onScroll = (event) => {
+      if (event.target instanceof Node && panel.contains(event.target)) return;
+      this.close();
+    };
     window.setTimeout(() => {
       if (this.onDocPointer) {
         document.addEventListener("pointerdown", this.onDocPointer, true);
@@ -79,6 +68,24 @@ export class TagChecklistPopover {
         document.addEventListener("scroll", this.onScroll, true);
       }
     }, 0);
+  }
+
+  private placePanel(): void {
+    const panel = this.panel;
+    if (!panel?.isConnected || !this.anchor.isConnected) return;
+    panel.style.removeProperty("max-height");
+    const placement = placeAnchoredPopover(
+      this.anchor.getBoundingClientRect(),
+      panel.getBoundingClientRect(),
+      window.innerWidth,
+      window.innerHeight,
+      { anchorGap: 6 },
+    );
+    panel.setCssStyles({
+      top: `${Math.round(placement.top)}px`,
+      left: `${Math.round(placement.left)}px`,
+      maxHeight: `${Math.floor(placement.maxHeight)}px`,
+    });
   }
 
   close(): void {
@@ -113,6 +120,7 @@ export class TagChecklistPopover {
         cls: "charinfo-view-menu__hint",
         text: "설정 → 태그 옵션에서 태그를 먼저 추가하세요.",
       });
+      this.placePanel();
       return;
     }
 
@@ -124,6 +132,7 @@ export class TagChecklistPopover {
       // Unknown id (deleted from the vocabulary) — removable only.
       this.renderRow(list, id, id, true, true);
     }
+    this.placePanel();
   }
 
   private renderRow(

@@ -415,6 +415,19 @@
   --charinfo-status-cyan-bg: color-mix(in srgb, #0e7490 14%, var(--background-secondary));
   --charinfo-status-pink: #be185d;
   --charinfo-status-pink-bg: color-mix(in srgb, #be185d 14%, var(--background-secondary));
+  --charinfo-status-olive: #5c6b21;
+  --charinfo-status-olive-bg: color-mix(in srgb, #5c6b21 14%, var(--background-secondary));
+  --charinfo-status-indigo: #4f46e5;
+  --charinfo-status-indigo-bg: color-mix(in srgb, #4f46e5 14%, var(--background-secondary));
+  --charinfo-status-lime: #4d7c0f;
+  --charinfo-status-lime-bg: color-mix(in srgb, #4d7c0f 14%, var(--background-secondary));
+  --charinfo-status-yellow: #ca8a04;
+  --charinfo-status-yellow-bg: color-mix(in srgb, #ca8a04 14%, var(--background-secondary));
+  /*
+   * Custom chip color. Set per element by `paintStatusColor` (never in a
+   * stylesheet); the fallback keeps an unpainted `.is-custom` chip legible.
+   */
+  --charinfo-chip-fallback: var(--charinfo-status-gray);
 }
 
 .charinfo-gallery {
@@ -558,31 +571,13 @@ button.charinfo-gallery__genre:hover,
 }
 
 .charinfo-gallery__genre-rename {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.6rem;
-  height: 1.6rem;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--charinfo-muted);
-  cursor: pointer;
-  flex-shrink: 0;
+  flex: 0 0 var(--size-4-8, 32px);
   opacity: 0.55;
 }
 
 .charinfo-gallery__genre-row:hover .charinfo-gallery__genre-rename,
-.charinfo-gallery__genre-rename:focus {
+.charinfo-gallery__genre-rename:focus-visible {
   opacity: 1;
-  background: var(--background-modifier-hover);
-  color: var(--charinfo-ink);
-}
-
-.charinfo-gallery__genre-rename svg {
-  width: 14px;
-  height: 14px;
 }
 
 .charinfo-rename-genre__hint {
@@ -1434,14 +1429,14 @@ button.charinfo-gallery__genre:hover,
 
 /* Notion-style ··· → 보기 */
 .charinfo-view-menu {
-  position: absolute;
+  position: fixed;
   z-index: 50;
   width: 15.5rem;
   max-height: min(70vh, 28rem);
   overflow: auto;
-  padding: 0.35rem;
+  padding: var(--charinfo-space-xs);
   border: 1px solid var(--charinfo-line);
-  border-radius: 10px;
+  border-radius: var(--charinfo-radius-lg);
   background: var(--background-primary);
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.06),
@@ -1449,19 +1444,18 @@ button.charinfo-gallery__genre:hover,
 }
 
 .charinfo-view-menu__title {
-  font-size: 0.72rem;
+  font-size: var(--font-ui-smaller, 12px);
   font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--charinfo-muted);
-  padding: 0.35rem 0.5rem 0.15rem;
+  padding: var(--charinfo-space-xs) var(--charinfo-space-md)
+    var(--charinfo-space-xxs);
 }
 
 .charinfo-view-menu__hint {
-  font-size: 0.72rem;
+  font-size: var(--font-ui-smaller, 12px);
   line-height: 1.4;
   color: var(--charinfo-muted);
-  padding: 0 0.5rem 0.55rem;
+  padding: 0 var(--charinfo-space-md) var(--charinfo-space-sm);
 }
 
 .charinfo-view-menu__head {
@@ -1539,19 +1533,24 @@ button.charinfo-gallery__genre:hover,
 .charinfo-prop-list {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  gap: var(--charinfo-space-xxs);
+  padding-inline: var(--charinfo-space-md);
 }
 
+/*
+ * 보기 is a visibility-only ledger: `label | eye`.
+ * Ordering remains in 속성 관리, so this surface has no reserved grip rail.
+ */
 .charinfo-prop-row {
   display: grid;
-  grid-template-columns: 1.1rem minmax(0, 1fr) 1.6rem;
+  grid-template-columns: minmax(0, 1fr) var(--size-4-6, 24px);
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.28rem 0.35rem;
-  border-radius: 6px;
-  cursor: grab;
+  gap: var(--charinfo-space-md);
+  min-height: var(--size-4-8, 32px);
+  padding: var(--charinfo-space-xs) 0;
+  border-radius: var(--charinfo-radius-sm);
+  cursor: default;
   user-select: none;
-  touch-action: none;
 }
 
 .charinfo-prop-row:hover {
@@ -1562,19 +1561,8 @@ button.charinfo-gallery__genre:hover,
   color: var(--charinfo-muted);
 }
 
-.charinfo-prop-row__handle {
-  display: inline-flex;
-  color: var(--charinfo-muted);
-  opacity: 0.7;
-}
-
-.charinfo-prop-row__handle svg {
-  width: 14px;
-  height: 14px;
-}
-
 .charinfo-prop-row__label {
-  font-size: 0.85rem;
+  font-size: var(--font-ui-small, 13px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1584,11 +1572,12 @@ button.charinfo-gallery__genre:hover,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.6rem;
-  height: 1.6rem;
+  /* 24px hit floor — not the 32px icon-button size, which would thin the list. */
+  width: var(--size-4-6, 24px);
+  height: var(--size-4-6, 24px);
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--charinfo-radius-sm);
   background: transparent;
   color: var(--charinfo-ink);
   cursor: pointer;
@@ -1610,7 +1599,7 @@ button.charinfo-gallery__genre:hover,
 .charinfo-prop-row-slot {
   box-sizing: border-box;
   min-height: 2rem;
-  border-radius: 6px;
+  border-radius: var(--charinfo-radius-sm);
   border: 1.5px dashed color-mix(in srgb, var(--charinfo-accent) 50%, var(--charinfo-line));
   background: color-mix(in srgb, var(--charinfo-accent) 8%, transparent);
   pointer-events: none;
@@ -1623,11 +1612,11 @@ button.charinfo-gallery__genre:hover,
   z-index: 1000;
   pointer-events: none;
   display: grid;
-  grid-template-columns: 1.1rem minmax(0, 1fr) 1.6rem;
+  grid-template-columns: 1.1rem minmax(0, 1fr) var(--size-4-6, 24px);
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.28rem 0.35rem;
-  border-radius: 6px;
+  gap: var(--charinfo-space-xs);
+  padding: var(--charinfo-space-xs);
+  border-radius: var(--charinfo-radius-sm);
   border: 1px solid var(--charinfo-line);
   background: var(--background-primary);
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
@@ -1635,33 +1624,140 @@ button.charinfo-gallery__genre:hover,
   will-change: transform;
 }
 
+.charinfo-view-menu__filter {
+  margin-top: var(--charinfo-space-xs);
+  padding-top: var(--charinfo-space-xs);
+  border-top: 1px solid var(--charinfo-line);
+}
+
+.charinfo-view-menu__axis-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--charinfo-space-xxs);
+  min-width: 0;
+  margin: 0;
+  padding: 0 var(--charinfo-space-md) var(--charinfo-space-xs);
+  border: 0;
+}
+
+.charinfo-view-menu__axis-row {
+  display: grid;
+  grid-template-columns: var(--size-4-4, 16px) minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: var(--charinfo-space-md);
+  align-items: center;
+  min-height: 44px;
+  padding: var(--charinfo-space-xs);
+  border-radius: var(--charinfo-radius-sm);
+  cursor: pointer;
+}
+
+.charinfo-view-menu__axis-row > input {
+  grid-column: 1;
+  grid-row: 1;
+  width: var(--size-4-4, 16px);
+  height: var(--size-4-4, 16px);
+  margin: 0;
+  accent-color: var(--charinfo-accent);
+}
+
+.charinfo-view-menu__axis-name {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--charinfo-ink);
+  font-size: var(--font-ui-small, 13px);
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.charinfo-view-menu__axis-note {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.charinfo-view-menu__axis-row.is-active
+  .charinfo-view-menu__axis-name {
+  font-weight: 600;
+}
+
+.charinfo-view-menu__axis-group:not([aria-busy="true"])
+  .charinfo-view-menu__axis-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+@supports selector(:has(*)) {
+  .charinfo-view-menu__axis-row:has(> input:focus-visible) {
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--charinfo-accent) 22%, transparent);
+  }
+
+  .charinfo-view-menu__axis-row > input:focus-visible {
+    outline: none;
+  }
+}
+
+.charinfo-view-menu__axis-group[aria-busy="true"]
+  .charinfo-view-menu__axis-row {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.charinfo-view-menu__axis-sublabel {
+  padding: var(--charinfo-space-xs) var(--charinfo-space-xs) 0;
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  font-weight: 650;
+}
+
+.charinfo-view-menu__axis-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--charinfo-space-xs);
+  padding: var(--charinfo-space-xs) var(--charinfo-space-md)
+    var(--charinfo-space-sm);
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1.4;
+}
+
 .charinfo-view-menu__toggle-row {
   display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  margin-top: 0.35rem;
-  padding: 0.65rem 0.5rem 0.35rem;
+  gap: var(--charinfo-space-base);
+  margin-top: var(--charinfo-space-xs);
+  padding: var(--charinfo-space-md) var(--charinfo-space-md)
+    var(--charinfo-space-xs);
   border-top: 1px solid var(--charinfo-line);
 }
 
 .charinfo-view-menu__toggle-label {
-  font-size: 0.85rem;
+  font-size: var(--font-ui-small, 13px);
   font-weight: 600;
 }
 
 .charinfo-view-menu__toggle-hint {
-  font-size: 0.72rem;
+  font-size: var(--font-ui-smaller, 12px);
   color: var(--charinfo-muted);
   line-height: 1.35;
-  margin-bottom: 0.35rem;
+  margin-bottom: var(--charinfo-space-xs);
 }
 
 .charinfo-view-menu__switch {
   position: relative;
-  width: 2.4rem;
-  height: 1.35rem;
+  width: var(--size-4-9, 36px);
+  height: var(--size-4-5, 20px);
   padding: 0;
   border: none;
   border-radius: 999px;
@@ -1676,17 +1772,18 @@ button.charinfo-gallery__genre:hover,
 
 .charinfo-view-menu__switch-knob {
   position: absolute;
-  top: 0.15rem;
-  left: 0.15rem;
-  width: 1.05rem;
-  height: 1.05rem;
+  top: var(--charinfo-space-xxs);
+  left: var(--charinfo-space-xxs);
+  width: var(--size-4-4, 16px);
+  height: var(--size-4-4, 16px);
   border-radius: 50%;
-  background: #fff;
+  /* Theme-owned, not hard white — the knob sits on the accent when on. */
+  background: var(--background-primary);
   transition: transform 120ms ease;
 }
 
 .charinfo-view-menu__switch.is-on .charinfo-view-menu__switch-knob {
-  transform: translateX(1.05rem);
+  transform: translateX(var(--size-4-4, 16px));
 }
 
 .charinfo-gallery__body {
@@ -1789,9 +1886,15 @@ button.charinfo-gallery__genre:hover,
 
 .charinfo-genre__title-row {
   display: flex;
-  align-items: baseline;
-  gap: var(--charinfo-space-md);
+  align-items: center;
+  gap: var(--charinfo-space-sm);
+  width: fit-content;
+  max-width: 100%;
   min-width: 0;
+}
+
+.charinfo-gallery.is-edit .charinfo-genre__title-row {
+  min-height: var(--size-4-8, 32px);
 }
 
 .charinfo-genre__drag-handle {
@@ -1799,9 +1902,8 @@ button.charinfo-gallery__genre:hover,
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 1.1rem;
-  height: 1.1rem;
-  margin-right: -0.1rem;
+  width: var(--size-4-6, 24px);
+  height: var(--size-4-8, 32px);
   color: var(--charinfo-muted);
   opacity: 0.55;
   cursor: grab;
@@ -1840,14 +1942,33 @@ button.charinfo-gallery__genre:hover,
 }
 
 .charinfo-genre__header h3 {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(42vw, 30rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   margin: 0;
   font-size: 0.95rem;
 }
 
 .charinfo-genre__count {
+  flex: 0 0 auto;
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
   color: var(--charinfo-muted);
+}
+
+.charinfo-genre__rename {
+  flex: 0 0 var(--size-4-8, 32px);
+  align-self: center;
+  opacity: 0.55;
+}
+
+.charinfo-genre__header:hover .charinfo-genre__rename,
+.charinfo-genre__rename:focus-visible,
+.charinfo-gallery.is-narrow .charinfo-genre__rename {
+  opacity: 1;
 }
 
 .charinfo-grid {
@@ -2431,6 +2552,65 @@ span.charinfo-status.is-static {
   background: var(--charinfo-status-pink);
 }
 
+.charinfo-status.is-olive {
+  background: var(--charinfo-status-olive-bg);
+  color: var(--charinfo-status-olive);
+  font-weight: 600;
+}
+.charinfo-status.is-olive .charinfo-status__dot {
+  background: var(--charinfo-status-olive);
+}
+
+.charinfo-status.is-indigo {
+  background: var(--charinfo-status-indigo-bg);
+  color: var(--charinfo-status-indigo);
+  font-weight: 600;
+}
+.charinfo-status.is-indigo .charinfo-status__dot {
+  background: var(--charinfo-status-indigo);
+}
+
+.charinfo-status.is-lime {
+  background: var(--charinfo-status-lime-bg);
+  color: var(--charinfo-status-lime);
+  font-weight: 600;
+}
+.charinfo-status.is-lime .charinfo-status__dot {
+  background: var(--charinfo-status-lime);
+}
+
+.charinfo-status.is-yellow {
+  background: var(--charinfo-status-yellow-bg);
+  color: var(--charinfo-status-yellow);
+  font-weight: 600;
+}
+.charinfo-status.is-yellow .charinfo-status__dot {
+  background: var(--charinfo-status-yellow);
+}
+
+/*
+ * Custom pick: the dot keeps the exact hue, the ground is a quiet 14% mix, and
+ * the label is pulled toward the theme ink so a very light or very dark choice
+ * still reads in both Obsidian schemes.
+ */
+.charinfo-status.is-custom {
+  background: color-mix(
+    in srgb,
+    var(--charinfo-chip-ink, var(--charinfo-chip-fallback)) 14%,
+    var(--background-secondary)
+  );
+  color: color-mix(
+    in srgb,
+    var(--charinfo-chip-ink, var(--charinfo-chip-fallback)) 58%,
+    var(--text-normal)
+  );
+  font-weight: 600;
+}
+.charinfo-status.is-custom .charinfo-status__dot {
+  background: var(--charinfo-chip-ink, var(--charinfo-chip-fallback));
+  opacity: 1;
+}
+
 /* Notion-style filter chips: discrete soft pills, no tray / no button chrome.
  * Mix against --background-primary (not secondary) — Minimal flattens secondary. */
 .charinfo-status-filter {
@@ -2501,6 +2681,21 @@ span.charinfo-status.is-static {
 }
 .charinfo-status-filter.is-pink .charinfo-status__dot {
   background: var(--charinfo-status-pink);
+}
+.charinfo-status-filter.is-olive .charinfo-status__dot {
+  background: var(--charinfo-status-olive);
+}
+.charinfo-status-filter.is-indigo .charinfo-status__dot {
+  background: var(--charinfo-status-indigo);
+}
+.charinfo-status-filter.is-lime .charinfo-status__dot {
+  background: var(--charinfo-status-lime);
+}
+.charinfo-status-filter.is-yellow .charinfo-status__dot {
+  background: var(--charinfo-status-yellow);
+}
+.charinfo-status-filter.is-custom .charinfo-status__dot {
+  background: var(--charinfo-chip-ink, var(--charinfo-chip-fallback));
 }
 
 /* Selected pill — ink/status mixed into primary so Minimal skins still show contrast. */
@@ -2608,6 +2803,75 @@ span.charinfo-status.is-static {
   border-color: color-mix(
     in srgb,
     var(--charinfo-status-pink) 32%,
+    var(--background-primary)
+  );
+}
+.charinfo-status-filter.is-olive.is-active {
+  color: var(--charinfo-status-olive);
+  background: color-mix(
+    in srgb,
+    var(--charinfo-status-olive) 18%,
+    var(--background-primary)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-status-olive) 32%,
+    var(--background-primary)
+  );
+}
+.charinfo-status-filter.is-indigo.is-active {
+  color: var(--charinfo-status-indigo);
+  background: color-mix(
+    in srgb,
+    var(--charinfo-status-indigo) 18%,
+    var(--background-primary)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-status-indigo) 32%,
+    var(--background-primary)
+  );
+}
+.charinfo-status-filter.is-lime.is-active {
+  color: var(--charinfo-status-lime);
+  background: color-mix(
+    in srgb,
+    var(--charinfo-status-lime) 18%,
+    var(--background-primary)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-status-lime) 32%,
+    var(--background-primary)
+  );
+}
+.charinfo-status-filter.is-yellow.is-active {
+  color: var(--charinfo-status-yellow);
+  background: color-mix(
+    in srgb,
+    var(--charinfo-status-yellow) 18%,
+    var(--background-primary)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-status-yellow) 32%,
+    var(--background-primary)
+  );
+}
+.charinfo-status-filter.is-custom.is-active {
+  color: color-mix(
+    in srgb,
+    var(--charinfo-chip-ink, var(--charinfo-chip-fallback)) 58%,
+    var(--charinfo-ink)
+  );
+  background: color-mix(
+    in srgb,
+    var(--charinfo-chip-ink, var(--charinfo-chip-fallback)) 18%,
+    var(--background-primary)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-chip-ink, var(--charinfo-chip-fallback)) 32%,
     var(--background-primary)
   );
 }
@@ -2890,15 +3154,21 @@ span.charinfo-status.is-static {
   text-wrap: balance;
 }
 
+/*
+ * Quiet archive ledger: one stable rhythm in read and edit modes. The panel
+ * stays open and ruled; interaction chrome appears only on hover or focus.
+ */
 .charinfo-detail__props {
+  --charinfo-prop-row-h: 36px;
+  --charinfo-prop-control-h: 32px;
   display: grid;
   gap: 0;
-  margin-bottom: 0.85rem;
+  margin-bottom: calc(var(--charinfo-space-lg) + var(--charinfo-space-xs));
   font-size: 0.8rem;
-  border: 1px solid var(--charinfo-line);
-  border-radius: 8px;
-  padding: 0.35rem 0.55rem 0.45rem;
-  background: color-mix(in srgb, var(--background-primary) 65%, var(--charinfo-surface));
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: none;
 }
 
 .charinfo-detail__props-label,
@@ -2908,52 +3178,112 @@ span.charinfo-status.is-static {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--charinfo-muted);
-  margin-bottom: 0.25rem;
+  margin-bottom: var(--charinfo-space-xs);
 }
 
+.charinfo-detail__props-label {
+  margin-bottom: var(--charinfo-space-md);
+}
+
+/* 72px label rail, then the value. Every row closes with its own hairline. */
 .charinfo-detail__prop {
+  box-sizing: border-box;
   display: grid;
-  grid-template-columns: 3.75rem minmax(0, 1fr);
+  grid-template-columns: 72px minmax(0, 1fr);
   gap: 0.45rem;
   align-items: center;
-  padding: 0.28rem 0;
+  min-height: var(--charinfo-prop-row-h);
+  padding: var(--charinfo-space-xxs) 0;
   border-bottom: 1px solid color-mix(in srgb, var(--charinfo-line) 65%, transparent);
-}
-
-.charinfo-detail__prop:last-child {
-  border-bottom: none;
 }
 
 .charinfo-detail__prop-label {
   color: var(--charinfo-muted);
   font-size: 0.75rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .charinfo-detail__prop.is-editing {
   align-items: center;
 }
 
-.charinfo-detail__prop-input {
+/*
+ * Edit control, not a form plate: transparent at rest and sharing the button's
+ * box exactly, so switching between them never shifts the row.
+ */
+.charinfo-detail__prop input.charinfo-detail__prop-input {
+  box-sizing: border-box;
+  appearance: none;
+  -webkit-appearance: none;
   width: 100%;
   min-width: 0;
   margin: 0;
-  padding: 0.28rem 0.45rem;
+  min-height: var(--charinfo-prop-control-h);
+  height: var(--charinfo-prop-control-h);
+  padding: 0 var(--charinfo-space-md);
   font: inherit;
   font-size: 0.82rem;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 5px;
-  background: var(--background-primary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-s, 4px);
+  background: transparent;
+  box-shadow: none;
   color: inherit;
 }
 
-.charinfo-detail__prop-input:hover,
-.charinfo-detail__prop-input:focus {
-  border-color: var(--charinfo-accent, var(--interactive-accent));
-  outline: none;
+.charinfo-detail__prop input.charinfo-detail__prop-input:hover {
+  background: var(--background-modifier-hover);
 }
 
-.charinfo-detail__prop-input:focus-visible {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--charinfo-accent) 28%, transparent);
+.charinfo-detail__prop input.charinfo-detail__prop-input:focus,
+.charinfo-detail__prop input.charinfo-detail__prop-input:focus-visible {
+  outline: none;
+  border-color: var(--charinfo-accent, var(--interactive-accent));
+  background: var(--background-modifier-form-field, var(--background-primary));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--charinfo-accent) 22%, transparent);
+}
+
+/* Peek value: compact desktop target, quiet until the user shows intent. */
+.charinfo-detail__prop button.charinfo-detail__prop-btn {
+  box-sizing: border-box;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-height: var(--charinfo-prop-control-h);
+  padding: 0 var(--charinfo-space-md);
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s, 4px);
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1.35;
+  text-align: left;
+  cursor: text;
+}
+
+.charinfo-detail__prop button.charinfo-detail__prop-btn:hover {
+  border-color: var(--background-modifier-border);
+  background: var(--background-modifier-hover);
+}
+
+.charinfo-detail__prop button.charinfo-detail__prop-btn:focus-visible {
+  outline: none;
+  border-color: var(--charinfo-accent, var(--interactive-accent));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--charinfo-accent) 22%, transparent);
+}
+
+.charinfo-detail__prop-btn.is-empty,
+.charinfo-detail__prop-empty {
+  color: var(--charinfo-muted, var(--text-muted));
+}
+
+@media (pointer: coarse) {
+  .charinfo-detail__props {
+    --charinfo-prop-row-h: 44px;
+    --charinfo-prop-control-h: 40px;
+  }
 }
 
 .charinfo-detail__title-input {
@@ -3017,6 +3347,16 @@ span.charinfo-status.is-static {
   gap: 1rem;
   user-select: text !important;
   -webkit-user-select: text !important;
+}
+
+/* Staged body while a note-region patch renders; swapped in when complete. */
+.charinfo-detail__body.is-staging {
+  display: none;
+}
+
+.charinfo-detail__error {
+  font-size: var(--font-ui-small);
+  color: var(--charinfo-muted, var(--text-muted));
 }
 
 .charinfo-sheet__meta {
@@ -3432,6 +3772,7 @@ body.charinfo-dragging .charinfo-card__drag-handle {
 
 /* 속성 관리 — one-column modal, shared --charinfo-* tokens on the shell */
 .modal.charinfo-attr-modal-shell {
+  position: relative !important;
   width: min(92vw, 30rem) !important;
   max-width: 30rem !important;
 }
@@ -3441,23 +3782,61 @@ body.charinfo-dragging .charinfo-card__drag-handle {
   padding-bottom: var(--size-4-3, 12px);
 }
 
+/*
+ * Obsidian owns the sole Close control as a sibling of .modal-header. Keep it
+ * native and align it to the same 32px rail as Back and the detail chevrons.
+ * Reserving that rail in the title row prevents long names from passing under X.
+ */
+.modal.charinfo-attr-modal-shell .modal-header {
+  height: auto;
+  margin-bottom: var(--size-4-3, 12px);
+}
+
+.modal.charinfo-attr-modal-shell > .modal-header-button {
+  top: var(--size-4-4, 16px);
+  inset-inline-end: var(--size-4-4, 16px);
+  display: grid;
+  place-items: center;
+  width: var(--size-4-8, 32px);
+  height: var(--size-4-8, 32px);
+  padding: 0;
+  background: transparent;
+  border-radius: var(--clickable-icon-radius, var(--radius-s));
+  --icon-size: var(--icon-m);
+}
+
 .modal.charinfo-attr-modal-shell .charinfo-attr-modal__title-row {
   display: flex;
   align-items: center;
   gap: var(--size-4-2, 8px);
+  width: 100%;
+  max-width: 100%;
   min-height: var(--size-4-8, 32px);
+  margin: 0;
+  padding: 0 calc(var(--size-4-8, 32px) + var(--size-4-2, 8px)) 0 0;
+  box-sizing: border-box;
 }
 
 .modal.charinfo-attr-modal-shell .charinfo-attr-modal__title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: var(--font-ui-medium, 15px);
   font-weight: var(--font-semibold, 600);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.charinfo-attr-modal__back {
+  flex: 0 0 var(--size-4-8, 32px);
 }
 
 .charinfo-attr-modal__back.is-hidden {
   display: none;
 }
 
-.charinfo-attr-modal__back:focus-visible {
+.charinfo-attr-modal__back:focus-visible,
+.modal.charinfo-attr-modal-shell > .modal-header-button:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
@@ -3471,12 +3850,16 @@ body.charinfo-dragging .charinfo-card__drag-handle {
   padding: 0;
 }
 
-.modal.charinfo-attr-modal-shell > .charinfo-attr-modal__save.is-ok {
-  color: var(--text-normal);
-}
-
 .modal.charinfo-attr-modal-shell > .charinfo-attr-modal__save.is-error {
   color: var(--text-error, #b91c1c);
+}
+
+/* All desktop notices share one centered native stack; phone safe areas stay native. */
+body:not(.is-phone) .notice-container {
+  inset-inline-start: 50% !important;
+  inset-inline-end: auto !important;
+  max-width: calc(100vw - 2 * var(--size-4-4, 16px));
+  transform: translateX(-50%);
 }
 
 .charinfo-attr-modal {
@@ -3495,12 +3878,23 @@ body.charinfo-dragging .charinfo-card__drag-handle {
 .charinfo-attr-modal__fold,
 .charinfo-attr-modal__page-link {
   align-self: flex-start;
+  appearance: none;
+  -webkit-appearance: none;
   border: none;
-  background: none;
-  padding: 0.2rem 0;
+  background: transparent;
+  box-shadow: none;
+  padding: var(--size-4-1, 4px) 0;
   color: var(--text-muted);
   cursor: pointer;
-  min-height: 32px;
+  min-height: var(--size-4-8, 32px);
+  font: inherit;
+}
+
+.modal.charinfo-attr-modal-shell .charinfo-attr-modal__fold {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0;
 }
 
 .charinfo-attr-modal__page-link {
@@ -3510,22 +3904,6 @@ body.charinfo-dragging .charinfo-card__drag-handle {
   width: 100%;
   text-align: left;
   color: var(--text-normal);
-}
-
-.charinfo-attr-modal__pick {
-  display: flex;
-  flex-direction: column;
-  gap: var(--size-4-1, 4px);
-}
-
-.charinfo-attr-modal__pick-btn {
-  min-height: 44px;
-  padding: 0 var(--size-4-3, 12px);
-  text-align: left;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--charinfo-radius, 6px);
-  background: var(--background-secondary);
-  cursor: pointer;
 }
 
 .charinfo-attr-modal__mini {
@@ -3539,10 +3917,6 @@ body.charinfo-dragging .charinfo-card__drag-handle {
 
 .charinfo-attr-modal__mini.is-danger {
   color: var(--text-error, #b91c1c);
-}
-
-.charinfo-attr-modal__create {
-  padding: var(--size-4-2, 8px);
 }
 
 .charinfo-attr-modal__axis-choice {
@@ -3595,8 +3969,7 @@ body.charinfo-dragging .charinfo-card__drag-handle {
   color: var(--text-muted);
 }
 
-.charinfo-attr-modal__hint,
-.charinfo-attr-modal__key {
+.charinfo-attr-modal__hint {
   font-size: var(--font-ui-small, 13px);
   color: var(--text-muted);
   line-height: var(--line-height-tight, 1.3);
@@ -3614,20 +3987,19 @@ body.charinfo-dragging .charinfo-card__drag-handle {
 }
 
 .charinfo-attr-modal__list {
-  max-height: min(40vh, 18rem);
-  overflow-y: auto;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--charinfo-radius, 6px);
+  overflow: visible;
+  border: none;
+  border-radius: 0;
 }
 
 .charinfo-attr-modal__row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--size-4-2, 8px);
   width: 100%;
   min-height: 44px;
-  padding: var(--size-4-2, 8px);
+  padding: 0;
   border: none;
   border-bottom: 1px solid var(--background-modifier-border);
   border-radius: 0;
@@ -3636,7 +4008,7 @@ body.charinfo-dragging .charinfo-card__drag-handle {
   color: inherit;
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 button.charinfo-attr-modal__row {
@@ -3669,6 +4041,13 @@ button.charinfo-attr-modal__row:focus-visible {
 .charinfo-attr-modal__dot.is-violet { background: var(--charinfo-status-violet); }
 .charinfo-attr-modal__dot.is-cyan { background: var(--charinfo-status-cyan); }
 .charinfo-attr-modal__dot.is-pink { background: var(--charinfo-status-pink); }
+.charinfo-attr-modal__dot.is-olive { background: var(--charinfo-status-olive); }
+.charinfo-attr-modal__dot.is-indigo { background: var(--charinfo-status-indigo); }
+.charinfo-attr-modal__dot.is-lime { background: var(--charinfo-status-lime); }
+.charinfo-attr-modal__dot.is-yellow { background: var(--charinfo-status-yellow); }
+.charinfo-attr-modal__dot.is-custom {
+  background: var(--charinfo-chip-ink, var(--charinfo-chip-fallback));
+}
 
 .charinfo-attr-modal__row:last-child {
   border-bottom: none;
@@ -3679,35 +4058,229 @@ button.charinfo-attr-modal__row:focus-visible {
   min-width: 0;
 }
 
-.charinfo-attr-modal__count {
-  color: var(--text-muted);
-  font-size: 0.75rem;
+/* --------------------------------------- option row: flat scan, one drawer */
+
+/* Capability rails exist only when they carry a real grip or colour control. */
+.charinfo-attr-modal__row.is-option {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr)
+    auto
+    var(--size-4-8, 32px);
+  column-gap: var(--size-4-2, 8px);
+  align-items: center;
+  min-height: 48px;
 }
 
-.charinfo-attr-modal__add {
-  width: 100%;
-  min-height: 44px;
+.charinfo-attr-modal__row.is-option.has-grip {
+  grid-template-columns:
+    var(--size-4-8, 32px)
+    minmax(0, 1fr)
+    auto
+    var(--size-4-8, 32px);
+}
+
+.charinfo-attr-modal__row.is-option.has-color {
+  grid-template-columns:
+    12px
+    minmax(0, 1fr)
+    auto
+    var(--size-4-8, 32px);
+}
+
+.charinfo-attr-modal__row.is-option.has-grip.has-color {
+  grid-template-columns:
+    var(--size-4-8, 32px)
+    12px
+    minmax(0, 1fr)
+    auto
+    var(--size-4-8, 32px);
+}
+
+/* Draft actions stay beside the input: fluid name · confirm · cancel. */
+.charinfo-attr-modal__row.is-option.is-draft {
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--size-4-8, 32px)
+    var(--size-4-8, 32px);
+}
+
+.charinfo-attr-modal__row.is-option.is-draft.has-grip {
+  grid-template-columns:
+    var(--size-4-8, 32px)
+    minmax(0, 1fr)
+    var(--size-4-8, 32px)
+    var(--size-4-8, 32px);
+}
+
+.charinfo-attr-modal__row.is-option.is-draft.has-color {
+  grid-template-columns:
+    12px
+    minmax(0, 1fr)
+    var(--size-4-8, 32px)
+    var(--size-4-8, 32px);
+}
+
+.charinfo-attr-modal__row.is-option.is-draft.has-grip.has-color {
+  grid-template-columns:
+    var(--size-4-8, 32px)
+    12px
+    minmax(0, 1fr)
+    var(--size-4-8, 32px)
+    var(--size-4-8, 32px);
+}
+
+.charinfo-attr-modal__row.is-option .charinfo-attr-modal__row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.charinfo-attr-modal__badge {
+  flex: 0 0 auto;
+  font-size: var(--font-ui-smaller, 12px);
+  color: var(--text-muted);
+}
+
+/*
+ * An option with no badge keeps the empty `auto` track rather than collapsing
+ * it: the 1fr name absorbs the difference, and the trailing 32px rail stays
+ * exactly where every other row's rail is.
+ */
+/* The open row and its drawer are one block, so only the drawer closes it. */
+.charinfo-attr-modal__row.is-option.is-open {
+  border-bottom: none;
+}
+
+.charinfo-attr-modal__row.is-option input.charinfo-attr-modal__row-input {
+  width: auto;
+  min-width: 0;
+  height: auto;
+  min-height: 48px;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
   border: none;
-  border-top: 1px dashed var(--background-modifier-border);
+  border-radius: 0;
   background: transparent;
-  color: var(--text-normal);
-  font-weight: 500;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__option-name {
+  display: flex;
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left !important;
   cursor: pointer;
 }
 
+.charinfo-attr-modal__row.is-option input.charinfo-attr-modal__row-input:focus,
+.charinfo-attr-modal__row.is-option
+  input.charinfo-attr-modal__row-input:focus-visible,
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__option-name:focus-visible {
+  outline: none;
+  box-shadow: inset 0 -2px 0 0 var(--interactive-accent) !important;
+}
+
+.charinfo-attr-modal__option-remove {
+  justify-self: center;
+}
+
+.charinfo-attr-modal__drawer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3, 12px);
+  padding: var(--size-4-3, 12px);
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.charinfo-attr-modal__editor-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller, 12px);
+}
+
+/*
+ * The default check sits on the shared 32px rail, 24px inside it. Selected is
+ * a mark plus a border change, never colour on its own.
+ */
+.charinfo-attr-modal__setting-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--size-4-8, 32px);
+  column-gap: var(--size-4-2, 8px);
+  align-items: center;
+  min-height: 40px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.charinfo-attr-modal__setting-label {
+  font-size: var(--font-ui-small, 13px);
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-attr-modal__check {
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  width: var(--size-4-6, 24px);
+  height: var(--size-4-6, 24px);
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  background: var(--background-primary);
+  box-shadow: none;
+  color: var(--text-on-accent);
+  cursor: pointer;
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-attr-modal__check.is-active {
+  border-color: var(--interactive-accent);
+  background: var(--interactive-accent);
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__check:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.charinfo-attr-modal__check svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+/* One quiet row of colors inside the drawer — five presets, then the picker. */
 .charinfo-attr-modal__swatches {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--size-4-2, 8px);
 }
 
 .charinfo-attr-modal__swatch {
-  width: 44px;
-  height: 44px;
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--size-4-8, 32px);
+  height: var(--size-4-8, 32px);
   padding: 0;
   border: 2px solid transparent;
   border-radius: 999px;
   background: var(--charinfo-status-gray, #8a8a8a);
+  box-shadow: none;
   cursor: pointer;
 }
 
@@ -3719,14 +4292,107 @@ button.charinfo-attr-modal__row:focus-visible {
 .charinfo-attr-modal__swatch.is-violet { background: var(--charinfo-status-violet); }
 .charinfo-attr-modal__swatch.is-cyan { background: var(--charinfo-status-cyan); }
 .charinfo-attr-modal__swatch.is-pink { background: var(--charinfo-status-pink); }
+.charinfo-attr-modal__swatch.is-olive { background: var(--charinfo-status-olive); }
+.charinfo-attr-modal__swatch.is-indigo { background: var(--charinfo-status-indigo); }
+.charinfo-attr-modal__swatch.is-lime { background: var(--charinfo-status-lime); }
+.charinfo-attr-modal__swatch.is-yellow { background: var(--charinfo-status-yellow); }
 
+/*
+ * The one custom entry, always last. A multicolor face says “anything”; once a
+ * color is picked the face shows it over the multicolor ring, so the row reads
+ * as six choices with one selection and the custom affordance survives. The
+ * native `input[type=color]` sits invisibly on top and stays focusable, so it
+ * is the picker's real trigger and its own accessible name.
+ */
+.charinfo-attr-modal__swatch.is-multicolor {
+  overflow: hidden;
+  background: conic-gradient(
+    from 0deg,
+    var(--charinfo-status-red),
+    var(--charinfo-status-yellow),
+    var(--charinfo-status-lime),
+    var(--charinfo-status-cyan),
+    var(--charinfo-status-blue),
+    var(--charinfo-status-violet),
+    var(--charinfo-status-pink),
+    var(--charinfo-status-red)
+  );
+}
+
+.charinfo-attr-modal__swatch input.charinfo-attr-modal__swatch-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/*
+ * Chosen is never colour alone: a ring the width of the gap plus a check mark,
+ * so the selection reads in monochrome and under any colour-vision profile.
+ */
 .charinfo-attr-modal__swatch.is-active {
-  border-color: var(--text-normal);
+  border-color: var(--background-primary);
+  box-shadow: 0 0 0 2px var(--text-normal);
+}
+
+.charinfo-attr-modal__swatch-check {
+  display: grid;
+  place-items: center;
+  color: #fff;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.55));
+  pointer-events: none;
+}
+
+.charinfo-attr-modal__swatch-check svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+/* A committed custom colour shows itself; the multicolor ring stays visible. */
+.charinfo-attr-modal__swatch.is-multicolor.is-picked::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 999px;
+  background: var(--charinfo-swatch-picked, transparent);
+}
+
+.charinfo-attr-modal__swatch.is-multicolor .charinfo-attr-modal__swatch-check {
+  position: absolute;
+  inset: 0;
+}
+
+.charinfo-attr-modal__swatch:focus-visible,
+.charinfo-attr-modal__swatch:focus-within {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 3px;
 }
 
 .charinfo-attr-modal__confirm {
   font-size: 0.85rem;
   line-height: 1.45;
+}
+
+/* Property removal confirmation stays attached to the active row, then vanishes. */
+.charinfo-attr-modal__confirm.is-field-remove {
+  margin: 0 0 var(--size-4-2, 8px)
+    calc(var(--size-4-8, 32px) + var(--size-4-2, 8px));
+  padding: var(--size-4-3, 12px);
+  border: 1px solid var(--charinfo-line);
+  border-radius: var(--charinfo-radius-lg);
+  background: var(--background-secondary);
+  color: var(--charinfo-muted);
+}
+
+.charinfo-attr-modal__confirm.is-field-remove.is-detail {
+  margin-left: 0;
 }
 
 .charinfo-attr-modal__confirm-actions {
@@ -3747,21 +4413,6 @@ button.charinfo-attr-modal__row:focus-visible {
   color: var(--text-muted);
 }
 
-.charinfo-attr-modal__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--size-4-1, 4px);
-}
-
-.charinfo-attr-modal__chips .charinfo-chip {
-  min-height: var(--size-4-8, 32px);
-  padding: var(--size-4-1, 4px) var(--size-4-2, 8px);
-}
-
-.charinfo-attr-modal__chips .charinfo-chip:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
 
 .charinfo-attr-modal__save {
   min-height: var(--size-4-5, 20px);
@@ -3777,4 +4428,1591 @@ button.charinfo-attr-modal__row:focus-visible {
   padding: 0;
 }
 
+/* Text button (DESIGN.md §2) — named action, 44px primary hit. */
+.charinfo-text-btn {
+  min-height: 44px;
+  padding: var(--size-4-2, 8px) var(--size-4-3, 12px);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 4px);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+}
 
+.charinfo-text-btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/*
+ * The group rail — 그룹 · 속성 관리's routes, above the ledger.
+ *
+ * A bare wrapping rail: no surface, no border, no inset, no label. That is the
+ * whole alignment rule — the first chip starts exactly where the modal title
+ * and the first property name start, by subtraction rather than by a
+ * compensating offset. The rail itself remains available when no route is
+ * visible, so `+ 그룹` still owns the same reading edge.
+ */
+.charinfo-attr-modal__group-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--charinfo-space-xs);
+  align-items: center;
+  min-width: 0;
+  margin: 0 0 var(--charinfo-space-base);
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+/*
+ * One chip, capability tracks: 24px grabber · name+count · (selected only) two
+ * 24px actions. Nothing is reserved — an unselected chip has no action track at
+ * all, so no invisible target and no phantom indent. The name is the only
+ * flexible track, so it is what truncates.
+ *
+ * The 24px actions are the same logged exception as `.charinfo-prop-row__eye`:
+ * a 32px control inside a 32px chip leaves no padding at all, and 24px still
+ * clears the WCAG 2.2 AA target size on its own.
+ */
+.charinfo-attr-modal__group-rail .charinfo-group-chip {
+  display: grid;
+  grid-template-columns: var(--size-4-6, 24px) minmax(0, 1fr);
+  align-items: center;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: min(100%, 18rem);
+  min-height: var(--size-4-8, 32px);
+  padding: 0;
+  border: 1px solid var(--charinfo-line);
+  border-radius: var(--charinfo-radius-sm);
+  background: transparent;
+  /* Inner focus rings: the first chip sits at x=0 and must not be clipped. */
+  overflow: hidden;
+}
+
+.charinfo-attr-modal__group-rail .charinfo-group-chip.is-selected {
+  grid-template-columns:
+    var(--size-4-6, 24px)
+    minmax(0, 1fr)
+    var(--size-4-6, 24px)
+    var(--size-4-6, 24px);
+  padding-inline-end: var(--charinfo-space-xs);
+  border-color: var(--charinfo-accent);
+  background: var(--background-modifier-hover);
+}
+
+.charinfo-attr-modal__group-rail .charinfo-group-chip.is-dragging {
+  display: none;
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-group-chip__grip {
+  display: grid;
+  place-items: center;
+  width: var(--size-4-6, 24px);
+  height: var(--size-4-8, 32px);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--charinfo-muted);
+  cursor: grab;
+  /* Mandatory: without it a touch drag scrolls the modal instead. */
+  touch-action: none;
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-group-chip__grip svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-group-chip__select {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--size-4-8, 32px);
+  padding: 0 var(--charinfo-space-md) 0 var(--charinfo-space-xxs);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-small, 13px);
+  text-align: left;
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-group-chip__select:hover {
+  background: var(--background-modifier-hover);
+  color: var(--charinfo-ink);
+}
+
+.charinfo-group-chip.is-selected .charinfo-group-chip__select {
+  color: var(--charinfo-ink);
+  font-weight: var(--font-medium, 500);
+}
+
+.charinfo-group-chip__name {
+  min-width: 0;
+}
+
+/*
+ * Count and its divider: one 1×12px hairline, drawn by the count itself so the
+ * chip needs no extra node. `color-mix` instead of `opacity` keeps the number at
+ * full contrast while the rule stays quiet.
+ */
+.charinfo-group-chip__count {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  font-variant-numeric: tabular-nums;
+}
+
+.charinfo-group-chip__count::before {
+  content: "";
+  width: 1px;
+  height: 12px;
+  margin-inline: var(--charinfo-space-xs);
+  background: color-mix(in srgb, var(--charinfo-line) 70%, transparent);
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-group-chip__rename,
+.modal.charinfo-attr-modal-shell button.charinfo-group-chip__delete {
+  width: var(--size-4-6, 24px);
+  height: var(--size-4-6, 24px);
+  padding: 0;
+  color: var(--charinfo-muted);
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-group-chip__rename svg,
+.modal.charinfo-attr-modal-shell button.charinfo-group-chip__delete svg {
+  width: 15px;
+  height: 15px;
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-group-chip__delete:hover {
+  color: var(--text-error);
+}
+
+/* Reveal only — the chip's own width change is instant. */
+@media (prefers-reduced-motion: no-preference) {
+  .charinfo-group-chip.is-selected .charinfo-group-chip__rename,
+  .charinfo-group-chip.is-selected .charinfo-group-chip__delete {
+    animation: charinfo-chip-reveal var(--anim-duration-fast, 120ms)
+      var(--anim-motion-smooth, ease-out) both;
+  }
+}
+
+@keyframes charinfo-chip-reveal {
+  from {
+    opacity: 0;
+    transform: translateX(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* `+ 그룹` — same shell, one skin: dashed, no divider, no count. */
+.modal.charinfo-attr-modal-shell button.charinfo-group-chip.is-add {
+  display: inline-grid;
+  grid-template-columns: var(--size-4-6, 24px) minmax(0, 1fr);
+  align-items: center;
+  min-height: var(--size-4-8, 32px);
+  padding: 0 var(--charinfo-space-md) 0 0;
+  border: 1px dashed var(--charinfo-line);
+  border-radius: var(--charinfo-radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-small, 13px);
+  text-align: left;
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-group-chip.is-add:hover {
+  background: var(--background-modifier-hover);
+  color: var(--charinfo-ink);
+}
+
+.charinfo-group-chip__add-icon {
+  display: grid;
+  place-items: center;
+  width: var(--size-4-6, 24px);
+  height: var(--size-4-8, 32px);
+}
+
+.charinfo-group-chip__add-icon svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+.modal.charinfo-attr-modal-shell .charinfo-group-chip:focus-visible,
+.modal.charinfo-attr-modal-shell .charinfo-group-chip button:focus-visible,
+.modal.charinfo-attr-modal-shell .charinfo-group-chip-editor
+  input:focus-visible,
+.modal.charinfo-attr-modal-shell .charinfo-group-chip-editor
+  button:focus-visible {
+  outline: 2px solid var(--charinfo-accent);
+  outline-offset: -2px;
+}
+
+/*
+ * The add / rename editor. `flex: 1 0 100%` is the layout contract: a
+ * 100%-basis flex item cannot share a line with a chip at any width, so the
+ * input can never overlap a name, a count, or an action.
+ */
+.charinfo-group-chip-editor {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr)
+    var(--size-4-6, 24px)
+    var(--size-4-6, 24px);
+  align-items: center;
+  gap: var(--charinfo-space-xs);
+  flex: 1 0 100%;
+  min-width: 0;
+}
+
+.charinfo-group-chip-editor
+  .charinfo-attr-modal__add-submit,
+.charinfo-group-chip-editor
+  .charinfo-attr-modal__row-remove {
+  grid-column: auto;
+  width: var(--size-4-6, 24px);
+  height: var(--size-4-6, 24px);
+}
+
+/* Drag skins: the chip ghost is the prop-row ghost, one line, no cover. */
+.charinfo-group-chip-ghost {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: var(--size-4-8, 32px);
+  padding: 0 var(--charinfo-space-md);
+  align-content: center;
+  font-size: var(--font-ui-small, 13px);
+}
+
+.charinfo-group-chip-slot {
+  min-height: var(--size-4-8, 32px);
+  min-width: 4rem;
+}
+
+.charinfo-attr-modal__danger {
+  display: flex;
+  flex-direction: column;
+  gap: var(--charinfo-space-md);
+  padding: var(--charinfo-space-base);
+  border: 1px solid var(--charinfo-line);
+  border-radius: var(--charinfo-radius-lg);
+  background: var(--charinfo-surface);
+}
+
+.charinfo-attr-modal__danger-title {
+  color: var(--charinfo-ink);
+  font-size: var(--font-ui-small, 13px);
+  font-weight: var(--font-semibold, 600);
+}
+
+.charinfo-attr-modal__danger-copy {
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1.45;
+}
+
+.charinfo-attr-modal__danger .charinfo-attr-modal__select {
+  width: 100%;
+}
+
+/* Move outcome: the destination and its verb read as one action. */
+.charinfo-attr-modal__danger-move {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--charinfo-space-md);
+  align-items: center;
+}
+
+.charinfo-attr-modal__danger-move .charinfo-attr-modal__select {
+  flex: 1 1 8rem;
+  width: auto;
+}
+
+/* A disabled action always says why, on screen, next to itself. */
+.charinfo-attr-modal__danger-reason {
+  flex: 1 0 100%;
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1.45;
+}
+
+/* Which of the two destructive doors is in flight stays legible while saving. */
+.modal.charinfo-attr-modal-shell .charinfo-attr-modal__danger button.is-armed {
+  opacity: 1;
+}
+
+/* 이 그룹의 속성 — the field ledger */
+.charinfo-attr-modal__fields {
+  margin-top: var(--size-4-2, 8px);
+}
+
+/* Mixed ownership is disclosed only where it matters: inside chip-axis detail. */
+.charinfo-attr-modal__ownership {
+  margin-left: calc(var(--size-4-8, 32px) + var(--size-4-2, 8px));
+}
+
+.charinfo-attr-modal__row.is-field {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2, 8px);
+  cursor: default;
+}
+
+/*
+ * The four-rail ledger: 32px handle · fluid name · 112px type · 32px control,
+ * 8px gaps, rows on the 48px grid step.
+ *
+ * `이름` reserves the handle and control rails without filling them, so every
+ * property name shares one left edge and the fixed row grows no glyph implying
+ * an action it does not have. Reordering the rest writes the group's active
+ * sequence; every card, peek and share surface reads this group order.
+ */
+.charinfo-attr-modal__fields .charinfo-attr-modal__row.is-field {
+  display: grid;
+  grid-template-columns:
+    var(--size-4-8, 32px)
+    minmax(0, 1fr)
+    112px
+    var(--size-4-8, 32px);
+  column-gap: var(--size-4-2, 8px);
+  align-items: center;
+  min-height: 48px;
+}
+
+.charinfo-attr-modal__slot,
+.charinfo-attr-modal__handle-slot {
+  width: var(--size-4-8, 32px);
+  height: var(--size-4-8, 32px);
+}
+
+/* Top-level property handles own the full 32px rail. */
+.charinfo-attr-modal__handle {
+  display: grid;
+  place-items: center;
+  width: var(--size-4-8, 32px);
+  height: var(--size-4-8, 32px);
+  color: var(--icon-color, var(--text-muted));
+  cursor: grab;
+}
+
+.charinfo-attr-modal__handle svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+/* Option handles use the shared 32px accessible icon rail. */
+.charinfo-attr-modal__grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-4-8, 32px);
+  height: var(--size-4-8, 32px);
+  color: var(--icon-color, var(--text-muted));
+  cursor: grab;
+}
+
+.charinfo-attr-modal__grip.is-idle {
+  cursor: default;
+}
+
+.charinfo-attr-modal__grip svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+/*
+ * The type control — a real button, not passive metadata. Icon, label and the
+ * disclosure chevron each keep their own track so the label never collides with
+ * either. `이름`'s static twin holds the same 112px slot without the press.
+ */
+.charinfo-attr-modal__type-btn {
+  display: grid;
+  grid-template-columns: var(--icon-s, 16px) minmax(0, 1fr) var(--icon-s, 16px);
+  column-gap: var(--size-4-2, 8px);
+  align-items: center;
+  width: 100%;
+  height: var(--size-4-8, 32px);
+  padding: 0 var(--size-4-2, 8px);
+  border: 1px solid var(--charinfo-line);
+  border-radius: var(--charinfo-radius-sm);
+  background: var(--background-secondary);
+  box-shadow: none;
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  text-align: left;
+  cursor: pointer;
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-attr-modal__type-btn {
+  background: var(--background-secondary);
+  color: var(--charinfo-muted);
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-attr-modal__type-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--charinfo-ink);
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__type-btn:focus-visible {
+  outline: 2px solid var(--charinfo-accent);
+  outline-offset: 1px;
+}
+
+.charinfo-attr-modal__type-btn.is-static {
+  grid-template-columns: var(--icon-s, 16px) minmax(0, 1fr);
+  border-color: transparent;
+  background: transparent;
+  cursor: default;
+}
+
+/*
+ * In the detail the type *is* the row's value, and the row's rail already
+ * carries the chevron — so the control drops its own box rather than stacking
+ * a second affordance inside one press target.
+ */
+.charinfo-attr-modal__type-btn.is-plain,
+.modal.charinfo-attr-modal-shell button.charinfo-attr-modal__type-btn.is-plain {
+  grid-template-columns: var(--icon-s, 16px) minmax(0, 1fr);
+  min-height: 48px;
+  height: auto;
+  padding: 0;
+  border-color: transparent !important;
+  background: transparent !important;
+  color: var(--charinfo-ink);
+  font-size: var(--font-ui-small, 13px);
+  font-weight: var(--font-medium, 500);
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__type-btn.is-plain:hover {
+  background: transparent !important;
+  color: var(--charinfo-ink);
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__type-btn.is-plain:focus-visible {
+  outline: none;
+  box-shadow: inset 0 -2px 0 0 var(--interactive-accent) !important;
+}
+
+.charinfo-attr-modal__type-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.charinfo-attr-modal__type-icon,
+.charinfo-attr-modal__type-chev {
+  display: grid;
+  place-items: center;
+  color: var(--icon-color, var(--text-muted));
+}
+
+.charinfo-attr-modal__type-icon svg,
+.charinfo-attr-modal__type-chev svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+.charinfo-attr-modal__field-name,
+.charinfo-attr-modal__fields .charinfo-attr-modal__row-label,
+.charinfo-attr-modal__fields .charinfo-attr-modal__row-input {
+  min-width: 0;
+  min-height: 48px;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  color: inherit;
+  /* `font` (not font-size) so the input cannot fall back to the UA font. */
+  font: inherit;
+  text-align: left;
+  justify-self: stretch;
+}
+
+/*
+ * One name slot, two states. Inside the Book field list the rest label and the
+ * edit input share width, padding, typography, line-height and truncation, so
+ * the drag rail and the utility rails never move and the text never jumps.
+ */
+.charinfo-attr-modal__fields .charinfo-attr-modal__field-name,
+.charinfo-attr-modal__fields .charinfo-attr-modal__row-input {
+  flex: 1 1 auto;
+  width: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.charinfo-attr-modal__field-name {
+  cursor: pointer;
+}
+
+.charinfo-attr-modal__field-name:disabled {
+  cursor: default;
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-attr-modal__field-name,
+.modal.charinfo-attr-modal-shell .charinfo-attr-modal__fold,
+.modal.charinfo-attr-modal-shell .charinfo-attr-modal__add-open {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0;
+  text-align: left !important;
+}
+
+/* Left-aligned name slot — the label and input share identical geometry. */
+.modal.charinfo-attr-modal-shell
+  .charinfo-attr-modal__fields
+  button.charinfo-attr-modal__field-name,
+.modal.charinfo-attr-modal-shell
+  .charinfo-attr-modal__fields
+  input.charinfo-attr-modal__row-input {
+  text-align: left !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Focus is an inset underline: no new rectangle, no reflow. */
+.modal.charinfo-attr-modal-shell
+  .charinfo-attr-modal__fields
+  button.charinfo-attr-modal__field-name:focus-visible,
+.modal.charinfo-attr-modal-shell
+  .charinfo-attr-modal__fields
+  input.charinfo-attr-modal__row-input:focus,
+.modal.charinfo-attr-modal-shell
+  .charinfo-attr-modal__fields
+  input.charinfo-attr-modal__row-input:focus-visible {
+  outline: none;
+  box-shadow: inset 0 -2px 0 0 var(--interactive-accent) !important;
+}
+
+/* The closed add action spans the ledger and stays centered as one clear CTA. */
+.charinfo-attr-modal__add-open {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--size-4-2, 8px);
+  width: auto;
+  min-height: 48px;
+  padding: 0;
+  justify-self: stretch;
+  align-self: stretch;
+}
+
+.charinfo-attr-modal__add-name-cell {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.charinfo-attr-modal__fields
+  .charinfo-attr-modal__row.is-field.is-add {
+  grid-template-columns:
+    var(--size-4-8, 32px)
+    minmax(0, 1fr)
+    112px
+    var(--size-4-8, 32px)
+    var(--size-4-8, 32px);
+}
+
+.charinfo-attr-modal__row.is-field.is-add
+  .charinfo-attr-modal__add-name-cell
+  .charinfo-attr-modal__row-input {
+  width: 100%;
+}
+
+.charinfo-attr-modal__add-type-wrap {
+  grid-column: 3;
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.charinfo-attr-modal__add-type {
+  width: 100%;
+  padding-right: var(--size-4-8, 32px);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: none !important;
+  cursor: pointer;
+}
+
+.charinfo-attr-modal__add-type-chevron {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: grid;
+  place-items: center;
+  width: var(--size-4-8, 32px);
+  height: var(--size-4-8, 32px);
+  color: var(--icon-color, var(--text-muted));
+  pointer-events: none;
+}
+
+.charinfo-attr-modal__add-type-chevron svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+.charinfo-attr-modal__add-submit {
+  grid-column: 4;
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  width: var(--size-4-8, 32px);
+  height: var(--size-4-8, 32px);
+  min-width: var(--size-4-8, 32px);
+  min-height: var(--size-4-8, 32px);
+  padding: 0;
+  color: var(--text-accent);
+}
+
+.charinfo-attr-modal__add-cancel {
+  grid-column: 5;
+}
+
+.charinfo-attr-modal__add-submit svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__add-submit:focus-visible {
+  outline: 2px solid var(--charinfo-accent);
+  outline-offset: -2px;
+}
+
+.charinfo-attr-modal__add-icon {
+  display: grid;
+  place-items: center;
+  color: var(--icon-color, var(--text-muted));
+}
+
+.charinfo-attr-modal__add-icon svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+.charinfo-attr-modal__row-remove {
+  justify-self: center;
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__row-remove:focus-visible,
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__option-remove:focus-visible,
+.modal.charinfo-attr-modal-shell
+  .charinfo-attr-modal__fold:focus-visible {
+  outline: 2px solid var(--charinfo-accent);
+  outline-offset: -2px;
+}
+
+.charinfo-attr-modal__add-field {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2, 8px);
+  min-height: 44px;
+  padding: 0;
+}
+
+.charinfo-attr-modal__add-field .charinfo-attr-modal__input {
+  flex: 1;
+  min-width: 0;
+}
+
+.charinfo-attr-modal__select {
+  flex: 0 0 auto;
+  height: var(--size-4-8, 32px);
+}
+
+.charinfo-attr-modal__add-btn {
+  flex: 0 0 auto;
+}
+
+/* ------------------------------------------- property detail: one grammar */
+
+/*
+ * Name, then type, then only what the type needs. Both rows are the same
+ * three-track shape — 112px label, value, PE-R32 rail — so the disclosure
+ * chevrons stack on the same rail as the modal close above them.
+ */
+.charinfo-attr-modal__detail {
+  border-top: 1px solid var(--charinfo-line);
+}
+
+.charinfo-attr-modal__detail-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) var(--size-4-8, 32px);
+  column-gap: var(--size-4-2, 8px);
+  align-items: center;
+  min-height: 48px;
+  border-bottom: 1px solid var(--charinfo-line);
+  font-size: var(--font-ui-small, 13px);
+}
+
+.charinfo-attr-modal__detail-label {
+  color: var(--charinfo-muted);
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-attr-modal__detail-value {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  justify-self: stretch;
+  width: 100%;
+  min-height: 48px;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: var(--font-medium, 500);
+  text-align: left !important;
+  cursor: pointer;
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__detail-value:disabled {
+  cursor: default;
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__detail-value:focus-visible {
+  outline: none;
+  box-shadow: inset 0 -2px 0 0 var(--interactive-accent) !important;
+}
+
+.charinfo-attr-modal__detail-row input.charinfo-attr-modal__row-input {
+  min-height: 48px;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  cursor: text;
+}
+
+.charinfo-attr-modal__detail-row input.charinfo-attr-modal__row-input:focus,
+.charinfo-attr-modal__detail-row
+  input.charinfo-attr-modal__row-input:focus-visible {
+  outline: none;
+  box-shadow: inset 0 -2px 0 0 var(--interactive-accent);
+}
+
+.charinfo-attr-modal__detail-chev {
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  width: var(--size-4-8, 32px);
+  height: var(--size-4-8, 32px);
+  color: var(--icon-color, var(--text-muted));
+}
+
+.charinfo-attr-modal__detail-chev svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+/* The option ledger's header: label, then the count on the shared rail. */
+.charinfo-attr-modal__section-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--size-4-8, 32px);
+  column-gap: var(--size-4-2, 8px);
+  align-items: center;
+  min-height: 40px;
+  /* +8 on the modal's own 12px column gap = the 20px step. */
+  margin-top: var(--size-4-2, 8px);
+  border-bottom: 1px solid var(--charinfo-line);
+  font-size: var(--font-ui-smaller, 12px);
+  font-weight: var(--font-semibold, 600);
+}
+
+.charinfo-attr-modal__section-count {
+  justify-self: center;
+  color: var(--charinfo-muted);
+  font-weight: var(--font-normal, 400);
+}
+
+.modal.charinfo-attr-modal-shell button.charinfo-attr-modal__option-add {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr)
+    auto
+    var(--size-4-8, 32px);
+  align-items: center;
+  column-gap: var(--size-4-2, 8px);
+  justify-content: stretch;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0;
+  color: var(--charinfo-ink);
+  font-size: var(--font-ui-small, 13px);
+  text-align: left !important;
+  cursor: pointer;
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__option-add.has-grip {
+  grid-template-columns:
+    var(--size-4-8, 32px)
+    minmax(0, 1fr)
+    auto
+    var(--size-4-8, 32px);
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__option-add.has-color {
+  grid-template-columns:
+    12px
+    minmax(0, 1fr)
+    auto
+    var(--size-4-8, 32px);
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__option-add.has-grip.has-color {
+  grid-template-columns:
+    var(--size-4-8, 32px)
+    12px
+    minmax(0, 1fr)
+    auto
+    var(--size-4-8, 32px);
+}
+
+.charinfo-attr-modal__option-add-content {
+  display: flex;
+  grid-column: 1;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--size-4-2, 8px);
+  min-width: 0;
+}
+
+.charinfo-attr-modal__option-add.has-grip
+  .charinfo-attr-modal__option-add-content,
+.charinfo-attr-modal__option-add.has-color
+  .charinfo-attr-modal__option-add-content {
+  grid-column: 2;
+}
+
+.charinfo-attr-modal__option-add.has-grip.has-color
+  .charinfo-attr-modal__option-add-content {
+  grid-column: 3;
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__option-add:focus-visible {
+  outline: 2px solid var(--charinfo-accent);
+  outline-offset: -2px;
+}
+
+/* The property's own removal door, at the end of its detail. */
+.modal.charinfo-attr-modal-shell button.charinfo-attr-modal__danger-row {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2, 8px);
+  width: 100%;
+  min-height: 48px;
+  /* +8 on the modal's own 12px column gap = the 20px step. */
+  margin-top: var(--size-4-2, 8px);
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: none !important;
+  border-top: 1px solid var(--charinfo-line) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0;
+  color: var(--text-error);
+  font-size: var(--font-ui-small, 13px);
+  text-align: left !important;
+  cursor: pointer;
+}
+
+.modal.charinfo-attr-modal-shell
+  button.charinfo-attr-modal__danger-row:focus-visible {
+  outline: 2px solid var(--charinfo-accent);
+  outline-offset: -2px;
+}
+
+.charinfo-attr-modal__danger-icon {
+  display: grid;
+  place-items: center;
+  color: currentColor;
+}
+
+.charinfo-attr-modal__danger-icon svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+.charinfo-attr-modal__row.is-option .charinfo-attr-modal__dot {
+  width: 10px;
+  height: 10px;
+}
+
+/* --------------------------------------------------------- the type picker */
+
+/*
+ * One picker, opened from the ledger's type control and from the detail's
+ * 속성 종류 row. 44px rows; 20px icon, flexible label and a 24px check each on
+ * their own track, so the mark can never crowd the label. The 8px column gap
+ * stays on the same 4px spacing grid as the surrounding controls.
+ */
+.charinfo-attr-modal__type-menu {
+  position: fixed;
+  z-index: 30;
+  width: 236px;
+  max-width: calc(100vw - var(--size-4-4, 16px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid var(--charinfo-line);
+  border-radius: var(--charinfo-radius-lg);
+  background: var(--background-primary);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.24);
+}
+
+.charinfo-attr-modal__type-menu-head {
+  padding: var(--size-4-3, 12px) var(--size-4-3, 12px) var(--size-4-2, 8px);
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  font-weight: var(--font-semibold, 600);
+}
+
+button.charinfo-attr-modal__type-item {
+  display: grid;
+  grid-template-columns: var(--size-4-5, 20px) minmax(0, 1fr) var(--size-4-6, 24px);
+  column-gap: var(--size-4-2, 8px);
+  align-items: center;
+  width: 100%;
+  height: 44px;
+  padding: 0 var(--size-4-3, 12px);
+  appearance: none;
+  -webkit-appearance: none;
+  border: none !important;
+  border-top: 1px solid var(--charinfo-line) !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--charinfo-ink);
+  font-size: var(--font-ui-small, 13px);
+  text-align: left !important;
+  cursor: pointer;
+}
+
+button.charinfo-attr-modal__type-item:hover {
+  background: var(--background-modifier-hover) !important;
+}
+
+button.charinfo-attr-modal__type-item:focus-visible {
+  outline: 2px solid var(--charinfo-accent);
+  outline-offset: -2px;
+}
+
+.charinfo-attr-modal__type-item-icon,
+.charinfo-attr-modal__type-item-check {
+  display: grid;
+  place-items: center;
+}
+
+.charinfo-attr-modal__type-item-icon {
+  color: var(--icon-color, var(--text-muted));
+}
+
+.charinfo-attr-modal__type-item-check {
+  color: var(--charinfo-accent);
+}
+
+.charinfo-attr-modal__type-item-icon svg,
+.charinfo-attr-modal__type-item-check svg {
+  width: var(--icon-s, 16px);
+  height: var(--icon-s, 16px);
+}
+
+.charinfo-attr-modal__type-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Narrow: the ledger wraps its type control, the picker becomes a sheet. */
+@media (max-width: 460px) {
+  /*
+   * The chip cap lifts so one chip may own a full row. Nothing else changes —
+   * same heights, same order, same labels, same 24px targets; a long name just
+   * has the whole row to truncate inside instead of 18rem.
+   */
+  .charinfo-attr-modal__group-rail .charinfo-group-chip {
+    max-width: 100%;
+  }
+
+  .charinfo-attr-modal__fields .charinfo-attr-modal__row.is-field {
+    grid-template-columns:
+      var(--size-4-8, 32px)
+      minmax(0, 1fr)
+      var(--size-4-8, 32px);
+  }
+
+  .charinfo-attr-modal__fields
+    .charinfo-attr-modal__row.is-field
+    .charinfo-attr-modal__type-btn {
+    grid-column: 2;
+    margin-bottom: var(--size-4-2, 8px);
+  }
+
+  .charinfo-attr-modal__fields
+    .charinfo-attr-modal__row.is-field
+    .charinfo-attr-modal__row-remove,
+  .charinfo-attr-modal__fields
+    .charinfo-attr-modal__row.is-field.is-fixed
+    .charinfo-attr-modal__slot {
+    grid-column: 3;
+    grid-row: 1 / 3;
+  }
+
+  .charinfo-attr-modal__fields
+    .charinfo-attr-modal__row.is-field.is-add {
+    grid-template-columns:
+      var(--size-4-8, 32px)
+      minmax(0, 1fr)
+      var(--size-4-8, 32px)
+      var(--size-4-8, 32px);
+    row-gap: var(--size-4-2, 8px);
+  }
+
+  .charinfo-attr-modal__fields
+    .charinfo-attr-modal__row.is-field.is-add
+    .charinfo-attr-modal__add-name-cell {
+    grid-column: 2 / 5;
+    grid-row: 1;
+  }
+
+  .charinfo-attr-modal__fields
+    .charinfo-attr-modal__row.is-field.is-add
+    .charinfo-attr-modal__add-type-wrap {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .charinfo-attr-modal__fields
+    .charinfo-attr-modal__row.is-field.is-add
+    .charinfo-attr-modal__add-submit {
+    grid-column: 3;
+    grid-row: 2;
+  }
+
+  .charinfo-attr-modal__fields
+    .charinfo-attr-modal__row.is-field.is-add
+    .charinfo-attr-modal__add-cancel {
+    grid-column: 4;
+    grid-row: 2;
+  }
+
+  .charinfo-attr-modal__type-menu {
+    width: calc(100vw - var(--size-4-6, 24px));
+  }
+}
+
+/*
+ * 여러 캐릭터 그룹 이동 — selection mode, batch bar, destination dialog.
+ *
+ * Every surface here is a variant or a page-only primitive: the card keeps its
+ * own shell and only swaps its leading rail for a check, the bar and the dialog
+ * reuse `.charinfo-text-btn` and the existing token rhythm. No second skin, no
+ * new color system (DESIGN.md §1, §3).
+ */
+
+/* Card as checkbox — the drag handle is not rendered at all in this mode. */
+.charinfo-card--pick {
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.charinfo-card--pick:focus-visible {
+  outline: 2px solid var(--charinfo-accent);
+  outline-offset: 2px;
+}
+
+.charinfo-card.is-picked {
+  border-color: var(--charinfo-accent);
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--charinfo-accent) 18%, transparent);
+}
+
+/* Same box as the drag handle it replaces, so the rail does not jump modes. */
+.charinfo-card__pick {
+  position: absolute;
+  top: 0.4rem;
+  left: 0.4rem;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  border: 1px solid
+    color-mix(in srgb, var(--background-modifier-border) 55%, transparent);
+  border-radius: var(--charinfo-radius-sm);
+  background: color-mix(in srgb, var(--background-primary) 88%, transparent);
+  /* Unchecked shows the box only — the glyph appears with the state. */
+  color: transparent;
+}
+
+.charinfo-card.is-picked .charinfo-card__pick {
+  border-color: var(--charinfo-accent);
+  background: var(--charinfo-accent);
+  color: var(--text-on-accent, #fff);
+}
+
+.charinfo-card__pick svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2px;
+}
+
+/*
+ * Batch action bar — 64px, one count and two named actions.
+ *
+ * Attached to `.charinfo-gallery` (the only positioned ancestor), so it survives
+ * a body repaint from search or a chip. It stays put at zero selected; only the
+ * actions go truly `disabled`.
+ */
+.charinfo-batch-bar {
+  position: absolute;
+  z-index: 8;
+  left: 50%;
+  bottom: var(--charinfo-space-lg);
+  transform: translateX(-50%);
+  width: min(540px, calc(100% - 2 * var(--charinfo-space-lg)));
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: var(--charinfo-space-base);
+  padding: var(--charinfo-space-md) var(--charinfo-space-md)
+    var(--charinfo-space-md) var(--charinfo-space-base);
+  border: 1px solid var(--background-modifier-border-hover, var(--charinfo-line));
+  border-radius: var(--radius-l, 12px);
+  background: var(--background-primary);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--charinfo-ink) 8%, transparent),
+    0 12px 32px color-mix(in srgb, var(--charinfo-ink) 14%, transparent);
+}
+
+.charinfo-batch-bar__count {
+  min-width: 0;
+  font-size: var(--font-ui-small, 13px);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.charinfo-batch-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--charinfo-space-xs);
+  margin-left: auto;
+  min-width: 0;
+}
+
+.charinfo-batch-bar .charinfo-text-btn {
+  white-space: nowrap;
+}
+
+.charinfo-batch-bar__clear {
+  border-color: transparent;
+  background: transparent;
+  color: var(--charinfo-muted);
+}
+
+.charinfo-batch-bar__clear:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+  color: var(--charinfo-ink);
+}
+
+/*
+ * `.charinfo-text-btn` sets its own surface, and this stylesheet loads after
+ * app.css — so the primary variant has to restate Obsidian's CTA chrome to win
+ * on specificity. Same tokens, no new colors.
+ */
+.charinfo-batch-bar__move.mod-cta,
+.charinfo-batch-dialog__confirm.mod-cta {
+  border-color: var(--interactive-accent);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.charinfo-batch-bar__move.mod-cta:hover:not(:disabled),
+.charinfo-batch-dialog__confirm.mod-cta:hover:not(:disabled) {
+  background: var(--interactive-accent-hover, var(--interactive-accent));
+}
+
+/* Content clearance equal to the bar's own footprint. */
+.charinfo-gallery.is-batch .charinfo-gallery__main {
+  padding-bottom: calc(64px + 2 * var(--charinfo-space-lg));
+}
+
+/*
+ * Destination dialog — centered and contained on desktop, bottom sheet when
+ * narrow. It owns zero X buttons: 취소 and 이동 are the whole vocabulary.
+ */
+.charinfo-batch-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--charinfo-ink) 26%, transparent);
+  animation: charinfo-scrim-in 160ms ease-out;
+}
+
+.charinfo-batch-dialog {
+  position: absolute;
+  z-index: 11;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100% - 2 * var(--charinfo-space-lg)));
+  max-height: calc(100% - 2 * var(--charinfo-space-xl));
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border-hover, var(--charinfo-line));
+  border-radius: var(--radius-l, 12px);
+  background: var(--background-primary);
+  box-shadow:
+    0 2px 8px color-mix(in srgb, var(--charinfo-ink) 10%, transparent),
+    0 22px 60px color-mix(in srgb, var(--charinfo-ink) 20%, transparent);
+}
+
+.charinfo-batch-dialog__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--charinfo-space-md);
+  padding: var(--charinfo-space-lg);
+  border-bottom: 1px solid var(--charinfo-line);
+}
+
+.charinfo-batch-dialog__title {
+  min-width: 0;
+  font-size: var(--font-ui-medium, 15px);
+  font-weight: 700;
+}
+
+.charinfo-batch-dialog__count {
+  margin-left: auto;
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  white-space: nowrap;
+}
+
+.charinfo-group-rename-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--charinfo-space-sm);
+  padding: var(--charinfo-space-lg);
+}
+
+.charinfo-group-rename-dialog__label {
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  font-weight: 650;
+}
+
+.charinfo-group-rename-dialog__input {
+  width: 100%;
+  height: 40px;
+  min-width: 0;
+  padding: 0 var(--charinfo-space-md);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 6px);
+  background: var(--background-primary);
+  color: var(--charinfo-ink);
+}
+
+.charinfo-group-rename-dialog__input:focus {
+  border-color: var(--charinfo-accent);
+  outline: none;
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--charinfo-accent) 18%, transparent);
+}
+
+.charinfo-group-rename-dialog__input[aria-invalid="true"] {
+  border-color: var(--text-error);
+}
+
+.charinfo-group-rename-dialog__error {
+  min-height: 1.35em;
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1.35;
+}
+
+.charinfo-batch-dialog__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--charinfo-space-md);
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--charinfo-space-xs);
+}
+
+.charinfo-batch-dialog__dest {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--charinfo-space-md);
+  width: 100%;
+  /* DESIGN.md §1 — 44px primary text row; a meta line grows it from there. */
+  min-height: 44px;
+  height: auto;
+  padding: var(--charinfo-space-md) var(--charinfo-space-base);
+  scroll-margin: var(--charinfo-space-xs);
+  border: 1px solid transparent;
+  border-radius: var(--charinfo-radius-lg);
+  background: transparent;
+  box-shadow: none;
+  color: var(--charinfo-ink);
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.charinfo-batch-dialog__dest:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+}
+
+.charinfo-batch-dialog__dest.is-chosen {
+  border-color: color-mix(
+    in srgb,
+    var(--charinfo-accent) 34%,
+    var(--charinfo-line)
+  );
+  background: color-mix(
+    in srgb,
+    var(--charinfo-accent) 10%,
+    var(--background-primary)
+  );
+}
+
+.charinfo-batch-dialog__dest:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.charinfo-batch-dialog__dest:focus-visible {
+  outline: 2px solid var(--charinfo-accent);
+  outline-offset: 2px;
+}
+
+.charinfo-batch-dialog__radio {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid
+    var(--background-modifier-border-hover, var(--charinfo-line));
+  border-radius: 50%;
+}
+
+.charinfo-batch-dialog__dest.is-chosen .charinfo-batch-dialog__radio {
+  border-color: var(--charinfo-accent);
+}
+
+.charinfo-batch-dialog__dest.is-chosen .charinfo-batch-dialog__radio::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--charinfo-accent);
+}
+
+.charinfo-batch-dialog__dest-text {
+  min-width: 0;
+  white-space: normal;
+}
+
+.charinfo-batch-dialog__dest-name {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: var(--font-ui-small, 13px);
+  font-weight: 680;
+}
+
+.charinfo-batch-dialog__dest-meta {
+  display: block;
+  margin-top: var(--charinfo-space-xxs);
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.charinfo-batch-dialog__dest-total {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller, 12px);
+  white-space: nowrap;
+}
+
+.charinfo-batch-dialog__empty {
+  padding: var(--charinfo-space-md) var(--charinfo-space-lg)
+    var(--charinfo-space-base);
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1.45;
+}
+
+.charinfo-batch-dialog__foot {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--charinfo-space-md);
+  padding: var(--charinfo-space-base) var(--charinfo-space-lg)
+    var(--charinfo-space-lg);
+  border-top: 1px solid var(--charinfo-line);
+}
+
+.charinfo-batch-dialog__foot .charinfo-text-btn {
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Saving: the dialog is locked, so it says so and stops taking input. */
+.charinfo-batch-dialog__saving {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  align-items: center;
+  justify-content: center;
+  gap: var(--charinfo-space-base);
+  padding: var(--charinfo-space-lg);
+  background: color-mix(in srgb, var(--background-primary) 84%, transparent);
+  font-size: var(--font-ui-small, 13px);
+  font-weight: 650;
+  text-align: center;
+}
+
+.charinfo-batch-dialog.is-saving .charinfo-batch-dialog__saving {
+  display: flex;
+}
+
+.charinfo-batch-dialog__spinner {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--charinfo-line);
+  border-top-color: var(--charinfo-accent);
+  border-radius: 50%;
+  animation: charinfo-batch-spin 800ms linear infinite;
+}
+
+@keyframes charinfo-batch-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Narrow: bottom sheet, safe-area inset, and no horizontal overflow at 320px. */
+.charinfo-gallery.is-narrow .charinfo-batch-bar {
+  left: var(--charinfo-space-md);
+  right: var(--charinfo-space-md);
+  width: auto;
+  max-width: none;
+  transform: none;
+  bottom: calc(var(--charinfo-space-md) + env(safe-area-inset-bottom, 0px));
+}
+
+.charinfo-gallery.is-narrow.is-batch .charinfo-gallery__main {
+  padding-bottom: calc(
+    64px + 2 * var(--charinfo-space-md) + env(safe-area-inset-bottom, 0px)
+  );
+}
+
+/*
+ * Phone Notice rail is bottom-anchored (DESIGN.md §2), exactly where the bar
+ * sits. Runtime measures the actual Notice rail, including wrapped error copy,
+ * and publishes a lift that keeps at least 12px of visual separation.
+ */
+.charinfo-gallery.is-narrow.is-batch-notice .charinfo-batch-bar {
+  bottom: var(--charinfo-batch-notice-lift, 80px);
+}
+
+.charinfo-gallery.is-narrow .charinfo-batch-dialog {
+  top: auto;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  max-height: 88%;
+  transform: none;
+  border-right: none;
+  border-bottom: none;
+  border-left: none;
+  border-radius: var(--radius-l, 12px) var(--radius-l, 12px) 0 0;
+  animation: charinfo-sheet-in 200ms ease-out;
+}
+
+.charinfo-gallery.is-narrow .charinfo-batch-dialog__foot {
+  padding-bottom: calc(
+    var(--size-4-8, 32px) + env(safe-area-inset-bottom, 0px)
+  );
+}
+
+@media (max-width: 400px) {
+  .charinfo-batch-bar {
+    flex-wrap: wrap;
+    row-gap: var(--charinfo-space-md);
+  }
+
+  .charinfo-batch-bar__actions {
+    margin-left: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .charinfo-batch-scrim,
+  .charinfo-gallery.is-narrow .charinfo-batch-dialog {
+    animation: none;
+  }
+
+  .charinfo-batch-dialog__spinner {
+    animation: none;
+  }
+}

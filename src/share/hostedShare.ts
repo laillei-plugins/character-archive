@@ -1,4 +1,10 @@
 import { requestUrl } from "obsidian";
+import {
+  hostedShareBaseFromUrl,
+  uploadKeyForHostedTarget,
+} from "./webShareState";
+
+export { hostedShareBaseFromUrl, uploadKeyForHostedTarget };
 
 export type HostedShareTtl = "7d" | "30d" | "permanent";
 
@@ -26,6 +32,7 @@ export function hostedShareIdFromUrl(url: string): string {
   return m?.[1] ?? "";
 }
 
+/** The API shares the public page origin; keep old links manageable after a setting change. */
 function authHeaders(
   opts: { uploadKey?: string; manageKey?: string; ttl?: HostedShareTtl },
 ): Record<string, string> {
@@ -107,7 +114,7 @@ export async function uploadToHostedShare(
 ): Promise<HostedShareResult> {
   const base = normalizeBase(opts.baseUrl);
   if (!isHostedShareConfigured(base)) {
-    throw new Error("공유 서버 주소가 없어요. 설정에서 workers.dev URL을 넣으세요.");
+    throw new Error("공유 서버 주소가 없어요. 설정에서 공유 주소를 확인하세요.");
   }
 
   const res = await requestUrl({

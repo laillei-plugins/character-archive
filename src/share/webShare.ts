@@ -1,16 +1,34 @@
 import { App, requestUrl } from "obsidian";
 import type { CharacterRecord } from "../data/CharacterStore";
 import { resolveCover, isRemoteCoverUrl } from "../data/images";
+import type { CardPropertyPref } from "../data/cardProperties";
 import {
-  propertyLabel,
-  propertyValue,
-  visibleCardProperties,
-  CARD_PROPERTY_DEFS,
-  type CardPropertyPref,
-} from "../data/cardProperties";
+  CHIP_AXIS_FIELD_IDS,
+  effectiveActiveFields,
+  fieldLabel,
+  fieldValue,
+  isFieldVisible,
+  normalizeArchiveKey,
+  projectSchemaFields,
+  resolveGroupSchema,
+  type GroupSchemaStore,
+} from "../data/groupSchema";
+import type { FilterAxisSource } from "../data/filterAxis";
 import { parseDetailDoc, type DetailProp } from "../ui/cleanBody";
 import {
+  isShareSurfaceField,
+  projectShareCard,
+  projectShareStatus,
+  projectShareTags,
+  publishedTagIds,
+  type ShareAxisOptions,
+  type ShareFieldInput,
+  type ShareTagProjection,
+} from "./shareProjection";
+import {
   DEFAULT_STATUSES,
+  axisFor,
+  normalizeStatusColor,
   recordAxisValue,
   resolveAxisOption,
   resolveStatus,
@@ -34,10 +52,20 @@ export interface ShareCard {
   id: string;
   title: string;
   status: string;
+  /** False when this record's resolved schema deactivates 상태. */
+  showStatus: boolean;
   /** Resolved primary-filter option id (equals `status` when axis = status). */
   filterValue: string;
-  /** Tag ids from `태그` — display only; the public page has no tag filter. */
-  tagIds: string[];
+  /**
+   * Tag ids for the **card** cluster. Empty when `태그` is inactive in this
+   * card's group schema, or when its card eye is off.
+   */
+  cardTagIds: string[];
+  /**
+   * Tag ids for the **side panel**. Empty only when `태그` is inactive — card
+   * eyes are a card-preview rule and never narrow the panel.
+   */
+  detailTagIds: string[];
   group: string;
   coverDataUrl: string | null;
   coverPosition: string;
@@ -64,15 +92,17 @@ export interface SharePayload {
   filterProperty: string;
   /** Vocabulary for the primary-filter pill (id / label / color token). */
   filterOptions: StatusDef[];
-  /** Tag vocabulary (id → label) for rendering tag chips. */
+  /**
+   * Tag vocabulary (id → label) for rendering tag chips. Published from the
+   * union of every card's `cardTagIds` + `detailTagIds` — an id no surface shows
+   * never reaches the public page.
+   */
   tagVocab: TagDef[];
-  /** Render the tag cluster on cards (tag eye on, or tags is the axis). */
-  showTags: boolean;
   /** Named group display order (empty/`미분류` last). */
   groupOrder: string[];
   /** Selected side-panel headers (「속성」 + note H2 titles). */
   panelHeaders: string[];
-  /** Status vocabulary — always published for the 속성 panel row. */
+  /** Status vocabulary used by at least one active status surface. */
   statuses: StatusDef[];
   exportedAt: string;
   cards: ShareCard[];
@@ -296,7 +326,10 @@ export async function buildSharePayload(
     groupOrder?: string[];
     /** Side panel headers to include (「속성」, note H2s, 프롬프트…). */
     panelHeaders?: string[];
-    /** When 「속성」 included: eyes vs all frontmatter. */
+    /**
+     * Legacy panel mode. `"preview"` is accepted and behaves as `"all"` — the
+     * panel is never narrowed by card eyes.
+     */
     panelProps?: "preview" | "all";
     statuses?: StatusDef[];
     /** Primary filter axis; card pills follow it. Defaults to status. */
@@ -304,7 +337,23 @@ export async function buildSharePayload(
     filterOptions?: StatusDef[];
     /** Tag vocabulary for `태그` chips. */
     tagVocab?: TagDef[];
+    /**
+     * Every chip-axis vocabulary, not just the primary one. Without it a
+     * non-primary built-in (관계 / 인연 / 소속) would publish its stored option
+     * **id** instead of the label the user renamed it to.
+     */
+    axisSource?: FilterAxisSource;
     propertyDisplayNames?: import("../data/propertyLabels").PropertyDisplayNames;
+    /**
+     * Group-schema source. When given, each card publishes its own group's
+     * active fields (custom ones included, tombstones never) and the card eyes
+     * scoped to `pagePath` + the card's archive.
+     */
+    schemaSource?: GroupSchemaStore;
+    /** Library folder of the source gallery page — half the schema scope. */
+    library?: string;
+    /** Gallery page path — card eyes are stored per page + archive. */
+    pagePath?: string;
   },
 ): Promise<SharePayload> {
   const statuses =
@@ -324,13 +373,46 @@ export async function buildSharePayload(
   const panelProps = opts.panelProps === "preview" ? "preview" : "all";
   const includeAttrs = panelHeaders.has("속성");
   const includePrompts = panelHeaders.has("프롬프트");
-  const visible = visibleCardProperties(opts.cardProperties);
+  const pagePath = opts.pagePath ?? "";
+  /**
+   * Schema scope. Without a source (older callers) every group falls back to the
+   * built-in baseline in `cardProperties` order, and — with no visibility rows —
+   * every card publishes the missing-row default: `name` and `status` only.
+   */
+  const schemaSource: GroupSchemaStore = opts.schemaSource ?? {
+    cardProperties: opts.cardProperties,
+    propertyDisplayNames: opts.propertyDisplayNames,
+    groupSchemas: [],
+    fieldKeyLedgers: [],
+    cardFieldVisibility: [],
+    cardFieldOrder: [],
+  };
   const tagVocab = opts.tagVocab ?? [];
-  // Tags drive the chip row → always shown, matching the gallery.
-  const showTags =
-    filterProperty === "tags" || visible.some((p) => p.id === "tags");
+  /**
+   * One vocabulary per chip axis, resolved exactly the way the gallery does
+   * (`axisFor`). Older callers without an `axisSource` keep the narrow behavior:
+   * status and tags from their own lists, the primary axis from `filterOptions`.
+   */
+  const axisOptions: ShareAxisOptions = {};
+  for (const id of CHIP_AXIS_FIELD_IDS) {
+    if (opts.axisSource) {
+      axisOptions[id] = axisFor(
+        opts.axisSource,
+        id as PrimaryFilterProperty,
+      ).options;
+      continue;
+    }
+    axisOptions[id] =
+      id === "status"
+        ? statuses
+        : id === "tags"
+          ? tagVocab.map((tag) => ({ id: tag.id, label: tag.label }))
+          : id === filterProperty
+            ? filterOptions
+            : [];
+  }
+  const tagProjections: ShareTagProjection[] = [];
   const cards: ShareCard[] = [];
-
   for (const record of records) {
     const markdown = await app.vault.cachedRead(record.file);
     const doc = parseDetailDoc(markdown);
@@ -368,49 +450,80 @@ export async function buildSharePayload(
       });
     }
 
-    // Card strip: always Obsidian eye toggles.
-    const props: DetailProp[] = [];
-    for (const pref of visible) {
-      if (pref.id === "name" || pref.id === "status") continue;
-      // Tags render as a chip cluster, not a text row.
-      if (pref.id === "tags") continue;
-      const value = propertyValue(record, pref.id).trim();
-      if (!value) continue;
-      props.push({
-        label: propertyLabel(pref.id, opts.propertyDisplayNames),
-        value,
-      });
-    }
+    // One resolver for both sides: this card's group decides which fields exist.
+    const schema = resolveGroupSchema(
+      schemaSource,
+      opts.library ?? "",
+      normalizeArchiveKey(record.장르),
+      record.그룹,
+    );
+    const fields = projectSchemaFields(
+      effectiveActiveFields(schema).map((field) => field.id),
+      schema,
+    );
+    const resolvedStatus = resolveStatus(statuses, record.상태).id;
+    const status = projectShareStatus({
+      statusId: resolvedStatus,
+      active: fields.some((field) => field.id === "status"),
+    });
+    const filterActive = fields.some(
+      (field) => field.id === filterProperty,
+    );
+    // name = the card title, status = the pill, tags = the chip cluster.
+    const inputs: ShareFieldInput[] = fields
+      .filter((field) => !isShareSurfaceField(field.id))
+      .map((field) => ({
+        id: field.id,
+        label: fieldLabel(field, opts.propertyDisplayNames),
+        type: field.type,
+        options: field.options,
+        raw: fieldValue(record, field),
+        cardVisible: isFieldVisible(
+          schemaSource,
+          pagePath,
+          record.장르,
+          field.id,
+        ),
+      }));
+    // Card strip = schema ∩ eyes; side panel = schema alone.
+    const { props, detailProps } = projectShareCard({
+      fields: inputs,
+      axisOptions,
+      panelProps,
+      includeAttrs,
+    });
 
-    const detailProps: DetailProp[] = [];
-    if (includeAttrs) {
-      const panelSource =
-        panelProps === "all" ? CARD_PROPERTY_DEFS : visible;
-      for (const pref of panelSource) {
-        const id = pref.id;
-        if (id === "name" || id === "status" || id === "tags") continue;
-        const value = propertyValue(record, id).trim();
-        if (!value) continue;
-        detailProps.push({
-          label: propertyLabel(id, opts.propertyDisplayNames),
-          value,
-        });
-      }
+    // Tags: the schema gates both surfaces, the eye gates the card only.
+    // Tags driving the chip row keep the gallery's "always shown" rule.
+    const tags = projectShareTags({
+      tagIds: record.태그,
+      active: fields.some((field) => field.id === "tags"),
+      cardVisible:
+        filterProperty === "tags" ||
+        isFieldVisible(schemaSource, pagePath, record.장르, "tags"),
+    });
+    tagProjections.push(tags);
+
+    let filterValue = "";
+    if (filterActive && filterProperty !== "tags") {
+      filterValue =
+        filterProperty === "status"
+          ? status.filterValue
+          : resolveAxisOption(
+              filterAxis,
+              recordAxisValue(record, filterProperty),
+            ).id;
     }
 
     cards.push({
       id: `c${cards.length + 1}`,
       title: record.title,
-      status: resolveStatus(statuses, record.상태).id,
-      filterValue:
-        filterProperty === "tags"
-          ? // Multi-value axis has no single pill — the cluster carries it.
-            ""
-          : resolveAxisOption(
-              filterAxis,
-              recordAxisValue(record, filterProperty),
-            ).id,
-      tagIds: [...record.태그],
+      status: status.status,
+      showStatus: status.showStatus,
+      // Multi-value tags use the cluster; dormant axes publish no pill.
+      filterValue,
+      cardTagIds: tags.cardTagIds,
+      detailTagIds: tags.detailTagIds,
       group: record.그룹 || "미분류",
       coverDataUrl: await coverDataUrl(app, record, markdown),
       coverPosition: record.coverPosition || "50% 50%",
@@ -422,28 +535,31 @@ export async function buildSharePayload(
     });
   }
 
-  const usedStatusIds = new Set(cards.map((c) => c.status));
+  const usedStatusIds = new Set(
+    cards.filter((card) => card.showStatus).map((card) => card.status),
+  );
   const usedFilterIds = new Set(
     cards.map((c) => c.filterValue).filter(Boolean),
   );
-  const usedTagIds = new Set(cards.flatMap((c) => c.tagIds));
+  const usedTagIds = new Set(publishedTagIds(tagProjections));
 
   return {
     title: opts.title,
     genre: opts.genre,
     chipFilter: opts.chipFilter,
     filterProperty,
+    // Colors are re-normalized on the way out: the published HTML must only
+    // ever carry a known preset token or a canonical `#RRGGBB`.
     filterOptions: filterOptions
       .filter((s) => usedFilterIds.has(s.id) || usedStatusIds.has(s.id))
       .map((s) => ({
         id: s.id,
         label: s.label,
-        color: s.color,
+        color: normalizeStatusColor(s.color),
       })),
     tagVocab: tagVocab
       .filter((t) => usedTagIds.has(t.id))
       .map((t) => ({ id: t.id, label: t.label })),
-    showTags,
     groupOrder: opts.groupOrder ?? [],
     panelHeaders: [...panelHeaders],
     statuses: statuses
@@ -451,7 +567,7 @@ export async function buildSharePayload(
       .map((s) => ({
         id: s.id,
         label: s.label,
-        color: s.color,
+        color: normalizeStatusColor(s.color),
       })),
     exportedAt: new Date().toISOString(),
     cards,
@@ -466,8 +582,14 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** Bump when share page layout/tokens change — invalidates cached lastUrl. */
-export const SHARE_HTML_VERSION = 8;
+/**
+ * Bump when share page layout/tokens **or the payload's privacy shape** change
+ * — invalidates cached lastUrl so an already-published page is not offered as
+ * current. 9: tags split into card / panel surfaces (`showTags` removed).
+ * 10: twelve preset color tokens + custom `#RRGGBB` chips.
+ * 11: schema-gated status surfaces + shared page/archive field order.
+ */
+export const SHARE_HTML_VERSION = 12;
 
 /** Self-contained read-only gallery HTML.
  * Visual language: Apple HIG (clarity / deference / depth) + Obsidian DESIGN.md tokens
@@ -519,6 +641,14 @@ export function renderShareHtml(payload: SharePayload): string {
   --status-cyan-bg: color-mix(in srgb, #0e7490 14%, #f7f7f7);
   --status-pink: #be185d;
   --status-pink-bg: color-mix(in srgb, #be185d 14%, #f7f7f7);
+  --status-olive: #5c6b21;
+  --status-olive-bg: color-mix(in srgb, #5c6b21 14%, #f7f7f7);
+  --status-indigo: #4f46e5;
+  --status-indigo-bg: color-mix(in srgb, #4f46e5 14%, #f7f7f7);
+  --status-lime: #4d7c0f;
+  --status-lime-bg: color-mix(in srgb, #4d7c0f 14%, #f7f7f7);
+  --status-yellow: #ca8a04;
+  --status-yellow-bg: color-mix(in srgb, #ca8a04 14%, #f7f7f7);
   --hover: rgba(0,0,0,0.04);
   --shadow-inspector: 0 0 0 1px color-mix(in srgb, #000 4%, transparent),
     0 8px 28px rgba(0,0,0,0.06);
@@ -562,6 +692,14 @@ export function renderShareHtml(payload: SharePayload): string {
     --status-cyan-bg: color-mix(in srgb, #0e7490 22%, #1e1e1e);
     --status-pink: #f472b6;
     --status-pink-bg: color-mix(in srgb, #be185d 22%, #1e1e1e);
+    --status-olive: #b6c46a;
+    --status-olive-bg: color-mix(in srgb, #5c6b21 22%, #1e1e1e);
+    --status-indigo: #818cf8;
+    --status-indigo-bg: color-mix(in srgb, #4f46e5 22%, #1e1e1e);
+    --status-lime: #a3e635;
+    --status-lime-bg: color-mix(in srgb, #4d7c0f 22%, #1e1e1e);
+    --status-yellow: #facc15;
+    --status-yellow-bg: color-mix(in srgb, #ca8a04 22%, #1e1e1e);
     --hover: rgba(255,255,255,0.06);
     --shadow-inspector: inset 1px 0 0 var(--hairline);
   }
@@ -781,6 +919,22 @@ button {
 .status.is-cyan .status__dot { background: var(--status-cyan); }
 .status.is-pink { background: var(--status-pink-bg); color: var(--status-pink); font-weight: 600; }
 .status.is-pink .status__dot { background: var(--status-pink); }
+.status.is-olive { background: var(--status-olive-bg); color: var(--status-olive); font-weight: 600; }
+.status.is-olive .status__dot { background: var(--status-olive); }
+.status.is-indigo { background: var(--status-indigo-bg); color: var(--status-indigo); font-weight: 600; }
+.status.is-indigo .status__dot { background: var(--status-indigo); }
+.status.is-lime { background: var(--status-lime-bg); color: var(--status-lime); font-weight: 600; }
+.status.is-lime .status__dot { background: var(--status-lime); }
+.status.is-yellow { background: var(--status-yellow-bg); color: var(--status-yellow); font-weight: 600; }
+.status.is-yellow .status__dot { background: var(--status-yellow); }
+/* Custom color: the dot keeps the exact hue, text is pulled toward the page ink
+ * so a very light or very dark pick stays readable in both schemes. */
+.status.is-custom {
+  background: color-mix(in srgb, var(--status-ink, var(--status-gray)) 14%, var(--surface-1));
+  color: color-mix(in srgb, var(--status-ink, var(--status-gray)) 58%, var(--ink));
+  font-weight: 600;
+}
+.status.is-custom .status__dot { background: var(--status-ink, var(--status-gray)); }
 .inspector__bar {
   position: sticky;
   top: 0;
@@ -1037,10 +1191,34 @@ function resolveShareStatus(status) {
   return { id: status || "Off", label: status || "Off", color: "gray" };
 }
 
+// A list, not a lookup object: an inherited key like "constructor" would read
+// as a known preset and land in the class name.
+var STATUS_PRESETS = [
+  "green", "gray", "amber", "blue", "red", "violet",
+  "cyan", "pink", "olive", "indigo", "lime", "yellow"
+];
+var STATUS_HEX = /^#[0-9A-Fa-f]{6}$/;
+
+/**
+ * The one place a payload color becomes chip styling. A custom color is
+ * re-validated here and handed to the CSSOM as a single variable, so no
+ * payload text can ever land in a class name or a stylesheet.
+ */
+function paintStatus(el, color) {
+  var value = typeof color === "string" ? color.trim() : "";
+  if (STATUS_HEX.test(value)) {
+    el.className = "status is-custom";
+    el.style.setProperty("--status-ink", value.toUpperCase());
+    return;
+  }
+  el.className =
+    "status is-" + (STATUS_PRESETS.indexOf(value) >= 0 ? value : "gray");
+}
+
 function makeStatus(status) {
   var def = resolveShareStatus(status);
   var el = document.createElement("span");
-  el.className = "status is-" + (def.color || "gray");
+  paintStatus(el, def.color);
   el.innerHTML = '<span class="status__dot"></span>' + esc(def.label || status || "Off");
   return el;
 }
@@ -1057,7 +1235,7 @@ function makeFilterPill(value) {
     def = { id: value || "Off", label: value || "Off", color: "gray" };
   }
   var el = document.createElement("span");
-  el.className = "status is-" + (def.color || "gray");
+  paintStatus(el, def.color);
   el.innerHTML = '<span class="status__dot"></span>' + esc(def.label);
   return el;
 }
@@ -1140,12 +1318,16 @@ function render() {
       name.className = "card__name";
       name.textContent = card.title || "";
       meta.appendChild(name);
-      var pill = makeFilterPill(card.filterValue != null ? card.filterValue : card.status);
+      // A dormant status keeps its stored value but owns no public surface.
+      // Older payloads omit showStatus, so only an explicit false suppresses
+      // the legacy status pill.
+      var pill = card.showStatus === false && (DATA.filterProperty || "status") === "status"
+        ? null
+        : makeFilterPill(card.filterValue != null ? card.filterValue : card.status);
       if (pill) meta.appendChild(pill);
-      if (DATA.showTags) {
-        var tagCluster = makeTagCluster(card.tagIds, 3);
-        if (tagCluster) meta.appendChild(tagCluster);
-      }
+      // Card cluster: schema-active tags whose card eye is on. Empty = nothing.
+      var tagCluster = makeTagCluster(card.cardTagIds, 3);
+      if (tagCluster) meta.appendChild(tagCluster);
 
       const props = (card.props || []).filter(function (p) { return p && p.value; });
       if (props.length) {
@@ -1243,16 +1425,20 @@ function select(id) {
     propsLabel.textContent = "속성";
     props.appendChild(propsLabel);
 
-    const statusRow = document.createElement("div");
-    statusRow.className = "prop";
-    statusRow.innerHTML = '<div class="prop__k">상태</div>';
-    const statusVal = document.createElement("div");
-    statusVal.className = "prop__v";
-    statusVal.appendChild(makeStatus(card.status));
-    statusRow.appendChild(statusVal);
-    props.appendChild(statusRow);
+    // Older payloads predate showStatus and keep their historical status row.
+    if (card.showStatus !== false) {
+      const statusRow = document.createElement("div");
+      statusRow.className = "prop";
+      statusRow.innerHTML = '<div class="prop__k">상태</div>';
+      const statusVal = document.createElement("div");
+      statusVal.className = "prop__v";
+      statusVal.appendChild(makeStatus(card.status));
+      statusRow.appendChild(statusVal);
+      props.appendChild(statusRow);
+    }
 
-    var peekTags = makeTagCluster(card.tagIds, 0);
+    // Panel cluster: every schema-active tag — card eyes do not apply here.
+    var peekTags = makeTagCluster(card.detailTagIds, 0);
     if (peekTags) {
       const tagRow = document.createElement("div");
       tagRow.className = "prop";

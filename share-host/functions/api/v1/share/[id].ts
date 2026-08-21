@@ -1,51 +1,21 @@
-/** @typedef {{ GALLERIES: KVNamespace, UPLOAD_KEY?: string }} Env */
-
-const MAX_BYTES = 12_000_000;
-
-/**
- * @param {string | null} raw
- * @returns {"7d" | "30d" | "permanent"}
- */
-function parseTtl(raw) {
-  if (raw === "7d" || raw === "30d" || raw === "permanent") return raw;
-  return "30d";
-}
-
-/** @param {"7d" | "30d" | "permanent"} ttl */
-function ttlSeconds(ttl) {
-  if (ttl === "7d") return 7 * 86400;
-  if (ttl === "30d") return 30 * 86400;
-  return 365 * 86400;
-}
-
-/**
- * @param {Request} request
- * @param {Env} env
- */
-function authorizeUpload(request, env) {
-  const key = env.UPLOAD_KEY?.trim();
-  if (!key) return false;
-  const header = request.headers.get("authorization") || "";
-  const m = header.match(/^Bearer\s+(.+)$/i);
-  return Boolean(m && m[1]?.trim() === key);
-}
-
-/**
- * @param {Request} request
- */
-function manageKeyFrom(request) {
-  return (
-    request.headers.get("x-charinfo-manage-key")?.trim() ||
-    ""
-  );
-}
+import {
+  authorizeUpload,
+  isCharacterArchiveHtml,
+  isValidShareId,
+  manageKeyFrom,
+  maxBytes,
+  parseTtl,
+  routeId,
+  ttlSeconds,
+  type Env,
+} from "../../../_lib/share";
 
 /**
  * @param {Request} request
  * @param {Env} env
  * @param {string} id
  */
-async function assertCanManage(request, env, id) {
+async function assertCanManage(request: Request, env: Env, id: string) {
   const meta = await env.GALLERIES.getWithMetadata(`g:${id}`);
   if (meta.value == null) {
     return { ok: false, status: 404, error: "not found", meta: null };
@@ -71,9 +41,13 @@ async function assertCanManage(request, env, id) {
  * PUT /api/v1/share/:id — overwrite HTML; same public URL.
  * @param {{ request: Request, env: Env, params: { id: string } }} context
  */
-export async function onRequestPut({ request, env, params }) {
-  const id = String(params.id || "").trim();
-  if (!/^[a-z0-9]+$/i.test(id)) {
+export const onRequestPut: PagesFunction<Env, "id"> = async ({
+  request,
+  env,
+  params,
+}) => {
+  const id = routeId(params.id);
+  if (!isValidShareId(id)) {
     return Response.json({ ok: false, error: "bad id" }, { status: 400 });
   }
 
@@ -86,19 +60,25 @@ export async function onRequestPut({ request, env, params }) {
   if (!buf.byteLength) {
     return Response.json({ ok: false, error: "empty body" }, { status: 400 });
   }
-  if (buf.byteLength > MAX_BYTES) {
+  if (buf.byteLength > maxBytes(env)) {
     return Response.json({ ok: false, error: "too large" }, { status: 413 });
   }
 
-  const prevMeta =
+  const prevMeta: Record<string, string> =
     gate.meta?.metadata && typeof gate.meta.metadata === "object"
-      ? /** @type {Record<string, string>} */ (gate.meta.metadata)
+      ? (gate.meta.metadata as Record<string, string>)
       : {};
   const ttl = parseTtl(
     request.headers.get("x-charinfo-ttl") || prevMeta.ttl || "30d",
   );
   const seconds = ttlSeconds(ttl);
   const html = new TextDecoder().decode(buf);
+  if (!isCharacterArchiveHtml(html)) {
+    return Response.json(
+      { ok: false, error: "invalid Character Archive share" },
+      { status: 400 },
+    );
+  }
   const expiresAt =
     ttl === "permanent" ? null : new Date(Date.now() + seconds * 1000).toISOString();
   const manageKey = prevMeta.manageKey || manageKeyFrom(request);
@@ -124,15 +104,19 @@ export async function onRequestPut({ request, env, params }) {
     ttl,
     updated: true,
   });
-}
+};
 
 /**
  * DELETE /api/v1/share/:id — unpublish (link 404 afterwards).
  * @param {{ request: Request, env: Env, params: { id: string } }} context
  */
-export async function onRequestDelete({ request, env, params }) {
-  const id = String(params.id || "").trim();
-  if (!/^[a-z0-9]+$/i.test(id)) {
+export const onRequestDelete: PagesFunction<Env, "id"> = async ({
+  request,
+  env,
+  params,
+}) => {
+  const id = routeId(params.id);
+  if (!isValidShareId(id)) {
     return Response.json({ ok: false, error: "bad id" }, { status: 400 });
   }
 
@@ -143,4 +127,4 @@ export async function onRequestDelete({ request, env, params }) {
 
   await env.GALLERIES.delete(`g:${id}`);
   return Response.json({ ok: true, id, deleted: true });
-}
+};
