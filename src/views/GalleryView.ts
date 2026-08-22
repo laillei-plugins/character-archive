@@ -137,6 +137,11 @@ import { renderLivePeekBody } from "../ui/livePeekBody";
 import { CoverPickerModal } from "../ui/CoverPickerModal";
 import { CREATE_GALLERY_NAME } from "../ui/commandSurface";
 import { CreateGalleryModal } from "../ui/CreateGalleryModal";
+import {
+  captureEditScrollAnchor,
+  restoreEditScrollTop,
+  type EditScrollAnchor,
+} from "../ui/editScrollKeep";
 import { RenameGenreModal } from "../ui/RenameGenreModal";
 import { attachHoldDrag } from "../ui/holdDrag";
 import { TagChecklistPopover } from "../ui/TagChecklistPopover";
@@ -2425,6 +2430,7 @@ export class GalleryView extends FileView {
       return;
     }
     const turningOn = enabled && !this.editMode;
+    const scrollAnchor = this.captureEditScroll();
     // Selection mode exists only inside Gallery Edit — leaving takes it down.
     if (!enabled) this.teardownBatchMode();
     if (!enabled) this.closeGroupRenameDialog();
@@ -2436,6 +2442,46 @@ export class GalleryView extends FileView {
         "위쪽 「표시 순서」에서 정렬을 고르고, 카드의 이미지 아이콘으로 커버를 바꿔 보세요.",
       );
     }
+    this.restoreEditScroll(scrollAnchor);
+  }
+
+  private galleryScrollMain(): HTMLElement | null {
+    const main = this.contentEl.querySelector(".charinfo-gallery__main");
+    return main instanceof HTMLElement ? main : null;
+  }
+
+  private captureEditScroll(): EditScrollAnchor | null {
+    const main = this.galleryScrollMain();
+    if (!main) return null;
+    const mainTop = main.getBoundingClientRect().top;
+    const cards = Array.from(main.querySelectorAll(".charinfo-card")).flatMap((el) => {
+      if (!(el instanceof HTMLElement) || !el.dataset.path) return [];
+      const box = el.getBoundingClientRect();
+      return [{ path: el.dataset.path, top: box.top, bottom: box.bottom }];
+    });
+    return captureEditScrollAnchor(mainTop, main.scrollTop, cards);
+  }
+
+  private restoreEditScroll(anchor: EditScrollAnchor | null): void {
+    if (!anchor) return;
+    const main = this.galleryScrollMain();
+    if (!main) return;
+    let cardTop: number | null = null;
+    if (anchor.path) {
+      const card = main.querySelector(
+        `.charinfo-card[data-path="${CSS.escape(anchor.path)}"]`,
+      );
+      if (card instanceof HTMLElement) {
+        cardTop = card.getBoundingClientRect().top;
+      }
+    }
+    main.scrollTop = restoreEditScrollTop({
+      anchor,
+      mainTop: main.getBoundingClientRect().top,
+      scrollHeight: main.scrollHeight,
+      clientHeight: main.clientHeight,
+      cardTop,
+    });
   }
 
   /** Short tip under the header — stays near the controls it refers to. */
@@ -4865,8 +4911,7 @@ export class GalleryView extends FileView {
         .setTitle("커버 바꾸기")
         .setIcon("image")
         .onClick(() => {
-          this.editMode = true;
-          this.render();
+          this.setEditMode(true);
           void this.openCoverPicker(record);
         }),
     );

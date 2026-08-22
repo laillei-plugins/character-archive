@@ -59,7 +59,7 @@ test("fresh installs and a different plugin version do not open this note", () =
 
 test("stored seen versions are normalized before comparison", () => {
   assert.equal(normalizeSeenUpdateNotesVersion(null), "");
-  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.20 "), "0.1.20");
+  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.21 "), "0.1.21");
   assert.equal(normalizeSeenUpdateNotesVersion(18), "");
 });
 
@@ -73,39 +73,11 @@ test("one update note keeps Korean before the equivalent English section", () =>
   assert.ok(korean >= 0 && english > korean);
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /보관함 폴더 이름을 누르면 그 보관함 갤러리만 열려요/,
+    /연필을 켜거나 꺼도 보던 카드 자리에 그대로 있어요/,
   );
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /마지막으로 봤던 갤러리를 다시 열어요/,
-  );
-  assert.match(
-    UPDATE_NOTES_MARKDOWN,
-    /읽기 모드에서 카드의 그림을 누르면 크게 볼 수 있어요/,
-  );
-  assert.match(
-    UPDATE_NOTES_MARKDOWN,
-    /«이름순»을 고르면 카드 전체가 이름 순서대로 정렬돼요/,
-  );
-  assert.match(
-    UPDATE_NOTES_MARKDOWN,
-    /«새 갤러리 만들기»/,
-  );
-  assert.match(
-    UPDATE_NOTES_MARKDOWN,
-    /Clicking a library folder name opens that library's gallery only/,
-  );
-  assert.match(
-    UPDATE_NOTES_MARKDOWN,
-    /reopen the gallery you last viewed/,
-  );
-  assert.match(
-    UPDATE_NOTES_MARKDOWN,
-    /click a card image to see it large/,
-  );
-  assert.match(
-    UPDATE_NOTES_MARKDOWN,
-    /sorts every card by name/,
+    /keeps the same cards in view/,
   );
 });
 
