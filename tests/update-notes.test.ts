@@ -41,7 +41,7 @@ test("fresh installs and a different plugin version do not open this note", () =
   );
   assert.equal(
     shouldOpenUpdateNotes({
-      installedVersion: "0.1.19",
+      installedVersion: "0.1.20",
       seenVersion: "0.1.17",
       hadStoredSettings: true,
     }),
@@ -50,7 +50,7 @@ test("fresh installs and a different plugin version do not open this note", () =
   assert.equal(
     shouldOpenUpdateNotes({
       installedVersion: UPDATE_NOTES_VERSION,
-      seenVersion: "0.1.19",
+      seenVersion: "0.1.20",
       hadStoredSettings: true,
     }),
     false,
@@ -59,7 +59,7 @@ test("fresh installs and a different plugin version do not open this note", () =
 
 test("stored seen versions are normalized before comparison", () => {
   assert.equal(normalizeSeenUpdateNotesVersion(null), "");
-  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.18 "), "0.1.18");
+  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.19 "), "0.1.19");
   assert.equal(normalizeSeenUpdateNotesVersion(18), "");
 });
 
@@ -73,11 +73,11 @@ test("one update note keeps Korean before the equivalent English section", () =>
   assert.ok(korean >= 0 && english > korean);
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /이름\*\* 값과 노트 파일명은 함께 바뀌어요/,
+    /노트에서 이미지를 지우면 커버 고르기와 이미지 목록에서도 사라져요/,
   );
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /Name\*\* value and note filename stay in sync/,
+    /Removing an image from the note also removes it from the cover picker/,
   );
 });
 

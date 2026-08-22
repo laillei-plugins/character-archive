@@ -424,7 +424,8 @@ export default class CharinfoPlugin extends Plugin {
       this.app.vault.on("create", (file) => {
         if (!(file instanceof TFile)) return;
         if (!this.fileTouchesAnyOpenGallery(file.path)) return;
-        // Image dropped next to a character note → fill empty cover on that note.
+        // A new sibling image can affect legacy cover display, but it is not a
+        // selectable cover until the character note embeds it.
         if (/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.path)) {
           const dir = file.path.includes("/")
             ? file.path.slice(0, file.path.lastIndexOf("/"))

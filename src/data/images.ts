@@ -1,26 +1,30 @@
 import { App, TFile, TFolder, normalizePath } from "obsidian";
 import type { CharacterRecord } from "./CharacterStore";
+import {
+  COVER_NONE,
+  canonicalRemoteUrl,
+  isCoverNone,
+  isImagePath,
+  isRemoteCoverUrl,
+  listEmbedIdentities,
+  planEmbedInsert,
+  planEmbedReorder,
+  type EmbedSyntax,
+  type VaultImageResolver,
+} from "./imageEmbeds";
 
-const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp|svg)$/i;
-const WIKI_EMBED = /!\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g;
-const MD_EMBED = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 /** Obsidian resize can write `![[img|0]]` — image vanishes at 0px width. */
 const COLLAPSED_WIKI_SIZE =
   /(!\[\[([^\]|#]+)(?:#[^\]|]*)?)\|\s*0(\]\])/g;
 
-/**
- * Frontmatter sentinel: card shows no cover while note images stay.
- * Empty `cover` still means “use first image automatically”.
- */
-export const COVER_NONE = "__none__";
-
-export function isCoverNone(raw: string | null | undefined): boolean {
-  return (raw ?? "").trim() === COVER_NONE;
-}
-
-export function isImagePath(path: string): boolean {
-  return IMAGE_EXT.test(path);
-}
+export {
+  COVER_NONE,
+  canonicalRemoteUrl,
+  isCoverNone,
+  isImageLink,
+  isImagePath,
+  isRemoteCoverUrl,
+} from "./imageEmbeds";
 
 /**
  * Wiki link target for an image relative to a note.
@@ -35,24 +39,6 @@ export function wikiPathForEmbed(note: TFile, image: TFile): string {
     : "";
   if (noteDir === imgDir) return image.name;
   return image.path;
-}
-
-export function wikiPathForEmbedPath(
-  app: App,
-  note: TFile,
-  imagePath: string,
-): string {
-  const file = app.vault.getAbstractFileByPath(normalizePath(imagePath));
-  if (file instanceof TFile) return wikiPathForEmbed(note, file);
-  // Fallback: if path ends under the note's folder, use basename.
-  const noteDir = note.path.includes("/")
-    ? note.path.slice(0, note.path.lastIndexOf("/"))
-    : "";
-  const normalized = normalizePath(imagePath);
-  if (noteDir && normalized.startsWith(`${noteDir}/`)) {
-    return normalized.slice(noteDir.length + 1);
-  }
-  return normalized;
 }
 
 /**
@@ -175,29 +161,52 @@ function resolveLink(app: App, link: string, sourcePath: string): TFile | null {
   return dest instanceof TFile && isImagePath(dest.path) ? dest : null;
 }
 
-/** Image embeds in note body order (first = default cover). */
-export function listEmbedImages(app: App, file: TFile, markdown: string): TFile[] {
-  const body = markdown.replace(/^---\n[\s\S]*?\n---\n?/, "");
-  const found: TFile[] = [];
-  const seen = new Set<string>();
+/** Embed target → vault image path, for the Obsidian-free embed layer. */
+function vaultImageResolver(app: App, sourcePath: string): VaultImageResolver {
+  return (target) => resolveLink(app, target, sourcePath)?.path ?? null;
+}
 
-  const push = (link: string) => {
-    const f = resolveLink(app, link, file.path);
-    if (!f || seen.has(f.path)) return;
-    seen.add(f.path);
-    found.push(f);
-  };
-
-  for (const match of body.matchAll(WIKI_EMBED)) {
-    if (match[1]) push(match[1]);
-  }
-  for (const match of body.matchAll(MD_EMBED)) {
-    if (match[1]) push(decodeURIComponent(match[1]));
+/**
+ * Selectable covers for a note: its body image embeds in document order, vault
+ * and remote alike. This is the one inventory the picker, the image strip and
+ * the reorder handle read, so removing an embed removes the choice even while
+ * the file stays beside the note.
+ */
+export function listNoteCoverCandidates(
+  app: App,
+  file: TFile,
+  markdown: string,
+): CoverRef[] {
+  const found: CoverRef[] = [];
+  const identities = listEmbedIdentities(
+    markdown,
+    vaultImageResolver(app, file.path),
+  );
+  for (const identity of identities) {
+    if (identity.kind === "remote") {
+      found.push({ kind: "remote", url: identity.url });
+      continue;
+    }
+    const image = app.vault.getAbstractFileByPath(identity.path);
+    if (image instanceof TFile) found.push({ kind: "vault", file: image });
   }
   return found;
 }
 
-/** Images next to the note (same folder) and/or legacy sibling `Name/` folder. */
+/** Vault image embeds in note body order (first = default cover). */
+export function listEmbedImages(app: App, file: TFile, markdown: string): TFile[] {
+  return listNoteCoverCandidates(app, file, markdown).flatMap((cover) =>
+    cover.kind === "vault" ? [cover.file] : [],
+  );
+}
+
+/**
+ * Images next to the note (same folder) and/or legacy sibling `Name/` folder.
+ *
+ * Legacy display fallback only, for notes written before the note body owned the
+ * inventory. It must never feed the picker, the image strip, a reorder or a
+ * heal — a file beside the note is not a cover choice until the note embeds it.
+ */
 export function listFolderImages(app: App, record: CharacterRecord): TFile[] {
   const candidates = new Set<string>();
   // Same directory as the note — folder-contained layout:
@@ -224,7 +233,10 @@ export function listFolderImages(app: App, record: CharacterRecord): TFile[] {
   return found.sort((a, b) => a.name.localeCompare(b.name, "ko"));
 }
 
-/** All candidate images: embeds first (doc order), then folder extras. */
+/**
+ * Legacy display list: note embeds first (doc order), then folder extras.
+ * Prefer `listNoteCoverCandidates` — anything selectable comes from the note.
+ */
 export function listCharacterImages(
   app: App,
   record: CharacterRecord,
@@ -240,39 +252,11 @@ export type CoverRef =
   | { kind: "vault"; file: TFile }
   | { kind: "remote"; url: string };
 
-export function isRemoteCoverUrl(value: string): boolean {
-  return /^https:\/\//i.test(value.trim());
-}
-
-/** True when a link looks like a displayable image (path or https URL). */
-export function isImageLink(link: string): boolean {
-  const raw = link.trim();
-  if (!raw) return false;
-  if (isRemoteCoverUrl(raw)) {
-    // Imgur / CDN often ends with .png; also allow extension-less https images.
-    return isImagePath(raw) || /^https:\/\/i\.imgur\.com\//i.test(raw);
-  }
-  return isImagePath(raw);
-}
-
-/**
- * First https image URL in markdown body embeds (`![](https://…)`).
- * Used when `cover` frontmatter is empty but the note already has a remote image.
- */
-export function firstRemoteImageEmbed(markdown: string): string | null {
-  const body = markdown.replace(/^---\n[\s\S]*?\n---\n?/, "");
-  for (const match of body.matchAll(MD_EMBED)) {
-    const raw = (match[1] ?? "").trim();
-    if (!raw) continue;
-    let url = raw;
-    try {
-      url = decodeURIComponent(raw);
-    } catch {
-      /* keep raw */
-    }
-    if (isRemoteCoverUrl(url) && isImageLink(url)) return url;
-  }
-  return null;
+/** Stable candidate identity: resolved vault path or canonical remote URL. */
+export function coverRefKey(cover: CoverRef): string {
+  return cover.kind === "vault"
+    ? cover.file.path
+    : canonicalRemoteUrl(cover.url);
 }
 
 export function coverDisplaySrc(app: App, cover: CoverRef): string {
@@ -284,8 +268,8 @@ export function coverDisplaySrc(app: App, cover: CoverRef): string {
  * Cover resolution:
  * 1) `cover: __none__` → no cover (images stay in the note)
  * 2) explicit `cover` frontmatter (vault wiki/path or https URL)
- * 3) first image embed in the note (vault wiki or https markdown)
- * 4) first image next to the note (same folder / legacy sibling folder)
+ * 3) first image embed in the note, in document order (vault wiki or https markdown)
+ * 4) legacy fallback for un-migrated notes: first image next to the note
  */
 export function resolveCover(
   app: App,
@@ -303,17 +287,19 @@ export function resolveCover(
 
   const text = markdown;
   if (text != null) {
-    const remote = firstRemoteImageEmbed(text);
-    if (remote) return { kind: "remote", url: remote };
-    const embeds = listEmbedImages(app, record.file, text);
-    if (embeds[0]) return { kind: "vault", file: embeds[0] };
+    // First candidate in real document order — vault or remote, whichever the
+    // note embeds first.
+    const first = listNoteCoverCandidates(app, record.file, text)[0];
+    if (first) return first;
+  } else if (record.autoCover) {
+    return record.autoCover;
   } else {
     const cache = app.metadataCache.getFileCache(record.file);
     const embeds = cache?.embeds ?? [];
     for (const embed of embeds) {
       const link = (embed.link ?? "").trim();
       if (!link) continue;
-      if (isRemoteCoverUrl(link) && isImageLink(link)) {
+      if (isRemoteCoverUrl(link)) {
         return { kind: "remote", url: link };
       }
       if (!isImagePath(link)) continue;
@@ -341,21 +327,25 @@ export async function setCharacterCover(
   file: TFile,
   image: TFile | null,
 ): Promise<void> {
+  // Embed first, pin second: the note owns the inventory, so a cover must exist
+  // in the body before frontmatter points at it.
+  if (image) {
+    await ensureCoverEmbed(app, file, {
+      syntax: "wiki",
+      target: wikiPathForEmbed(file, image),
+    });
+  }
+
   await app.fileManager.processFrontMatter(file, (fm) => {
     if (image) {
       fm.cover = `[[${wikiPathForEmbed(file, image)}]]`;
       fm.coverPosition = "50% 50%";
     } else {
-      // Automatic default — first embed/folder image via resolveCover.
+      // Automatic default — first note embed via resolveCover.
       delete fm.cover;
       fm.cover = "";
     }
   });
-
-  // Ensure the cover also appears as an embed so the image strip can see it.
-  if (image) {
-    await ensureCoverEmbed(app, file, wikiPathForEmbed(file, image));
-  }
 }
 
 /** Hide card cover without removing note images (`cover: __none__`). */
@@ -368,7 +358,7 @@ export async function setCharacterCoverNone(
   });
 }
 
-/** Persist an https cover URL (e.g. Imgur). Does not embed into note body. */
+/** Persist an https cover URL (e.g. Imgur) and embed it in the note body. */
 export async function setCharacterCoverUrl(
   app: App,
   file: TFile,
@@ -378,30 +368,31 @@ export async function setCharacterCoverUrl(
   if (!isRemoteCoverUrl(cleaned)) {
     throw new Error("커버 URL은 https:// 로 시작해야 해요.");
   }
+  // Same rule as a vault cover: embed first, then pin.
+  await ensureCoverEmbed(app, file, { syntax: "md", target: cleaned });
   await app.fileManager.processFrontMatter(file, (fm) => {
     fm.cover = cleaned;
     fm.coverPosition = "50% 50%";
   });
 }
 
-/** Prepend `![[path]]` after frontmatter if the note doesn't already embed it. */
+/**
+ * Add the embed after frontmatter unless the note already embeds that image.
+ * `vault.process` re-reads inside the write, so a body typed while the cover
+ * was picked survives.
+ */
 async function ensureCoverEmbed(
   app: App,
   file: TFile,
-  imagePath: string,
+  embed: { syntax: EmbedSyntax; target: string },
 ): Promise<void> {
+  const resolve = vaultImageResolver(app, file.path);
   const markdown = await app.vault.read(file);
-  const needle = imagePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (new RegExp(`!\\[\\[${needle}(?:[|#][^\\]]*)?\\]\\]`).test(markdown)) {
-    return;
-  }
-  const embed = `![[${imagePath}]]\n`;
-  const fm = markdown.match(/^---\n[\s\S]*?\n---\n?/);
-  if (fm) {
-    await app.vault.modify(file, fm[0] + embed + markdown.slice(fm[0].length));
-  } else {
-    await app.vault.modify(file, embed + markdown);
-  }
+  if (!planEmbedInsert(markdown, embed, resolve).changed) return;
+  await app.vault.process(
+    file,
+    (data) => planEmbedInsert(data, embed, resolve).text,
+  );
 }
 
 /** Notion-style cover crop anchor — stored as `coverPosition: "X% Y%"`. */
@@ -477,10 +468,12 @@ export async function setCharacterList(
 }
 
 /**
- * Normalize card fields after note edits / uploads:
- * - migrate legacy `언급` → `상태`
- * - if `cover` is empty, write the first image (remote URL or vault embed/folder)
+ * Normalize card fields after note edits / uploads: migrate legacy `언급` → `상태`.
  * Returns true when frontmatter changed.
+ *
+ * Healing never touches `cover`. An empty `cover` is the live “first note image”
+ * default and `__none__` is a deliberate choice; pinning either one behind the
+ * author's back is what used to make removed images come back.
  */
 export async function healCharacterCardFields(
   app: App,
@@ -512,59 +505,6 @@ export async function healCharacterCardFields(
     }
   });
 
-  const text = await app.vault.cachedRead(file);
-  const coverNow = (() => {
-    const m = text.match(/^---\n([\s\S]*?)\n---/);
-    if (!m?.[1]) return "";
-    const hit = m[1].match(/^cover:\s*(.*)$/m);
-    if (!hit) return "";
-    return (hit[1] ?? "")
-      .trim()
-      .replace(/^["']|["']$/g, "")
-      .replace(/^\[\[|\]\]$/g, "");
-  })();
-
-  // Intentional no-cover — never auto-fill from embeds/folder.
-  if (isCoverNone(coverNow)) {
-    return changed;
-  }
-
-  if (!coverNow) {
-    const remote = firstRemoteImageEmbed(text);
-    if (remote) {
-      await setCharacterCoverUrl(app, file, remote);
-      changed = true;
-    } else {
-      // Build a minimal record for folder/embed scan.
-      const stub = {
-        file,
-        path: file.path,
-        kind: "character",
-        이름: "",
-        코드네임: "",
-        본명: "",
-        소속: "",
-        장르: "",
-        작품: "",
-        그룹: "",
-        상태: "",
-        관계: "",
-        인연: "",
-        태그: [] as string[],
-        cover: "",
-        coverPosition: "50% 50%",
-        order: 0,
-        title: file.basename,
-        values: Object.create(null) as Record<string, string | string[]>,
-      };
-      const images = listCharacterImages(app, stub, text);
-      if (images[0]) {
-        await setCharacterCover(app, file, images[0]);
-        changed = true;
-      }
-    }
-  }
-
   return changed;
 }
 
@@ -573,74 +513,22 @@ function asKind(raw: unknown): string {
 }
 
 /**
- * Reorder image embeds in the note body to match `orderedPaths`.
- * Swaps wiki/md image targets in document order; non-image content stays put.
- * Also moves the first embed to become the natural default cover when cover is cleared.
+ * Reorder the note's image embeds to match `orderedKeys` — candidate identities
+ * (`coverRefKey`): vault paths and/or remote URLs. Only images the note already
+ * embeds move, so a folder-only file is never written into the body, and
+ * non-image content stays exactly where it is.
  */
 export async function reorderNoteImages(
   app: App,
   file: TFile,
-  orderedPaths: string[],
+  orderedKeys: string[],
 ): Promise<void> {
-  if (orderedPaths.length < 2) return;
+  if (orderedKeys.length < 2) return;
+  const resolve = vaultImageResolver(app, file.path);
   const markdown = await app.vault.read(file);
-  const fmMatch = markdown.match(/^---\n[\s\S]*?\n---\n?/);
-  const fm = fmMatch?.[0] ?? "";
-  let body = fmMatch ? markdown.slice(fmMatch[0].length) : markdown;
-
-  type Hit = { start: number; end: number; kind: "wiki" | "md"; raw: string };
-  const hits: Hit[] = [];
-
-  for (const match of body.matchAll(WIKI_EMBED)) {
-    const link = match[1]?.trim() ?? "";
-    if (!link || !isImagePath(link)) continue;
-    const f = resolveLink(app, link, file.path);
-    if (!f) continue;
-    hits.push({
-      start: match.index ?? 0,
-      end: (match.index ?? 0) + match[0].length,
-      kind: "wiki",
-      raw: match[0],
-    });
-  }
-  for (const match of body.matchAll(MD_EMBED)) {
-    const link = match[1] ? decodeURIComponent(match[1]) : "";
-    if (!link || !isImagePath(link)) continue;
-    const f = resolveLink(app, link, file.path);
-    if (!f) continue;
-    hits.push({
-      start: match.index ?? 0,
-      end: (match.index ?? 0) + match[0].length,
-      kind: "md",
-      raw: match[0],
-    });
-  }
-
-  hits.sort((a, b) => a.start - b.start);
-  // Dedupe overlapping (prefer wiki)
-  const unique: Hit[] = [];
-  let lastEnd = -1;
-  for (const hit of hits) {
-    if (hit.start < lastEnd) continue;
-    unique.push(hit);
-    lastEnd = hit.end;
-  }
-
-  const n = Math.min(unique.length, orderedPaths.length);
-  if (n < 2) return;
-
-  // Rebuild from end so indices stay valid
-  for (let i = n - 1; i >= 0; i -= 1) {
-    const hit = unique[i];
-    const path = orderedPaths[i];
-    if (!hit || !path) continue;
-    const embedTarget = wikiPathForEmbedPath(app, file, path);
-    const next =
-      hit.kind === "wiki"
-        ? `![[${embedTarget}]]`
-        : `![](${encodeURI(embedTarget)})`;
-    body = body.slice(0, hit.start) + next + body.slice(hit.end);
-  }
-
-  await app.vault.modify(file, fm + body);
+  if (!planEmbedReorder(markdown, orderedKeys, resolve).changed) return;
+  await app.vault.process(
+    file,
+    (data) => planEmbedReorder(data, orderedKeys, resolve).text,
+  );
 }

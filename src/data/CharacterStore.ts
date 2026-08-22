@@ -2,7 +2,12 @@ import { App, TFile, parseYaml, normalizePath } from "obsidian";
 import type { SortMode } from "../settings";
 import { sortCharacters } from "./order";
 import { parseTagIds } from "./tags";
-import { COVER_NONE, firstRemoteImageEmbed, isCoverNone } from "./images";
+import {
+  COVER_NONE,
+  isCoverNone,
+  listNoteCoverCandidates,
+  type CoverRef,
+} from "./images";
 import { NEVER_CREATE_KEYS } from "./propertySchema";
 
 export interface CharacterRecord {
@@ -22,6 +27,8 @@ export interface CharacterRecord {
   /** Tag ids from FM `태그` (YAML list). Empty when unset. */
   태그: string[];
   cover: string;
+  /** First body image when frontmatter cover is empty; never persisted. */
+  autoCover?: CoverRef;
   /** CSS object-position percentages, e.g. "50% 40%". */
   coverPosition: string;
   order: number;
@@ -145,12 +152,14 @@ export class CharacterStore {
     const orderRaw = data.order ?? data.charinfo_order;
     const order = typeof orderRaw === "number" ? orderRaw : Number(orderRaw) || 0;
 
-    let cover = parseCover(asString(data.cover));
-    // Empty cover + remote markdown image (`![](https://…)`) → use that URL.
+    const cover = parseCover(asString(data.cover));
+    let autoCover: CoverRef | undefined;
+    // Keep the persisted cover faithful to frontmatter. Automatic first-image
+    // state lives separately so vault and remote embeds behave symmetrically.
     // Sentinel `__none__` stays empty-of-fallback (intentional no cover).
     if (!cover && !isCoverNone(asString(data.cover))) {
-      const text = await this.app.vault.cachedRead(file);
-      cover = firstRemoteImageEmbed(text) ?? "";
+      const text = await this.app.vault.read(file);
+      autoCover = listNoteCoverCandidates(this.app, file, text)[0];
     }
 
     const partial = {
@@ -175,6 +184,7 @@ export class CharacterStore {
       인연: asString(data.인연),
       태그: parseTagIds(data.태그),
       cover,
+      autoCover,
       coverPosition: parseCoverPosition(data.coverPosition ?? data.cover_position),
       order,
       title: displayTitle(partial),

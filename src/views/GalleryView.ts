@@ -13,11 +13,12 @@ import {
   type CharacterRecord,
 } from "../data/CharacterStore";
 import {
-  listCharacterImages,
-  listEmbedImages,
+  type CoverRef,
+  listNoteCoverCandidates,
   reorderNoteImages,
   resolveCover,
   coverDisplaySrc,
+  coverRefKey,
   setCharacterCover,
   setCharacterCoverUrl,
   setCharacterCoverNone,
@@ -197,6 +198,8 @@ function cardProjectionChanged(
     a.관계 !== b.관계 ||
     a.인연 !== b.인연 ||
     a.cover !== b.cover ||
+    (a.autoCover ? coverRefKey(a.autoCover) : "") !==
+      (b.autoCover ? coverRefKey(b.autoCover) : "") ||
     a.coverPosition !== b.coverPosition ||
     a.order !== b.order ||
     a.title !== b.title ||
@@ -2548,13 +2551,13 @@ export class GalleryView extends FileView {
     }
   }
 
-  /** Cover + embedded/folder image identity of the panel's image strip. */
+  /** Cover + note-embedded image identity of the panel's image strip. */
   private imageFingerprint(
     record: CharacterRecord,
     markdown: string,
   ): string {
-    const images = listCharacterImages(this.app, record, markdown);
-    return `${record.cover}\0${images.map((f) => f.path).join("\0")}`;
+    const images = listNoteCoverCandidates(this.app, record.file, markdown);
+    return `${record.cover}\0${images.map(coverRefKey).join("\0")}`;
   }
 
   /**
@@ -5035,14 +5038,16 @@ export class GalleryView extends FileView {
   }
 
   private async openCoverPicker(record: CharacterRecord): Promise<void> {
-    const markdown = await this.app.vault.cachedRead(record.file);
-    const images = listCharacterImages(this.app, record, markdown);
+    const markdown = await this.app.vault.read(record.file);
+    const images = listNoteCoverCandidates(this.app, record.file, markdown);
+    const currentCover = resolveCover(this.app, record, markdown);
 
     new CoverPickerModal(
       this.app,
       this.plugin,
       record,
       images,
+      currentCover,
       async (pick) => {
         if (pick.kind === "none") {
           await this.applyCoverIntent(record, { kind: "none" }, { quiet: false });
@@ -5207,13 +5212,8 @@ export class GalleryView extends FileView {
     place: "before" | "after",
   ): Promise<void> {
     const markdown = await this.app.vault.read(record.file);
-    let images = listEmbedImages(this.app, record.file, markdown).map(
-      (f) => f.path,
-    );
-    // If embeds < 2, fall back to full candidate list written as embeds order only
-    if (images.length < 2) {
-      images = listCharacterImages(this.app, record, markdown).map((f) => f.path);
-    }
+    const candidates = listNoteCoverCandidates(this.app, record.file, markdown);
+    const images = candidates.map(coverRefKey);
     if (images.length < 2) {
       new Notice("순서를 바꿀 이미지가 아직 없어요")
       return;
@@ -5243,7 +5243,13 @@ export class GalleryView extends FileView {
       `.charinfo-thumb[data-id="${CSS.escape(toPath)}"]`,
       place,
     );
-    this.syncCoverPreview(record, images);
+    const byKey = new Map(candidates.map((cover) => [coverRefKey(cover), cover]));
+    const orderedCovers = images.flatMap((key) => {
+      const cover = byKey.get(key);
+      return cover ? [cover] : [];
+    });
+    if (!record.cover.trim()) record.autoCover = orderedCovers[0];
+    this.syncCoverPreview(record, orderedCovers);
     this.suppressClick = true;
   }
 
@@ -5253,12 +5259,16 @@ export class GalleryView extends FileView {
    */
   private syncCoverPreview(
     record: CharacterRecord,
-    orderedPaths?: string[],
+    orderedCovers?: CoverRef[],
   ): void {
     const none = isCoverNone(record.cover);
-    const resolved = none ? null : resolveCover(this.app, record);
-    const resolvedVaultPath =
-      resolved?.kind === "vault" ? resolved.file.path : null;
+    const automatic = !none && !record.cover.trim();
+    const resolved = none
+      ? null
+      : automatic && orderedCovers
+        ? (orderedCovers[0] ?? null)
+        : resolveCover(this.app, record);
+    const resolvedKey = resolved ? coverRefKey(resolved) : null;
 
     const strip = this.contentEl.querySelector(".charinfo-image-strip__row");
     if (strip) {
@@ -5267,10 +5277,7 @@ export class GalleryView extends FileView {
         const id = thumb.dataset.id ?? "";
         const isCover =
           !none &&
-          !!resolvedVaultPath &&
-          (id === resolvedVaultPath ||
-            resolvedVaultPath.endsWith(`/${id}`) ||
-            id.endsWith(`/${resolvedVaultPath}`));
+          resolvedKey != null && id === resolvedKey;
         thumb.classList.toggle("is-cover", isCover);
         thumb.querySelector(".charinfo-thumb__badge")?.remove();
         if (isCover) {
@@ -5307,12 +5314,10 @@ export class GalleryView extends FileView {
     }
 
     // Automatic default only — never paint first image when cover is `__none__`.
-    if (!none && orderedPaths?.[0]) {
-      const file = this.app.vault.getAbstractFileByPath(orderedPaths[0]);
-      if (file instanceof TFile) {
-        applySrc(this.app.vault.getResourcePath(file));
-        return;
-      }
+    const first = orderedCovers?.[0];
+    if (!none && first) {
+      applySrc(coverDisplaySrc(this.app, first));
+      return;
     }
 
     if (cardImg instanceof HTMLImageElement) {
@@ -5641,13 +5646,25 @@ export class GalleryView extends FileView {
     }).open();
   }
 
+  private coverLabel(cover: CoverRef): string {
+    if (cover.kind === "vault") return cover.file.basename;
+    try {
+      const parsed = new URL(cover.url);
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      const tail = parts[parts.length - 1];
+      return tail ? decodeURIComponent(tail) : parsed.hostname;
+    } catch {
+      return "웹 이미지";
+    }
+  }
+
   /** `host` may be detached — a note-region patch stages the strip off-panel. */
   private async renderImageStrip(
     host: HTMLElement,
     record: CharacterRecord,
     markdown: string,
   ): Promise<void> {
-    const images = listCharacterImages(this.app, record, markdown);
+    const images = listNoteCoverCandidates(this.app, record.file, markdown);
 
     const editable = this.cardEditActive;
     const strip = host.createDiv({
@@ -5669,29 +5686,25 @@ export class GalleryView extends FileView {
       return;
     }
 
-    const coverPath = record.cover
-      .replace(/^\[\[|\]\]$/g, "")
-      .split("|")[0]
-      ?.trim();
+    const resolvedCover = isCoverNone(record.cover)
+      ? null
+      : resolveCover(this.app, record, markdown);
+    const resolvedCoverKey = resolvedCover ? coverRefKey(resolvedCover) : null;
     const row = strip.createDiv({ cls: "charinfo-image-strip__row" });
 
     for (const image of images) {
-      const isCover =
-        !!coverPath &&
-        !isCoverNone(coverPath) &&
-        (image.path === coverPath ||
-          image.path.endsWith("/" + coverPath) ||
-          image.name === coverPath ||
-          image.basename === coverPath);
+      const imageKey = coverRefKey(image);
+      const imageLabel = this.coverLabel(image);
+      const isCover = resolvedCoverKey === imageKey;
       const thumb = row.createDiv({
         cls: "charinfo-thumb" + (isCover ? " is-cover" : ""),
         attr: isCover ? { title: "현재 커버" } : undefined,
       });
-      thumb.dataset.id = image.path;
+      thumb.dataset.id = imageKey;
       const img = thumb.createEl("img", {
         attr: {
-          src: this.app.vault.getResourcePath(image),
-          alt: image.basename,
+          src: coverDisplaySrc(this.app, image),
+          alt: imageLabel,
           loading: "lazy",
         },
       });
@@ -5701,11 +5714,15 @@ export class GalleryView extends FileView {
         event.stopPropagation();
         if (!this.cardEditActive) return;
         // Instant paint; quiet strip tap (no Notice spam).
-        void this.changeCover(record, image, false, { quiet: true });
+        if (image.kind === "vault") {
+          void this.changeCover(record, image.file, false, { quiet: true });
+        } else {
+          void this.changeCoverRemote(record, image.url, false);
+        }
       });
 
       if (editable && images.length > 1) {
-        attachHoldDrag(thumb, image.path, {
+        attachHoldDrag(thumb, imageKey, {
           canDrag: () => this.cardEditActive,
           activation: "hold",
           holdMs: 240,

@@ -9,10 +9,11 @@ import {
 import type CharinfoPlugin from "../main";
 import type { CharacterRecord } from "../data/CharacterStore";
 import {
+  type CoverRef,
   coverDisplaySrc,
+  coverRefKey,
   isImagePath,
   isRemoteCoverUrl,
-  resolveCover,
 } from "../data/images";
 import {
   isImgurPluginAvailable,
@@ -32,33 +33,31 @@ const MAX_REMOTE_BYTES = 8_000_000;
  * Reposition stays on the card (drag), not here.
  */
 export class CoverPickerModal extends Modal {
-  private images: TFile[];
+  private images: CoverRef[];
   private onPick: (result: CoverPickResult) => void | Promise<void>;
   private plugin: CharinfoPlugin;
   private record: CharacterRecord;
+  private currentCover: CoverRef | null;
   private busy = false;
   private statusEl: HTMLElement | null = null;
   private linkInput: HTMLInputElement | null = null;
   private linkPanel: HTMLElement | null = null;
   private opToken = 0;
-  private currentCoverPath: string | null = null;
 
   constructor(
     app: App,
     plugin: CharinfoPlugin,
     record: CharacterRecord,
-    images: TFile[],
+    images: CoverRef[],
+    currentCover: CoverRef | null,
     onPick: (result: CoverPickResult) => void | Promise<void>,
   ) {
     super(app);
     this.plugin = plugin;
     this.record = record;
     this.images = images;
+    this.currentCover = currentCover;
     this.onPick = onPick;
-    const cover = record.cover.trim();
-    this.currentCoverPath = cover
-      ? cover.replace(/^\[\[|\]\]$/g, "").split("|")[0]?.trim() || null
-      : null;
   }
 
   onOpen(): void {
@@ -71,7 +70,7 @@ export class CoverPickerModal extends Modal {
 
     // —— 1. Current (read-only preview; pan on the card) ——
     const current = contentEl.createDiv({ cls: "charinfo-cover-picker__current" });
-    const coverRef = resolveCover(this.app, this.record);
+    const coverRef = this.currentCover;
     if (coverRef) {
       const frame = current.createDiv({
         cls: "charinfo-cover-picker__current-frame",
@@ -113,25 +112,24 @@ export class CoverPickerModal extends Modal {
     } else {
       const grid = pick.createDiv({ cls: "charinfo-cover-picker__grid" });
       for (const image of this.images) {
+        const label = this.coverLabel(image);
         const isCurrent =
-          this.currentCoverPath === image.path ||
-          this.currentCoverPath?.endsWith(`/${image.name}`) === true ||
-          (coverRef?.kind === "vault" && coverRef.file.path === image.path);
+          coverRef != null && coverRefKey(coverRef) === coverRefKey(image);
         const cell = grid.createEl("button", {
           cls:
             "charinfo-cover-picker__cell" + (isCurrent ? " is-current" : ""),
           attr: {
             type: "button",
-            title: image.basename,
+            title: label,
             "aria-label": isCurrent
-              ? `${image.basename} (현재)`
-              : image.basename,
+              ? `${label} (현재)`
+              : label,
           },
         });
         cell.createEl("img", {
           attr: {
-            src: this.app.vault.getResourcePath(image),
-            alt: image.basename,
+            src: coverDisplaySrc(this.app, image),
+            alt: label,
             loading: "lazy",
           },
         });
@@ -144,7 +142,11 @@ export class CoverPickerModal extends Modal {
         cell.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
-          void this.commit({ kind: "vault", file: image });
+          void this.commit(
+            image.kind === "vault"
+              ? { kind: "vault", file: image.file }
+              : { kind: "remote", url: image.url },
+          );
         });
       }
     }
@@ -255,6 +257,18 @@ export class CoverPickerModal extends Modal {
       event.stopPropagation();
       void this.commit({ kind: "none" });
     });
+  }
+
+  private coverLabel(cover: CoverRef): string {
+    if (cover.kind === "vault") return cover.file.basename;
+    try {
+      const parsed = new URL(cover.url);
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      const tail = parts[parts.length - 1];
+      return tail ? decodeURIComponent(tail) : parsed.hostname;
+    } catch {
+      return "웹 이미지";
+    }
   }
 
   onClose(): void {
