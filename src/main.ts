@@ -45,11 +45,13 @@ import {
   galleryPagePath,
   galleryWikiLink,
   ensureFolder,
+  fileHasGalleryFrontmatter,
   isGalleryPage,
   listGalleryLibraryIdentities,
   readGalleryScope,
   registerCharinfoCodeBlock,
   resolveGalleryPageFile,
+  resolveOrCreateGalleryPageForLibrary,
   resolveOrMigrateGalleryPage,
 } from "./page/galleryPage";
 import {
@@ -58,7 +60,23 @@ import {
 } from "./page/orphanCleanup";
 import { CharinfoSettingTab } from "./ui/SettingTab";
 import { CreateGalleryModal } from "./ui/CreateGalleryModal";
+import {
+  commandById,
+  hiddenCompatCheck,
+  OPEN_GALLERY_NAME,
+} from "./ui/commandSurface";
 import { GalleryView, VIEW_TYPE_CHARINFO_GALLERY } from "./views/GalleryView";
+import {
+  AutoRevealRestoreError,
+  LIBRARY_FOLDER_CHEVRON_SELECTOR,
+  classifyLibraryFolderClick,
+  decideGalleryOpenLeaf,
+  decideRibbonOpen,
+  pickGalleryLeafForLibrary,
+  shouldRecordLastOpenedGallery,
+  withAutoRevealSuppressed,
+  type ExplorerViewLike,
+} from "./ui/libraryFolderOpen";
 import {
   basenameWithoutMarkdown,
   characterNameProblem,
@@ -178,21 +196,8 @@ export default class CharinfoPlugin extends Plugin {
     // Fallback if something still opens the entry as Markdown.
     this.registerEvent(
       this.app.workspace.on("file-open", (file) => {
-        if (!file || !isGalleryPage(file, this)) return;
-        if (this.allowMarkdownOnce.has(file.path)) {
-          this.allowMarkdownOnce.delete(file.path);
-          return;
-        }
-        const leaf = this.app.workspace.getMostRecentLeaf();
-        if (!leaf || this.isSidebarLeaf(leaf)) return;
-        if (
-          leaf.view instanceof GalleryView &&
-          leaf.view.file?.path === file.path
-        ) {
-          return;
-        }
-        if (leaf.view.getViewType() === VIEW_TYPE_CHARINFO_GALLERY) return;
-        void this.activateGalleryView({ replaceActive: true, file });
+        if (!file) return;
+        void this.reclaimOpenedGalleryNote(file);
       }),
     );
 
@@ -217,31 +222,39 @@ export default class CharinfoPlugin extends Plugin {
       this.refreshSchemaRoots({ scanNew: true });
     });
 
-    this.addRibbonIcon("layout-grid", "Character Archive 열기", () => {
-      void this.activateGalleryView();
+    this.addRibbonIcon("layout-grid", OPEN_GALLERY_NAME, () => {
+      this.openLastUsedOrDefaultGallery();
     });
 
+    const openGallery = commandById("open-gallery")!;
     this.addCommand({
-      id: "open-gallery",
-      name: "갤러리 열기",
+      id: openGallery.id,
+      name: openGallery.name,
       callback: () => {
-        void this.activateGalleryView();
+        this.openLastUsedOrDefaultGallery();
       },
     });
 
+    const newGallery = commandById("new-gallery-page")!;
     this.addCommand({
-      id: "new-gallery-page",
-      name: "새 갤러리 창",
+      id: newGallery.id,
+      name: newGallery.name,
       callback: () => {
         new CreateGalleryModal(this.app, this).open();
       },
     });
 
+    const defaultOpen = commandById("new-gallery-page-default")!;
     this.addCommand({
-      id: "new-gallery-page-default",
-      name: "기본 갤러리 열기",
-      callback: () => {
-        void createGalleryPage(this);
+      id: defaultOpen.id,
+      name: defaultOpen.name,
+      checkCallback: (checking) => {
+        if (!hiddenCompatCheck(checking)) return false;
+        void createGalleryPage(this).catch((error) => {
+          console.error("[charinfo] 기본 갤러리 열기 실패", error);
+          new Notice("갤러리를 열지 못했어요.");
+        });
+        return true;
       },
     });
 
@@ -304,9 +317,10 @@ export default class CharinfoPlugin extends Plugin {
       },
     });
 
+    const healImages = commandById("heal-library-image-links")!;
     this.addCommand({
-      id: "heal-library-image-links",
-      name: "깨진 이미지 다시 연결",
+      id: healImages.id,
+      name: healImages.name,
       callback: () => {
         void (async () => {
           const { rewriteLibraryPathPrefix } = await import("./data/images");
@@ -326,7 +340,10 @@ export default class CharinfoPlugin extends Plugin {
               : "고칠 깨진 경로가 없어요.\n이미 연결됐거나, 예전에 쓰던 폴더명이 남아 있지 않아요.",
           );
           if (n > 0) this.refreshOpenGalleries();
-        })();
+        })().catch((error) => {
+          console.error("[charinfo] 예전 폴더 이미지 다시 연결 실패", error);
+          new Notice("이미지를 다시 연결하지 못했어요.");
+        });
       },
     });
 
@@ -446,6 +463,10 @@ export default class CharinfoPlugin extends Plugin {
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
         this.refreshOpenGalleriesIfDirty();
+        const view = this.app.workspace.activeLeaf?.view;
+        if (view instanceof GalleryView && view.file) {
+          this.recordLastOpenedGallery(view.file.path);
+        }
       }),
     );
 
@@ -888,9 +909,9 @@ export default class CharinfoPlugin extends Plugin {
       try {
         if (
           file instanceof TFile &&
-          isGalleryPage(file, plugin) &&
           !plugin.allowMarkdownOnce.has(file.path) &&
-          !plugin.isSidebarLeaf(this)
+          !plugin.isSidebarLeaf(this) &&
+          (await fileHasGalleryFrontmatter(plugin, file))
         ) {
           await this.setViewState(
             {
@@ -935,11 +956,9 @@ export default class CharinfoPlugin extends Plugin {
   }
 
   /**
-   * Clicking the library folder in the file explorer opens the gallery
-   * (bound to the entry note) without requiring the folder note.
-   *
-   * Mobile: Obsidian drills into the folder inside the Files drawer unless we
-   * stop the event; after opening, collapse the drawer so the gallery is visible.
+   * Clicking the library folder title opens that library's gallery only.
+   * Chevron stays native expand. File-explorer auto-reveal is suppressed
+   * so the bound entry note does not expand the folder again.
    */
   private registerLibraryFolderClick(): void {
     this.registerDomEvent(
@@ -952,40 +971,79 @@ export default class CharinfoPlugin extends Plugin {
         }
         const target = event.target;
         if (!(target instanceof Element)) return;
-        // Let expand/collapse chevron behave normally.
-        if (
-          target.closest(
-            ".nav-folder-collapse-indicator, .collapse-icon, .tree-item-icon",
-          )
-        ) {
-          return;
-        }
         const title = target.closest(".nav-folder-title");
-        if (!(title instanceof HTMLElement)) return;
-        const folderPath = title.getAttribute("data-path");
-        if (!folderPath) return;
-        const lib = normalizePath(this.settings.libraryFolder.trim() || "Character Archive");
-        if (normalizePath(folderPath) !== lib) return;
+        const folderPath =
+          title instanceof HTMLElement ? title.getAttribute("data-path") : null;
+        const clicked = folderPath ? normalizePath(folderPath) : null;
+        const kind = classifyLibraryFolderClick({
+          isChevron: Boolean(target.closest(LIBRARY_FOLDER_CHEVRON_SELECTOR)),
+          folderPath: clicked,
+          libraryPaths: listGalleryLibraryIdentities(this),
+        });
+        if (kind !== "title" || !clicked) return;
 
-        // Title = open gallery; chevron = expand. Stop mobile folder drill-in.
         event.preventDefault();
         event.stopPropagation();
-
-        // Already showing gallery for this library — reveal + close Files drawer.
-        const open = this.app.workspace
-          .getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY)
-          .find((leaf) => leaf.view instanceof GalleryView);
-        if (open) {
-          void this.revealGalleryLeaf(open);
-          return;
-        }
-
-        window.setTimeout(() => {
-          void this.activateGalleryView({ replaceActive: true });
-        }, 0);
+        void this.openLibraryFolderGallery(clicked).catch((error: unknown) => {
+          console.error(error);
+          if (error instanceof AutoRevealRestoreError) {
+            new Notice("폴더 자동 열기 설정을 되돌리지 못했어요.");
+            return;
+          }
+          new Notice("보관함 갤러리를 열지 못했어요.");
+        });
       },
       true,
     );
+  }
+
+  /** Title-click path: matching gallery or activate, without expanding the folder. */
+  private async openLibraryFolderGallery(lib: string): Promise<void> {
+    const explorers: ExplorerViewLike[] = [];
+    for (const leaf of this.app.workspace.getLeavesOfType("file-explorer")) {
+      const view = leaf.view;
+      if (
+        view &&
+        typeof view.getState === "function" &&
+        typeof view.setState === "function"
+      ) {
+        explorers.push(view);
+      }
+    }
+
+    await withAutoRevealSuppressed(explorers, async () => {
+      const open = pickGalleryLeafForLibrary(
+        this.app.workspace.getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY),
+        lib,
+        (leaf) =>
+          leaf.view instanceof GalleryView ? leaf.view.pageLibrary() : null,
+      );
+      if (open) {
+        await this.revealGalleryLeaf(open);
+        return;
+      }
+      const file = await resolveOrCreateGalleryPageForLibrary(this, lib);
+      if (!file) return;
+      await this.activateGalleryView({ replaceActive: true, file });
+    });
+  }
+
+  private async reclaimOpenedGalleryNote(file: TFile): Promise<void> {
+    if (!(await fileHasGalleryFrontmatter(this, file))) return;
+    if (this.allowMarkdownOnce.has(file.path)) {
+      this.allowMarkdownOnce.delete(file.path);
+      return;
+    }
+    const leaf = this.app.workspace.getMostRecentLeaf();
+    if (!leaf || this.isSidebarLeaf(leaf)) return;
+    if (
+      leaf.view instanceof GalleryView &&
+      leaf.view.file?.path === file.path
+    ) {
+      return;
+    }
+    if (leaf.view.getViewType() === VIEW_TYPE_CHARINFO_GALLERY) return;
+    await this.activateGalleryView({ replaceActive: true, file });
   }
 
   /** Bring gallery leaf to front; on mobile, dismiss the Files drawer. */
@@ -1583,6 +1641,47 @@ export default class CharinfoPlugin extends Plugin {
     );
   }
 
+  recordLastOpenedGallery(path: string): void {
+    if (!shouldRecordLastOpenedGallery(this.settings.lastOpenedGalleryPath, path)) {
+      return;
+    }
+    void this.commitSettings((settings) => {
+      settings.lastOpenedGalleryPath = path;
+    }).catch((error) => {
+      console.error("[charinfo] 최근 갤러리 경로 저장 실패", error);
+    });
+  }
+
+  private openLastUsedOrDefaultGallery(): void {
+    void this.activateLastUsedOrDefaultGallery().catch((error) => {
+      console.error("[charinfo] 갤러리 열기 실패", error);
+      new Notice("갤러리를 열지 못했어요.");
+    });
+  }
+
+  async activateLastUsedOrDefaultGallery(): Promise<void> {
+    const lastPath = this.settings.lastOpenedGalleryPath;
+    const abstract = lastPath
+      ? this.app.vault.getAbstractFileByPath(lastPath)
+      : null;
+    const file = abstract instanceof TFile ? abstract : null;
+    const isGallery = file
+      ? await fileHasGalleryFrontmatter(this, file)
+      : false;
+    if (
+      decideRibbonOpen({
+        lastPath,
+        fileExists: Boolean(file),
+        isGallery,
+      }) === "last-used" &&
+      file
+    ) {
+      await this.activateGalleryView({ file });
+      return;
+    }
+    await this.activateGalleryView();
+  }
+
   /**
    * Open the gallery as a FileView bound to the entry note.
    * Share/link plugins can then see `getActiveFile()` = that note.
@@ -1601,51 +1700,49 @@ export default class CharinfoPlugin extends Plugin {
       return;
     }
 
-    let leaf: WorkspaceLeaf | null = null;
-
-    if (opts?.replaceActive) {
-      leaf = workspace.getMostRecentLeaf();
-      // Clicking the file tree makes the explorer the "most recent" leaf —
-      // never swap a sidebar pane into the gallery.
-      if (leaf && this.isSidebarLeaf(leaf)) {
-        leaf = null;
+    let sameFile: WorkspaceLeaf | null = null;
+    for (const candidate of workspace.getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY)) {
+      const view = candidate.view;
+      if (view instanceof GalleryView && view.file?.path === file.path) {
+        sameFile = candidate;
+        break;
       }
     }
 
-    if (!leaf) {
-      for (const candidate of workspace.getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY)) {
-        const view = candidate.view;
-        if (view instanceof GalleryView && view.file?.path === file.path) {
-          leaf = candidate;
-          break;
-        }
-      }
-    }
-
-    if (!leaf) {
-      // Prefer the main-area active leaf; fall back to a new tab.
-      const active = workspace.getMostRecentLeaf();
-      if (
-        opts?.replaceActive &&
-        active &&
-        !this.isSidebarLeaf(active) &&
-        active.view.getViewType() !== VIEW_TYPE_CHARINFO_GALLERY
-      ) {
-        leaf = active;
-      } else {
-        leaf = workspace.getLeaf(opts?.replaceActive ? false : "tab");
-      }
-    }
-
-    if (leaf && this.isSidebarLeaf(leaf)) {
-      leaf = workspace.getLeaf(false);
-    }
-
-    await leaf.setViewState({
-      type: VIEW_TYPE_CHARINFO_GALLERY,
-      state: { file: file.path },
-      active: true,
+    const recent = workspace.getMostRecentLeaf();
+    const decision = decideGalleryOpenLeaf({
+      hasSameFileLeaf: Boolean(sameFile),
+      replaceActive: Boolean(opts?.replaceActive),
+      hasMostRecent: Boolean(recent),
+      mostRecentIsSidebar: Boolean(recent && this.isSidebarLeaf(recent)),
+      mostRecentIsGallery: Boolean(
+        recent && recent.view.getViewType() === VIEW_TYPE_CHARINFO_GALLERY,
+      ),
     });
+
+    if (decision === "reveal-same-file" && sameFile) {
+      await this.revealGalleryLeaf(sameFile);
+      return;
+    }
+
+    let leaf: WorkspaceLeaf | null =
+      decision === "reuse-recent" ? recent : workspace.getLeaf("tab");
+
+    if (!leaf || this.isSidebarLeaf(leaf)) {
+      leaf = workspace.getLeaf("tab");
+    }
+    if (
+      leaf.view instanceof GalleryView &&
+      leaf.view.file?.path &&
+      leaf.view.file.path !== file.path
+    ) {
+      leaf = workspace.getLeaf("tab");
+    }
+
+    // Bind the file first so the workspace tab is titled from frame 1.
+    // setViewState-only leaves a "New tab" → title swap that cracks the
+    // active-tab underline (Minimal `.tabs-underline`).
+    await leaf.openFile(file, { active: true });
     await this.revealGalleryLeaf(leaf);
   }
 }

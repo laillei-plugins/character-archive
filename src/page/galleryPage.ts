@@ -17,8 +17,18 @@ import {
   planNoteProperties,
   resolveGroupSchema,
 } from "../data/groupSchema";
+import { OPEN_GALLERY_NAME } from "../ui/commandSurface";
 import { GalleryView, VIEW_TYPE_CHARINFO_GALLERY } from "../views/GalleryView";
 import { promptCharacterName } from "../ui/CharacterNameModal";
+import {
+  isGalleryByCache,
+  libraryFolderNotePath,
+  libraryNamedEntryPath,
+  pickLibraryCreatePath,
+  pickLibraryEntryPath,
+  textGalleryLibrary,
+  textHasGalleryFrontmatter,
+} from "../ui/libraryFolderOpen";
 import {
   characterNameProblem,
   characterNameProblemMessage,
@@ -58,6 +68,7 @@ export function readGalleryScope(
   app: App,
   file: TFile | null | undefined,
   settings: CharinfoSettings,
+  body?: string,
 ): GalleryScope {
   const defaultLib = normalizePath(
     settings.libraryFolder.trim() || "Character Archive",
@@ -74,7 +85,9 @@ export function readGalleryScope(
   const fm = app.metadataCache.getFileCache(file)?.frontmatter;
   const libraryRaw =
     typeof fm?.library === "string" ? fm.library.trim() : "";
-  const library = normalizePath(libraryRaw || defaultLib);
+  const library = normalizePath(
+    libraryRaw || textGalleryLibrary(body ?? "") || defaultLib,
+  );
   const pin = typeof fm?.장르 === "string" ? fm.장르.trim() : "";
   const filterRaw =
     typeof fm?.primaryFilter === "string" ? fm.primaryFilter.trim() : "";
@@ -290,13 +303,27 @@ export function isDefaultGalleryEntry(
 
 export function isGalleryPage(file: TFile, plugin: CharinfoPlugin): boolean {
   const cache = plugin.app.metadataCache.getFileCache(file);
-  if (cache?.frontmatter?.charinfo === "gallery") return true;
-  if (file.path === galleryPagePath(plugin)) return true;
-  if (file.path === legacyGalleryPagePath(plugin)) return true;
-  // Folder note for the default library folder (same name as folder).
-  const lib = normalizePath(plugin.settings.libraryFolder);
-  const folderNote = normalizePath(`${lib}/${lib.split("/").pop()}.md`);
-  return file.path === folderNote;
+  const fm = cache?.frontmatter;
+  return isGalleryByCache({
+    hasFrontmatter: Boolean(fm),
+    charinfo: fm?.charinfo,
+    pathIsDefaultEntry: isDefaultGalleryEntry(file, plugin),
+  });
+}
+
+/** Cache-miss path: a just-created gallery note may not have frontmatter yet. */
+export async function fileHasGalleryFrontmatter(
+  plugin: CharinfoPlugin,
+  file: TFile,
+): Promise<boolean> {
+  if (isGalleryPage(file, plugin)) return true;
+  const cache = plugin.app.metadataCache.getFileCache(file);
+  if (cache) return cache.frontmatter?.charinfo === "gallery";
+  try {
+    return textHasGalleryFrontmatter(await plugin.app.vault.cachedRead(file));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -320,6 +347,61 @@ export async function resolveOrMigrateGalleryPage(
     }
   }
   return null;
+}
+
+/**
+ * Entry gallery for one library folder: folder note, then Character Archive.md,
+ * then the first unpinned gallery page, then create the folder note.
+ */
+export async function resolveOrCreateGalleryPageForLibrary(
+  plugin: CharinfoPlugin,
+  library: string,
+): Promise<TFile | null> {
+  const lib = normalizePath(library.trim() || "Character Archive");
+  const existingGalleryPaths: string[] = [];
+  const unpinnedGalleryPaths: string[] = [];
+  for (const file of plugin.app.vault.getMarkdownFiles()) {
+    if (!isGalleryPage(file, plugin)) continue;
+    existingGalleryPaths.push(file.path);
+    const scope = readGalleryScope(plugin.app, file, plugin.settings);
+    if (normalizePath(scope.library) !== lib) continue;
+    if (scope.pinned) continue;
+    unpinnedGalleryPaths.push(file.path);
+  }
+
+  const picked = pickLibraryEntryPath({
+    library: lib,
+    existingGalleryPaths,
+    unpinnedGalleryPaths,
+  });
+  if (picked !== "create-folder-note") {
+    const found = plugin.app.vault.getAbstractFileByPath(normalizePath(picked));
+    return found instanceof TFile ? found : null;
+  }
+
+  await ensureFolder(plugin, lib);
+  const occupied: string[] = [];
+  for (const candidate of [
+    libraryFolderNotePath(lib),
+    libraryNamedEntryPath(lib),
+  ]) {
+    const file = plugin.app.vault.getAbstractFileByPath(normalizePath(candidate));
+    if (file instanceof TFile) occupied.push(candidate);
+  }
+  const create = pickLibraryCreatePath({
+    library: lib,
+    occupiedPaths: occupied,
+  });
+  if (create === "blocked") {
+    new Notice("이 보관함에는 갤러리 노트를 만들 자리가 없어요.");
+    return null;
+  }
+  const path = normalizePath(create);
+  const already = plugin.app.vault.getAbstractFileByPath(path);
+  if (already instanceof TFile) {
+    return isGalleryPage(already, plugin) ? already : null;
+  }
+  return plugin.app.vault.create(path, galleryPageBody({ library: lib }));
 }
 
 /** Deep link that opens this vault note (Charinfo then swaps to the gallery). */
@@ -431,10 +513,9 @@ export async function createGalleryPage(
       );
       await seedExampleGroupIfEmpty(plugin, library);
     }
-    await plugin.app.workspace.getLeaf(false).openFile(file);
     await plugin.activateGalleryView({ replaceActive: true, file });
     new Notice(
-      `갤러리: ${file.path}\n다시 열려면 리본 격자 아이콘 또는 «갤러리 열기»`,
+      `갤러리: ${file.path}\n다시 열려면 리본 격자 아이콘 또는 «${OPEN_GALLERY_NAME}»`,
     );
     return file;
   }
@@ -455,7 +536,6 @@ export async function createGalleryPage(
   if (existing instanceof TFile) {
     // Same path already used — reopen instead of silently making "Name 2.md".
     if (isReusableGalleryPage(plugin, existing, { library, archive })) {
-      await plugin.app.workspace.getLeaf(false).openFile(existing);
       await plugin.activateGalleryView({ replaceActive: true, file: existing });
       new Notice(`이미 있는 갤러리 페이지를 열었어요 · ${existing.path}`);
       return existing;
@@ -476,7 +556,6 @@ export async function createGalleryPage(
     }),
   );
 
-  await plugin.app.workspace.getLeaf(false).openFile(file);
   await plugin.activateGalleryView({ replaceActive: true, file });
   new Notice(
     [

@@ -46,6 +46,10 @@ import {
   remapWebShareRecord,
 } from "./share/webShareState";
 import { normalizeSeenUpdateNotesVersion } from "./data/updateNotes";
+import {
+  normalizeLastOpenedGalleryPath,
+  remapLastOpenedGalleryPath,
+} from "./ui/libraryFolderOpen";
 
 /** Vault-relative path normalize (no Obsidian import in settings). */
 function normalizePath(path: string): string {
@@ -168,6 +172,8 @@ export interface WebShareLastState {
 export interface CharinfoSettings {
   /** Latest bundled update note successfully opened, or silently seeded on install. */
   lastOpenedUpdateNotesVersion: string;
+  /** Last gallery note the user actually opened. Empty = fall back to libraryFolder. */
+  lastOpenedGalleryPath: string;
   /** Folder that holds character notes (scanned for kind: character). */
   libraryFolder: string;
   /** Where new uploads go. Existing vault embeds stay untouched. */
@@ -332,6 +338,7 @@ export interface CharinfoSettings {
 
 export const DEFAULT_SETTINGS: CharinfoSettings = {
   lastOpenedUpdateNotesVersion: "",
+  lastOpenedGalleryPath: "",
   libraryFolder: "Character Archive",
   mediaRootMode: "vault",
   imageUploadDestination: "vault",
@@ -680,6 +687,9 @@ export function migrateSettings(
     ...src,
     lastOpenedUpdateNotesVersion: normalizeSeenUpdateNotesVersion(
       src.lastOpenedUpdateNotesVersion,
+    ),
+    lastOpenedGalleryPath: normalizeLastOpenedGalleryPath(
+      src.lastOpenedGalleryPath,
     ),
     activeGenre,
     libraryFolder,
@@ -1123,6 +1133,15 @@ export function remapGalleryPageState(
     changed = true;
   }
   if (remapWebShareByPage(settings, from, to)) changed = true;
+  const remappedLast = remapLastOpenedGalleryPath(
+    settings.lastOpenedGalleryPath,
+    from,
+    to,
+  );
+  if (remappedLast !== settings.lastOpenedGalleryPath) {
+    settings.lastOpenedGalleryPath = remappedLast;
+    changed = true;
+  }
   return changed;
 }
 

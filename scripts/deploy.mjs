@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * Build (optional) → copy charinfo into the Obsidian vault → reload.
+ * Build (optional) → copy Character Archive into the Obsidian test vault.
+ * Foreground reload is explicit only.
  *
  * Usage:
- *   node scripts/deploy.mjs           # build + copy + reload
+ *   node scripts/deploy.mjs           # build + copy, no foreground reload
  *   node scripts/deploy.mjs --no-build
- *   node scripts/deploy.mjs --no-reload
+ *   node scripts/deploy.mjs --reload  # explicit foreground reload
+ *   node scripts/deploy.mjs --no-reload # compatibility safety override
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import {
@@ -93,7 +95,7 @@ assertNoLegacyInstall();
 
 const args = new Set(process.argv.slice(2));
 const doBuild = !args.has("--no-build");
-const doReload = !args.has("--no-reload");
+const doReload = args.has("--reload") && !args.has("--no-reload");
 
 function run(cmd, argv, opts = {}) {
   const res = spawnSync(cmd, argv, {

@@ -4,19 +4,34 @@ import type { SortMode } from "../settings";
 
 export type { SortMode };
 
+/** Card label used for 이름순: 이름, then title, then file basename. */
+export function cardNameKey(
+  record: Pick<CharacterRecord, "이름" | "title" | "file">,
+): string {
+  return (record.이름 || record.title || record.file.basename).trim();
+}
+
+/**
+ * Korean word order + alphabet + natural numbers (`2` before `10`).
+ * Same rule for hangul, latin, and number-only names.
+ */
+export function compareCardName(a: string, b: string): number {
+  return a.localeCompare(b, "ko", { numeric: true, sensitivity: "base" });
+}
+
 export function sortCharacters(
   records: CharacterRecord[],
   mode: SortMode,
 ): CharacterRecord[] {
   const copy = [...records];
   copy.sort((a, b) => {
-    const genre = a.장르.localeCompare(b.장르, "ko");
+    const genre = compareCardName(a.장르, b.장르);
     if (genre !== 0) return genre;
     if (mode === "name") {
-      return a.title.localeCompare(b.title, "ko");
+      return compareCardName(cardNameKey(a), cardNameKey(b));
     }
     if (a.order !== b.order) return a.order - b.order;
-    return a.title.localeCompare(b.title, "ko");
+    return compareCardName(cardNameKey(a), cardNameKey(b));
   });
   return copy;
 }

@@ -97,6 +97,14 @@ import {
   type BatchWriteResult,
 } from "../data/batchGroupMove";
 import {
+  advanceFocus,
+  focusArrowState,
+  focusKeyAction,
+  openFocus,
+  reconcileFocus,
+  shouldOpenImageFocus,
+} from "../ui/imageFocus";
+import {
   FILTER_AXIS_IDS,
   axisFor,
   axisLabel,
@@ -127,6 +135,7 @@ import {
 import { normalizeChipFilter } from "../data/status";
 import { renderLivePeekBody } from "../ui/livePeekBody";
 import { CoverPickerModal } from "../ui/CoverPickerModal";
+import { CREATE_GALLERY_NAME } from "../ui/commandSurface";
 import { CreateGalleryModal } from "../ui/CreateGalleryModal";
 import { RenameGenreModal } from "../ui/RenameGenreModal";
 import { attachHoldDrag } from "../ui/holdDrag";
@@ -259,6 +268,8 @@ export class GalleryView extends FileView {
   private resizeObserver: ResizeObserver | null = null;
   private isNarrow = false;
   private peekOpen = false;
+  /** Last file body, for `library` when metadata cache is still empty. */
+  private scopeBody = "";
   /** Narrow sheet height — remembered for this view session only. */
   private sheetSnap: SheetSnap = "mid";
   private sheetDrag: {
@@ -294,6 +305,16 @@ export class GalleryView extends FileView {
    */
   private uiGeneration = 0;
   private viewClosed = false;
+  /** Reading-mode image overlay. Survives `root.empty()` only as this field. */
+  private imageFocus: {
+    keys: string[];
+    index: number;
+    returnKey: string;
+    recordPath: string;
+  } | null = null;
+  private imageFocusImages: CoverRef[] = [];
+  private imageFocusEl: HTMLElement | null = null;
+  private imageFocusKey: ((event: KeyboardEvent) => void) | null = null;
   /**
    * Reorder persistence, serialized per view.
    *
@@ -360,7 +381,12 @@ export class GalleryView extends FileView {
   }
 
   private resolvePageScope() {
-    return readGalleryScope(this.app, this.file, this.plugin.settings);
+    return readGalleryScope(
+      this.app,
+      this.file,
+      this.plugin.settings,
+      this.scopeBody,
+    );
   }
 
   /** Vault folder this gallery scans. */
@@ -520,10 +546,17 @@ export class GalleryView extends FileView {
   }
 
   async onLoadFile(file: TFile): Promise<void> {
+    try {
+      this.scopeBody = await this.app.vault.cachedRead(file);
+    } catch {
+      this.scopeBody = "";
+    }
+    this.plugin.recordLastOpenedGallery(file.path);
     await this.refresh();
   }
 
   async onUnloadFile(_file: TFile): Promise<void> {
+    this.scopeBody = "";
     this.selected = null;
     this.peekOpen = false;
     // A write already in flight keeps its storage guarantee; it just loses the
@@ -547,7 +580,7 @@ export class GalleryView extends FileView {
     });
     menu.addItem((item) => {
       item
-        .setTitle("새 갤러리 페이지…")
+        .setTitle(CREATE_GALLERY_NAME)
         .setIcon("layout-grid")
         .onClick(() => {
           new CreateGalleryModal(this.app, this.plugin, {
@@ -849,6 +882,11 @@ export class GalleryView extends FileView {
           event.preventDefault();
           return;
         }
+        if (this.imageFocus) {
+          event.preventDefault();
+          this.closeImageFocus({ restoreFocus: true });
+          return;
+        }
         if (this.isNarrow && this.peekOpen) {
           event.preventDefault();
           this.closePeek();
@@ -858,6 +896,14 @@ export class GalleryView extends FileView {
           event.preventDefault();
           this.setEditMode(false);
         }
+      }
+      if (
+        this.imageFocus &&
+        (event.key === "ArrowLeft" || event.key === "ArrowRight")
+      ) {
+        event.preventDefault();
+        this.stepImageFocus(event.key === "ArrowLeft" ? -1 : 1);
+        return;
       }
       if (event.key === "/" && !(event.target instanceof HTMLInputElement)) {
         event.preventDefault();
@@ -894,6 +940,7 @@ export class GalleryView extends FileView {
     this.viewMenu?.close();
     this.viewMenu = null;
     this.closeTagMenu();
+    this.closeImageFocus({ restoreFocus: false });
     this.contentEl.empty();
   }
 
@@ -1014,6 +1061,7 @@ export class GalleryView extends FileView {
   }
 
   private closePeek(): void {
+    this.closeImageFocus({ restoreFocus: false });
     this.closeTagMenu();
     this.sheetDrag = null;
     this.contentEl.removeClass("is-sheet-dragging");
@@ -1726,6 +1774,7 @@ export class GalleryView extends FileView {
       this.viewMenu = null;
       this.closeTagMenu();
       if (this.peekOpen || this.selected) this.closePeek();
+      this.closeImageFocus({ restoreFocus: false });
       this.batchScope = {
         library: this.pageLibrary(),
         archive: normalizeArchiveKey(this.activeArchive()),
@@ -2379,6 +2428,7 @@ export class GalleryView extends FileView {
     // Selection mode exists only inside Gallery Edit — leaving takes it down.
     if (!enabled) this.teardownBatchMode();
     if (!enabled) this.closeGroupRenameDialog();
+    if (enabled) this.closeImageFocus({ restoreFocus: false });
     this.editMode = enabled;
     this.render();
     if (turningOn) {
@@ -2631,6 +2681,7 @@ export class GalleryView extends FileView {
         if (oldStrip instanceof HTMLElement) oldStrip.replaceWith(nextStrip);
         else detail.insertBefore(nextStrip, staged);
       }
+      this.reconcileOpenImageFocus(record, markdown);
     }
   }
 
@@ -2665,6 +2716,7 @@ export class GalleryView extends FileView {
     // `root.empty()` would orphan the dialog's DOM anyway. It cannot survive.
     this.closeBatchDialog();
     this.closeGroupRenameDialog();
+    this.disposeImageFocusDom();
     root.empty();
     root.addClass("charinfo-gallery");
     root.toggleClass("is-edit", this.editMode);
@@ -2681,6 +2733,18 @@ export class GalleryView extends FileView {
     this.renderBody();
     // The bar lives outside the body so search and chip repaints leave it be.
     if (this.batchMode) this.renderBatchBar(root);
+    if (
+      this.imageFocus &&
+      this.selected?.path === this.imageFocus.recordPath &&
+      shouldOpenImageFocus({
+        editMode: this.editMode,
+        batchMode: this.batchMode,
+      })
+    ) {
+      this.paintImageFocus(this.imageFocusImages);
+    } else if (this.imageFocus) {
+      this.closeImageFocus({ restoreFocus: false });
+    }
   }
 
   private renderBody(): void {
@@ -5658,6 +5722,196 @@ export class GalleryView extends FileView {
     }
   }
 
+  private openImageFocus(
+    recordPath: string,
+    images: CoverRef[],
+    startKey: string,
+  ): void {
+    const opened = openFocus(images.map(coverRefKey), startKey);
+    if (!opened) return;
+    this.imageFocus = {
+      keys: opened.keys,
+      index: opened.index,
+      returnKey: startKey,
+      recordPath,
+    };
+    this.imageFocusImages = images;
+    this.attachImageFocusKeys();
+    this.paintImageFocus(images);
+  }
+
+  private stepImageFocus(dir: -1 | 1): void {
+    const state = this.imageFocus;
+    if (!state) return;
+    const next = advanceFocus(state.index, dir, state.keys.length);
+    if (next === state.index) return;
+    const key = state.keys[next];
+    if (!key) return;
+    this.imageFocus = {
+      keys: state.keys,
+      index: next,
+      returnKey: key,
+      recordPath: state.recordPath,
+    };
+    this.paintImageFocus(this.imageFocusImages);
+  }
+
+  private reconcileOpenImageFocus(
+    record: CharacterRecord,
+    markdown: string,
+  ): void {
+    const state = this.imageFocus;
+    if (!state) return;
+    const images = listNoteCoverCandidates(this.app, record.file, markdown);
+    const keys = images.map(coverRefKey);
+    const openKey = state.keys[state.index] ?? state.returnKey;
+    const next = reconcileFocus(openKey, keys);
+    if (next.kind === "close") {
+      this.closeImageFocus({ restoreFocus: true });
+      return;
+    }
+    this.imageFocus = {
+      keys,
+      index: next.index,
+      returnKey: keys[next.index] ?? openKey,
+      recordPath: record.path,
+    };
+    this.imageFocusImages = images;
+    this.paintImageFocus(images);
+  }
+
+  private paintImageFocus(images: CoverRef[]): void {
+    const state = this.imageFocus;
+    const image = state ? images[state.index] : undefined;
+    if (!state || !image) {
+      this.closeImageFocus({ restoreFocus: true });
+      return;
+    }
+    this.disposeImageFocusDom();
+    const overlay = this.contentEl.createDiv({
+      cls: "charinfo-focus",
+      attr: {
+        role: "dialog",
+        "aria-modal": "true",
+        "aria-label": "이미지 크게 보기",
+      },
+    });
+    this.imageFocusEl = overlay;
+    const dim = overlay.createDiv({ cls: "charinfo-focus__dim" });
+    dim.addEventListener("click", () => {
+      this.closeImageFocus({ restoreFocus: true });
+    });
+    const stage = overlay.createDiv({ cls: "charinfo-focus__stage" });
+    const picture = stage.createEl("img", {
+      cls: "charinfo-focus__img",
+      attr: {
+        src: coverDisplaySrc(this.app, image),
+        alt: this.coverLabel(image),
+        draggable: "false",
+      },
+    });
+    picture.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    const arrows = focusArrowState(state.index, state.keys.length);
+    if (arrows.show) {
+      const prev = overlay.createEl("button", {
+        cls: "clickable-icon charinfo-icon-btn charinfo-focus__prev",
+        attr: {
+          type: "button",
+          "aria-label": "이전 이미지",
+          ...(arrows.prevDisabled ? { "aria-disabled": "true" } : {}),
+        },
+      });
+      setIcon(prev, "chevron-left");
+      prev.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (arrows.prevDisabled) return;
+        this.stepImageFocus(-1);
+      });
+      const next = overlay.createEl("button", {
+        cls: "clickable-icon charinfo-icon-btn charinfo-focus__next",
+        attr: {
+          type: "button",
+          "aria-label": "다음 이미지",
+          ...(arrows.nextDisabled ? { "aria-disabled": "true" } : {}),
+        },
+      });
+      setIcon(next, "chevron-right");
+      next.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (arrows.nextDisabled) return;
+        this.stepImageFocus(1);
+      });
+    }
+    const close = overlay.createEl("button", {
+      cls: "clickable-icon charinfo-icon-btn charinfo-focus__close",
+      attr: { type: "button", "aria-label": "닫기" },
+    });
+    setIcon(close, "x");
+    close.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.closeImageFocus({ restoreFocus: true });
+    });
+    this.syncImageFocusInert(true);
+    close.focus();
+  }
+
+  private disposeImageFocusDom(): void {
+    const el = this.imageFocusEl;
+    this.imageFocusEl = null;
+    el?.remove();
+    this.syncImageFocusInert(false);
+    this.syncGalleryInert();
+  }
+
+  private syncImageFocusInert(on: boolean): void {
+    for (const child of Array.from(this.contentEl.children)) {
+      if (!(child instanceof HTMLElement)) continue;
+      if (child.classList.contains("charinfo-focus")) continue;
+      if (on) child.setAttribute("inert", "");
+      else child.removeAttribute("inert");
+    }
+  }
+
+  private attachImageFocusKeys(): void {
+    if (this.imageFocusKey) return;
+    this.imageFocusKey = (event: KeyboardEvent) => {
+      if (!this.imageFocus) return;
+      const action = focusKeyAction(event.key);
+      if (action === "none") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (action === "close") this.closeImageFocus({ restoreFocus: true });
+      else this.stepImageFocus(action === "prev" ? -1 : 1);
+    };
+    document.addEventListener("keydown", this.imageFocusKey, true);
+  }
+
+  private detachImageFocusKeys(): void {
+    if (!this.imageFocusKey) return;
+    document.removeEventListener("keydown", this.imageFocusKey, true);
+    this.imageFocusKey = null;
+  }
+
+  private closeImageFocus(opts: { restoreFocus: boolean }): void {
+    const returnKey = this.imageFocus?.returnKey ?? "";
+    this.detachImageFocusKeys();
+    this.disposeImageFocusDom();
+    this.imageFocus = null;
+    this.imageFocusImages = [];
+    if (!opts.restoreFocus) return;
+    const thumb = this.contentEl.querySelector(
+      `.charinfo-thumb[data-id="${CSS.escape(returnKey)}"]`,
+    );
+    if (thumb instanceof HTMLElement) {
+      thumb.focus();
+      return;
+    }
+    const back = this.contentEl.querySelector(".charinfo-detail__back");
+    if (back instanceof HTMLElement) back.focus();
+  }
+
   /** `host` may be detached — a note-region patch stages the strip off-panel. */
   private async renderImageStrip(
     host: HTMLElement,
@@ -5698,7 +5952,12 @@ export class GalleryView extends FileView {
       const isCover = resolvedCoverKey === imageKey;
       const thumb = row.createDiv({
         cls: "charinfo-thumb" + (isCover ? " is-cover" : ""),
-        attr: isCover ? { title: "현재 커버" } : undefined,
+        attr: {
+          role: "button",
+          tabindex: "0",
+          "aria-label": imageLabel,
+          ...(isCover ? { title: "현재 커버" } : {}),
+        },
       });
       thumb.dataset.id = imageKey;
       const img = thumb.createEl("img", {
@@ -5712,13 +5971,28 @@ export class GalleryView extends FileView {
 
       thumb.addEventListener("click", (event) => {
         event.stopPropagation();
-        if (!this.cardEditActive) return;
-        // Instant paint; quiet strip tap (no Notice spam).
-        if (image.kind === "vault") {
-          void this.changeCover(record, image.file, false, { quiet: true });
-        } else {
-          void this.changeCoverRemote(record, image.url, false);
+        if (this.cardEditActive) {
+          if (image.kind === "vault") {
+            void this.changeCover(record, image.file, false, { quiet: true });
+          } else {
+            void this.changeCoverRemote(record, image.url, false);
+          }
+          return;
         }
+        if (
+          !shouldOpenImageFocus({
+            editMode: this.editMode,
+            batchMode: this.batchMode,
+          })
+        ) {
+          return;
+        }
+        this.openImageFocus(record.path, images, imageKey);
+      });
+      thumb.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        thumb.click();
       });
 
       if (editable && images.length > 1) {

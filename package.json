@@ -1,6 +1,6 @@
 {
   "name": "character-archive",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "Card-view character archive. Local notes, easy share.",
   "main": "main.js",
   "type": "module",
@@ -10,6 +10,7 @@
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "pack": "node scripts/pack.mjs",
     "deploy": "node scripts/deploy.mjs",
+    "deploy:reload": "node scripts/deploy.mjs --reload",
     "deploy:copy": "node scripts/deploy.mjs --no-build"
   },
   "keywords": [

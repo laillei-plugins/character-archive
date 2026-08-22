@@ -1,5 +1,6 @@
 import { App, Modal, Notice, Setting } from "obsidian";
 import type CharinfoPlugin from "../main";
+import { CREATE_GALLERY_NAME } from "./commandSurface";
 import { createGalleryPage } from "../page/galleryPage";
 import {
   FILTER_AXIS_IDS,
@@ -40,7 +41,7 @@ export class CreateGalleryModal extends Modal {
     contentEl.empty();
     contentEl.addClass("charinfo-create-gallery-modal");
     this.modalEl.addClass("charinfo-create-gallery-modal-shell");
-    this.setTitle("새 갤러리 창");
+    this.setTitle(CREATE_GALLERY_NAME);
 
     contentEl.createDiv({
       cls: "setting-item-description",

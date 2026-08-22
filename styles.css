@@ -430,6 +430,23 @@
   --charinfo-chip-fallback: var(--charinfo-status-gray);
 }
 
+/*
+ * FileView always mounts Obsidian's view-header. Minimal animates it from
+ * height 0 → header-height + 2px; that 2px sliver is the cracked "selected"
+ * bar on the top tab. The gallery already has its own header — hide the
+ * native one, same as Excalidraw.
+ */
+.workspace-leaf-content[data-type="charinfo-gallery"] > .view-header {
+  display: none;
+}
+
+.workspace-leaf-content[data-type="charinfo-gallery"] > .view-content {
+  /* Same node as `.charinfo-gallery`. Never set padding here — it outranks
+     the gallery inset and flushes the grid. */
+  height: 100%;
+  overflow: hidden;
+}
+
 .charinfo-gallery {
   position: relative;
   display: flex;
@@ -6235,4 +6252,113 @@ button.charinfo-attr-modal__type-item:focus-visible {
   .charinfo-batch-dialog__spinner {
     animation: none;
   }
+}
+
+/* Image focus. z-index 60 is above the tag menu (50). Edit drag ghost is 1000. */
+.charinfo-focus {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+}
+
+.charinfo-focus__dim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--charinfo-ink) 60%, transparent);
+}
+
+/* Ink is near-white in dark themes; the stage must stay dark. */
+.theme-dark .charinfo-focus__dim {
+  background: rgb(0 0 0 / 0.6);
+}
+
+.charinfo-focus__stage {
+  position: absolute;
+  top: var(--charinfo-space-xl);
+  right: calc(var(--size-4-8, 32px) + var(--charinfo-space-lg));
+  bottom: var(--charinfo-space-xl);
+  left: calc(var(--size-4-8, 32px) + var(--charinfo-space-lg));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.charinfo-focus:not(:has(.charinfo-focus__prev)) .charinfo-focus__stage {
+  left: var(--charinfo-space-lg);
+  right: var(--charinfo-space-lg);
+}
+
+/* Natural size, letterboxed. Do not inherit thumb `object-fit: cover`. */
+.charinfo-focus__img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  object-position: center center;
+  pointer-events: auto;
+  background: transparent;
+}
+
+.charinfo-focus .charinfo-icon-btn {
+  position: absolute;
+  z-index: 1;
+  background: color-mix(in srgb, var(--background-primary) 75%, transparent);
+}
+
+.charinfo-focus__close {
+  top: var(--charinfo-space-base);
+  right: var(--charinfo-space-base);
+}
+
+.charinfo-focus__prev {
+  top: 50%;
+  left: var(--charinfo-space-md);
+  transform: translateY(-50%);
+}
+
+.charinfo-focus__next {
+  top: 50%;
+  right: var(--charinfo-space-md);
+  transform: translateY(-50%);
+}
+
+.charinfo-focus .charinfo-icon-btn[aria-disabled="true"] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.charinfo-gallery.is-narrow .charinfo-focus__stage {
+  left: var(--charinfo-space-lg);
+  right: var(--charinfo-space-lg);
+  bottom: calc(var(--size-4-8, 32px) + var(--charinfo-space-xl));
+}
+
+.charinfo-gallery.is-narrow .charinfo-focus__prev {
+  top: auto;
+  bottom: var(--charinfo-space-lg);
+  left: 25%;
+  transform: translateX(-50%);
+}
+
+.charinfo-gallery.is-narrow .charinfo-focus__next {
+  top: auto;
+  bottom: var(--charinfo-space-lg);
+  right: auto;
+  left: 75%;
+  transform: translateX(-50%);
+}
+
+.charinfo-image-strip:not(.is-editable) .charinfo-thumb {
+  cursor: zoom-in;
+}
+
+.charinfo-image-strip:not(.is-editable) .charinfo-thumb:hover,
+.charinfo-image-strip:not(.is-editable) .charinfo-thumb:focus-visible {
+  border-color: color-mix(in srgb, var(--charinfo-ink) 45%, var(--charinfo-line));
 }

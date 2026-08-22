@@ -1,4 +1,4 @@
-export const UPDATE_NOTES_VERSION = "0.1.19";
+export const UPDATE_NOTES_VERSION = "0.1.20";
 
 export function normalizeSeenUpdateNotesVersion(raw: unknown): string {
   return typeof raw === "string" ? raw.trim() : "";
@@ -43,15 +43,23 @@ kind: "character-archive-update"
 
 ## 업데이트 내용
 
-- 갤러리 편집에서 올린 커버 이미지는 캐릭터 노트에도 바로 추가돼요.
-- 노트에서 이미지를 지우면 커버 고르기와 이미지 목록에서도 사라져요. 이미지 파일은 삭제하지 않아요.
-- 노트의 첫 이미지를 커버로 쓸 때 이미지 순서를 바꾸면 카드에도 바로 반영돼요.
+- 보관함 폴더 이름을 누르면 그 보관함 갤러리만 열려요. 폴더는 펼쳐지지 않아요.
+- 보관함이 여러 개면 각각 다른 탭으로 열 수 있어요.
+- 갤러리를 열 때 탭 위쪽 줄이 어긋나 보이던 문제를 고쳤어요.
+- 리본의 격자 버튼과 «마지막 갤러리 열기» 명령이 마지막으로 봤던 갤러리를 다시 열어요. 본 적이 없으면 기본 갤러리가 열려요.
+- 읽기 모드에서 카드의 그림을 누르면 크게 볼 수 있어요. 좌우 화살표로 넘기고, X 버튼이나 Esc 키로 닫아요.
+- «이름순»을 고르면 카드 전체가 이름 순서대로 정렬돼요. 한글, 알파벳, 숫자 순서를 알아서 맞춰요.
+- 명령 이름을 정리했어요. 새로 만들 때는 «새 갤러리 만들기», 이미지 복구는 «예전 폴더 이미지 다시 연결»이에요.
 
 ---
 
 ## What's new
 
-- A cover uploaded from gallery edit mode is now added to the character note too.
-- Removing an image from the note also removes it from the cover picker and image list. The image file itself is not deleted.
-- When the first note image is used as the cover, reordering images now updates the card immediately.
+- Clicking a library folder name opens that library's gallery only. The folder stays collapsed.
+- Multiple libraries can stay open in separate tabs.
+- Opening a gallery no longer splits the top tab line.
+- The grid ribbon button and the "마지막 갤러리 열기" command reopen the gallery you last viewed. If you haven't opened one yet, the default gallery opens.
+- In reading mode, click a card image to see it large. Move with the left/right arrows; close with the X button or Esc.
+- Choosing "이름순" sorts every card by name — Korean, alphabet, and numbers in natural order.
+- Command names were tidied: creating a gallery is now "새 갤러리 만들기", and image repair is "예전 폴더 이미지 다시 연결".
 `;
