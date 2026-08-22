@@ -187,7 +187,7 @@ export async function executeBatchGroupMove(
     // The handler always throws, so `result` is never the rejected branch.
     const result: BatchWriteResult = await write(entry).catch(
       async (error: unknown): Promise<never> => {
-        const failures = await rollbackApplied(applied, rollback);
+        const failures = await rollbackBatchApplied(applied, rollback);
         throw new BatchGroupMoveError({
           reason: error,
           failedPath: entry.path,
@@ -209,7 +209,7 @@ export async function executeBatchGroupMove(
 }
 
 /** Reverse-order return trip. Every refusal is collected, never thrown. */
-async function rollbackApplied(
+export async function rollbackBatchApplied(
   applied: readonly BatchAppliedMove[],
   rollback: BatchMoveRollback,
 ): Promise<BatchRollbackFailure[]> {

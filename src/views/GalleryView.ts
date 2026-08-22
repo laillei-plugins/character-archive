@@ -87,6 +87,7 @@ import {
   normalizeMoveGroup,
   planBatchGroupMove,
   reconcileBatchSelection,
+  rollbackBatchApplied,
   runBatchTransaction,
   type BatchModeSurface,
   type BatchMoveEntry,
@@ -144,6 +145,8 @@ import { ShareGalleryModal } from "../ui/ShareGalleryModal";
 import { AttrManageModal } from "../ui/AttrManageModal";
 import { BatchGroupMoveDialog } from "../ui/BatchGroupMoveDialog";
 import { GroupRenameDialog } from "../ui/GroupRenameDialog";
+import { CharacterNameModal } from "../ui/CharacterNameModal";
+import { remapPathKey } from "../data/characterName";
 import {
   groupAddProblem,
   groupRenameErrorMessage,
@@ -279,6 +282,7 @@ export class GalleryView extends FileView {
   private batchFreeze = new BatchRefreshFreeze();
   private batchNoticeTimer: number | null = null;
   private groupRenameDialog: GroupRenameDialog | null = null;
+  private characterNameModal: CharacterNameModal | null = null;
   private groupRenameSaving = false;
   private groupRenameSource = "";
   /**
@@ -307,10 +311,10 @@ export class GalleryView extends FileView {
   /** Newest gesture's UI generation — what the drain is allowed to repaint. */
   private orderLaneGeneration = 0;
   /** Serialize cover writes per character so rapid strip taps don't race. */
-  private coverWriteChain = new Map<string, Promise<void>>();
+  private coverWriteChain = new Map<TFile, Promise<void>>();
   /** Latest cover intent per path (coalesce while a write is in flight). */
   private coverLatest = new Map<
-    string,
+    TFile,
     | { kind: "vault"; file: TFile }
     | { kind: "remote"; url: string }
     | { kind: "default" }
@@ -523,6 +527,8 @@ export class GalleryView extends FileView {
     // right to paint. Bumping the generation is what revokes that right.
     this.uiGeneration += 1;
     this.closeGroupRenameDialog();
+    this.characterNameModal?.close();
+    this.characterNameModal = null;
     this.teardownBatchMode();
   }
 
@@ -877,6 +883,8 @@ export class GalleryView extends FileView {
     this.viewClosed = true;
     this.uiGeneration += 1;
     this.closeGroupRenameDialog();
+    this.characterNameModal?.close();
+    this.characterNameModal = null;
     this.teardownBatchMode();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
@@ -1190,20 +1198,78 @@ export class GalleryView extends FileView {
     const archiveName = this.activeArchive().trim();
     const archive = normalizeArchiveKey(this.activeArchive());
     const target = normalizeGroupKey(name);
+    const observed = this.namedGroups();
     const problem = groupAddProblem({
       name: target,
-      existing: this.namedGroups(),
+      existing: observed,
       defaultRouteVisible: true,
     });
     if (problem) throw new GroupOperationError(groupRenameErrorMessage(problem));
-    const order = [...this.routeOrder(), target];
-    await this.plugin.commitSettings((settings) => {
-      ensureGroupSchema(settings, library, archive, target);
-      if (archiveName) {
-        setGroupRouteOrderFor(settings, library, archiveName, order);
-      }
+    await this.persistNewGroupRoute({
+      library,
+      archive,
+      archiveName,
+      target,
+      observed,
     });
     this.invalidateProjectionCaches();
+  }
+
+  /**
+   * Create one canonical route against the settings state that owns the write
+   * lock. Reading and merging inside `commitSettings` matters: two galleries
+   * may begin from the same old list, but the second callback must see the
+   * first callback's new schema and rank instead of overwriting either one.
+   */
+  private async persistNewGroupRoute(input: {
+    library: string;
+    archive: string;
+    archiveName: string;
+    target: string;
+    observed: readonly string[];
+  }): Promise<void> {
+    await this.plugin.commitSettings((settings) => {
+      const storedOrder = getGroupRouteOrderFor(
+        settings,
+        input.library,
+        input.archiveName,
+      );
+      const existing = [
+        ...persistedGroupsForArchive(
+          settings,
+          input.library,
+          input.archive,
+        ),
+        ...storedOrder,
+        ...input.observed,
+      ];
+      const problem = groupAddProblem({
+        name: input.target,
+        existing,
+        defaultRouteVisible: true,
+      });
+      if (problem) {
+        throw new GroupOperationError(groupRenameErrorMessage(problem));
+      }
+      const order = resolveGroupRouteOrder(storedOrder, [
+        ...existing,
+        input.target,
+      ]);
+      ensureGroupSchema(
+        settings,
+        input.library,
+        input.archive,
+        input.target,
+      );
+      if (input.archiveName) {
+        setGroupRouteOrderFor(
+          settings,
+          input.library,
+          input.archiveName,
+          order,
+        );
+      }
+    });
   }
 
   /**
@@ -1798,7 +1864,9 @@ export class GalleryView extends FileView {
     if (button instanceof HTMLElement) button.focus();
   }
 
-  private openBatchDialog(): void {
+  private openBatchDialog(
+    opts: { initialCreateName?: string; createError?: string } = {},
+  ): void {
     if (!this.batchMode || this.batchSaving) return;
     const selected = this.selectedBatchRecords();
     if (selected.length === 0) return;
@@ -1812,11 +1880,25 @@ export class GalleryView extends FileView {
       host: this.contentEl,
       selectedCount: selected.length,
       rows,
+      initialCreateName: opts.initialCreateName,
+      setIcon: (el, icon) => setIcon(el, icon),
+      // One validation authority for group names, borrowed as-is. The dialog
+      // only overrides what it can say better about a row already on screen.
+      validateNewGroup: (name) => {
+        const problem = groupAddProblem({
+          name: normalizeGroupKey(name),
+          existing: this.namedGroups(),
+          defaultRouteVisible: true,
+        });
+        return problem ? groupRenameErrorMessage(problem) : null;
+      },
       onCancel: () => this.closeBatchDialog({ restoreFocus: true }),
       onConfirm: (destination) => void this.runBatchGroupMove(destination),
+      onCreate: (name) => void this.runBatchGroupCreateAndMove(name),
     });
     this.batchDialog = dialog;
     dialog.open();
+    if (opts.createError) dialog.showCreateError(opts.createError);
     this.syncGalleryInert();
   }
 
@@ -1917,6 +1999,131 @@ export class GalleryView extends FileView {
       reportFailure: (failure: unknown) => {
         this.reportBatchFailure(failure);
         this.focusBatchMoveButton();
+      },
+      reportSuccess: (outcome: BatchMoveOutcome) => {
+        new Notice(
+          batchMoveSuccessMessage(outcome.changed, plan.destination),
+          BATCH_NOTICE_MS,
+        );
+        this.focusBatchHeaderButton();
+      },
+    });
+  }
+
+  /**
+   * Create one group and move the selection into it as a single commitment.
+   *
+   * The stage order is the *inverse* of `runBatchGroupMove`, and deliberately:
+   * an existing destination is already canonical, so its schema is a preflight,
+   * but a brand-new group has no reason to exist unless the notes actually
+   * arrive. Notes first, then one `commitSettings` for the schema and the route
+   * rank; if that commit fails, the note writes unwind in reverse order and the
+   * archive is left exactly as it was — no stranded empty group, no note
+   * pointing at a route that was never persisted.
+   *
+   * `commitSettings` restores its own pre-mutation snapshot on failure, so the
+   * settings half needs no undo of ours — only the notes do.
+   */
+  private async runBatchGroupCreateAndMove(name: string): Promise<void> {
+    if (!this.batchMode || this.batchSaving) return;
+    const scope = this.batchScope;
+    const dialog = this.batchDialog;
+    if (!scope || !dialog) return;
+
+    const library = this.pageLibrary();
+    const archiveName = this.activeArchive().trim();
+    const target = normalizeGroupKey(name);
+    const observed = this.namedGroups();
+    // The dialog validated this already; repeat the cheap preflight here so a
+    // newly stale name stays beside the input. `persistNewGroupRoute` repeats
+    // it again under the settings lock to close the cross-gallery race.
+    const problem = groupAddProblem({
+      name: target,
+      existing: observed,
+      defaultRouteVisible: true,
+    });
+    if (problem) {
+      dialog.showCreateError(groupRenameErrorMessage(problem));
+      return;
+    }
+
+    const plan = this.planBatchMove(target);
+    if (!plan || plan.total === 0) return;
+
+    const generation = this.uiGeneration;
+    this.batchSaving = true;
+    dialog.beginSaving();
+
+    await runBatchTransaction({
+      freeze: () => this.batchFreeze.freeze(),
+      perform: async () => {
+        const outcome = await executeBatchGroupMove(
+          plan,
+          (entry) => this.writeBatchGroup(entry, scope),
+          (entry, previousGroup) =>
+            this.rollbackBatchGroup(entry, previousGroup),
+        );
+        // Only now may the group become canonical: every note that will point
+        // at it already does.
+        try {
+          await this.persistNewGroupRoute({
+            library,
+            archive: scope.archive,
+            archiveName,
+            target: plan.destination,
+            observed,
+          });
+        } catch (error) {
+          const rollbackFailures = await rollbackBatchApplied(
+            outcome.applied,
+            (entry, previousGroup) =>
+              this.rollbackBatchGroup(entry, previousGroup),
+          );
+          throw new BatchGroupMoveError({
+            reason: error,
+            // The failure is the settings commit, not any one note.
+            failedPath: "",
+            attempted: outcome.attempted,
+            rolledBack: outcome.applied.length - rollbackFailures.length,
+            rollbackFailures,
+          });
+        }
+        return { outcome, touchedDisk: plan.moves.length > 0 };
+      },
+      thaw: () => this.batchFreeze.thaw(),
+      settle: () => {
+        this.batchSaving = false;
+      },
+      commit: (outcome: BatchMoveOutcome) => {
+        for (const move of outcome.applied) {
+          const record = this.records.find((item) => item.path === move.path);
+          if (!record) continue;
+          record.그룹 = plan.destination;
+          record.values.그룹 = plan.destination;
+        }
+        this.plugin.reconcileGroupMembers(
+          library,
+          scope.archive,
+          plan.destination,
+        );
+        this.invalidateProjectionCaches();
+      },
+      uiAlive: () => this.uiAlive(generation),
+      markDirty: () => this.plugin.markGalleriesDirty(),
+      closeDialog: () => this.closeBatchDialog(),
+      exitSelection: () => this.teardownBatchMode(),
+      refresh: () => this.refresh(),
+      render: () => this.render(),
+      reportFailure: (failure: unknown) => {
+        this.reportBatchFailure(failure);
+        const reason =
+          failure instanceof BatchGroupMoveError ? failure.reason : failure;
+        this.openBatchDialog({
+          initialCreateName: name,
+          createError:
+            reason instanceof GroupOperationError ? reason.message : undefined,
+        });
+        if (!this.batchDialog) this.focusBatchMoveButton();
       },
       reportSuccess: (outcome: BatchMoveOutcome) => {
         new Notice(
@@ -2296,6 +2503,49 @@ export class GalleryView extends FileView {
     if (this.selected?.path !== path) return false;
     await this.refreshNoteRegions(known);
     return false;
+  }
+
+  /**
+   * Vault rename events arrive before metadata refreshes. Repair copied paths
+   * synchronously so selection, menus, and DOM lookups never point at a file
+   * that has already moved.
+   */
+  handleCharacterRenamed(
+    oldPath: string,
+    newPath: string,
+    file: TFile,
+    syncTitle = true,
+  ): void {
+    if (oldPath === newPath) return;
+    const renamed: CharacterRecord[] = [];
+    for (const record of this.records) {
+      if (record.path !== oldPath) continue;
+      record.path = newPath;
+      record.file = file;
+      if (syncTitle) {
+        record.이름 = file.basename;
+        record.values.이름 = file.basename;
+        record.title = file.basename;
+      }
+      renamed.push(record);
+    }
+
+    if (this.batchSelection.delete(oldPath)) this.batchSelection.add(newPath);
+    this.tagMenuPath = remapPathKey(this.tagMenuPath, oldPath, newPath);
+    this.detailRequestId += 1;
+    this.noteRefreshGeneration += 1;
+
+    this.contentEl
+      .querySelectorAll<HTMLElement>(`[data-path="${CSS.escape(oldPath)}"]`)
+      .forEach((element) => {
+        element.dataset.path = newPath;
+      });
+
+    for (const record of renamed) this.repaintCard(record);
+    if (syncTitle && this.selected && renamed.includes(this.selected)) {
+      const detail = this.contentEl.querySelector(".charinfo-gallery__detail");
+      if (detail instanceof HTMLElement) void this.renderDetail(detail);
+    }
   }
 
   /** Cover + embedded/folder image identity of the panel's image strip. */
@@ -4836,13 +5086,15 @@ export class GalleryView extends FileView {
     opts?: { quiet?: boolean },
   ): Promise<void> {
     const quiet = opts?.quiet === true;
-    const path = record.path;
+    // TFile identity survives a rename; path strings do not. Keeping cover
+    // writes on the file prevents a name edit from opening a second lane.
+    const key = record.file;
     const snapshot = {
       cover: record.cover,
       coverPosition: record.coverPosition,
     };
 
-    this.coverLatest.set(path, intent);
+    this.coverLatest.set(key, intent);
     if (intent.kind === "vault") {
       record.cover = intent.file.path;
       record.coverPosition = "50% 50%";
@@ -4868,11 +5120,11 @@ export class GalleryView extends FileView {
       }
     }
 
-    const prev = this.coverWriteChain.get(path) ?? Promise.resolve();
+    const prev = this.coverWriteChain.get(key) ?? Promise.resolve();
     const chain = prev.catch(() => undefined).then(async () => {
       // Drain until the latest intent is persisted (coalesce rapid taps).
       for (;;) {
-        const latest = this.coverLatest.get(path);
+        const latest = this.coverLatest.get(key);
         if (!latest) return;
         this.plugin.suppressGalleryRefresh = true;
         try {
@@ -4888,28 +5140,28 @@ export class GalleryView extends FileView {
         } catch (error) {
           console.error("Cover write failed", error);
           // Rollback only if this failed intent is still the latest.
-          if (this.coverLatest.get(path) === latest) {
+          if (this.coverLatest.get(key) === latest) {
             record.cover = snapshot.cover;
             record.coverPosition = snapshot.coverPosition;
             this.syncCoverPreview(record);
             new Notice("커버 변경에 실패했어요");
-            this.coverLatest.delete(path);
+            this.coverLatest.delete(key);
           }
           return;
         } finally {
           this.plugin.suppressGalleryRefresh = false;
         }
-        if (this.coverLatest.get(path) === latest) {
-          this.coverLatest.delete(path);
+        if (this.coverLatest.get(key) === latest) {
+          this.coverLatest.delete(key);
           return;
         }
         // Newer tap arrived while we wrote — loop with the new intent.
       }
     });
-    this.coverWriteChain.set(path, chain);
+    this.coverWriteChain.set(key, chain);
     await chain;
-    if (this.coverWriteChain.get(path) === chain) {
-      this.coverWriteChain.delete(path);
+    if (this.coverWriteChain.get(key) === chain) {
+      this.coverWriteChain.delete(key);
     }
   }
 
@@ -5236,6 +5488,51 @@ export class GalleryView extends FileView {
 
     const titleWrap = head.createDiv({ cls: "charinfo-detail__title-wrap" });
     titleWrap.createEl("h3", { text: record.title });
+    if (this.cardEditActive) {
+      const rename = titleWrap.createEl("button", {
+        cls: "clickable-icon charinfo-detail__title-rename",
+        attr: {
+          type: "button",
+          title: "이름 바꾸기",
+          "aria-label": "이름 바꾸기",
+        },
+      });
+      setIcon(rename, "pencil");
+      rename.addEventListener("click", () => {
+        this.characterNameModal?.close();
+        const modal = new CharacterNameModal(this.app, {
+          title: "캐릭터 이름 바꾸기",
+          initialName: record.이름 || record.file.basename,
+          submitText: "이름 바꾸기",
+          savingText: "바꾸는 중…",
+          onSubmit: async (name) => {
+            const result = await this.plugin.renameCharacterFromGallery(
+              record.file,
+              name,
+              record.이름,
+            );
+            if (!result.ok) return result.error ?? "이름을 바꾸지 못했어요.";
+            record.이름 = result.name;
+            record.values.이름 = result.name;
+            record.title = result.name;
+            this.repaintCard(record);
+            new Notice("이름과 노트 파일명을 바꿨어요.");
+            return null;
+          },
+          onClose: () => {
+            if (this.characterNameModal === modal) this.characterNameModal = null;
+            if (this.selected?.file === record.file) {
+              const liveDetail = this.contentEl.querySelector(
+                ".charinfo-gallery__detail",
+              );
+              if (liveDetail instanceof HTMLElement) void this.renderDetail(liveDetail);
+            }
+          },
+        });
+        this.characterNameModal = modal;
+        modal.open();
+      });
+    }
 
     const actions = head.createDiv({ cls: "charinfo-detail__actions" });
     const openBtn = actions.createEl("button", {

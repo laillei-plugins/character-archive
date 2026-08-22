@@ -56,6 +56,7 @@ import {
   normalizeMoveGroup,
   planBatchGroupMove,
   reconcileBatchSelection,
+  rollbackBatchApplied,
   runBatchTransaction,
   type BatchDestinationRow,
   type BatchMoveEntry,
@@ -68,6 +69,8 @@ import {
 } from "../src/data/batchGroupMove.ts";
 // Runtime-import-free too, so the shipped dialog runs here as-is.
 import { BatchGroupMoveDialog } from "../src/ui/BatchGroupMoveDialog.ts";
+import { groupAddProblem } from "../src/data/groupRename.ts";
+import { resolveGroupRouteOrder } from "../src/data/order.ts";
 
 /** A plan built straight from `(path, group)` pairs. */
 function plan(
@@ -301,6 +304,76 @@ test("execute: a write failure rolls back in exact reverse order", async () => {
     "b.md": "기타",
     "c.md": "기타",
   });
+});
+
+test("execute: a later settings failure can unwind every applied note", async () => {
+  const vault = fakeVault({ "a.md": "기타", "b.md": "조연" });
+  const outcome = await executeBatchGroupMove(
+    plan(
+      [
+        ["a.md", "기타"],
+        ["b.md", "조연"],
+      ],
+      "새 그룹",
+    ),
+    vault.write,
+    vault.rollback,
+  );
+
+  // This is the same post-write unwind GalleryView invokes when the single
+  // schema/order settings commit fails.
+  const failures = await rollbackBatchApplied(outcome.applied, vault.rollback);
+  assert.deepEqual(failures, []);
+  assert.deepEqual(vault.rollbacks, ["b.md", "a.md"]);
+  assert.deepEqual(vault.groups, { "a.md": "기타", "b.md": "조연" });
+});
+
+test("settings serialization: competing X/X creation rejects the stale second name", () => {
+  let stored = ["기존", ""];
+  const persisted = ["기존"];
+  const commit = (target: string): boolean => {
+    const existing = [...persisted, ...stored];
+    if (
+      groupAddProblem({
+        name: target,
+        existing,
+        defaultRouteVisible: true,
+      })
+    ) {
+      return false;
+    }
+    stored = resolveGroupRouteOrder(stored, [...existing, target]);
+    persisted.push(target);
+    return true;
+  };
+
+  assert.equal(commit("X"), true);
+  assert.equal(commit("X"), false);
+  assert.deepEqual(stored, ["기존", "", "X"]);
+  assert.deepEqual(persisted, ["기존", "X"]);
+});
+
+test("settings serialization: competing X/Y creation merges the latest order", () => {
+  let stored = ["기존", ""];
+  const persisted = ["기존"];
+  const commit = (target: string): void => {
+    const existing = [...persisted, ...stored];
+    assert.equal(
+      groupAddProblem({
+        name: target,
+        existing,
+        defaultRouteVisible: true,
+      }),
+      null,
+    );
+    stored = resolveGroupRouteOrder(stored, [...existing, target]);
+    persisted.push(target);
+  };
+
+  commit("X");
+  commit("Y");
+  assert.deepEqual(stored, ["기존", "", "X", "Y"]);
+  assert.deepEqual(persisted, ["기존", "X", "Y"]);
 });
 
 test("execute: a missing file is a conflict that aborts and unwinds", async () => {
@@ -1144,6 +1217,7 @@ class FakeNode {
   /** Only the harness root is connected; everything else inherits from it. */
   isRoot = false;
   textContent = "";
+  value = "";
   disabled = false;
   private readonly handlers = new Map<string, FakeListener[]>();
 
@@ -1186,6 +1260,7 @@ class FakeNode {
 
   setAttribute(name: string, value: string): void {
     this.attrs.set(name, value);
+    if (name === "value") this.value = value;
     if (name.startsWith("data-")) this.dataset[datasetKey(name)] = value;
   }
 
@@ -1217,6 +1292,11 @@ class FakeNode {
 
   setText(text: string): void {
     this.textContent = text;
+  }
+
+  empty(): void {
+    for (const child of this.children) child.parent = null;
+    this.children.length = 0;
   }
 
   remove(): void {
@@ -1374,7 +1454,11 @@ const rowsFor = (groups: string[], selectedGroups: string[]) =>
  */
 function openScene(
   rows: readonly BatchDestinationRow[],
-  opts: { selectedCount?: number } = {},
+  opts: {
+    selectedCount?: number;
+    validateNewGroup?: (name: string) => string | null;
+    initialCreateName?: string;
+  } = {},
 ) {
   fakeDoc.reset();
   const root = fakeDoc.body.createDiv({ cls: "charinfo-gallery" });
@@ -1392,8 +1476,12 @@ function openScene(
     host: root as unknown as HTMLElement,
     selectedCount: opts.selectedCount ?? Math.max(rows.length, 1),
     rows,
+    initialCreateName: opts.initialCreateName,
+    setIcon: (el, icon) => el.setAttribute("data-icon", icon),
+    validateNewGroup: opts.validateNewGroup ?? (() => null),
     onCancel: () => events.push("cancel"),
     onConfirm: (destination) => events.push(`confirm:${destination}`),
+    onCreate: (name) => events.push(`create:${name}`),
   });
   dialog.open();
 
@@ -1426,8 +1514,8 @@ test("dialog: 취소 and 이동 are the whole vocabulary — no injected X", () 
   const scene = openScene(rowsFor(["주연", "조연", "기타"], ["조연"]), {
     selectedCount: 1,
   });
-  // Three destinations, two footer actions, and the batch bar's own opener.
-  assert.equal(scene.all("button").length, 6);
+  // Three destinations, 새 그룹 만들기, two footer actions, and the opener.
+  assert.equal(scene.all("button").length, 7);
   for (const button of scene.all("button")) {
     const label = [
       button.textContent,
@@ -1455,8 +1543,8 @@ test("dialog: focus opens on the first eligible destination", () => {
 
 test("dialog: Tab is trapped at both ends", () => {
   const scene = openScene(rowsFor(["주연", "조연"], []), { selectedCount: 2 });
-  // Tabbable: the chosen radio, then 취소, then 이동. The unchosen row carries
-  // tabindex="-1", so Tab never stops on it.
+  // Tabbable: the chosen radio, 새 그룹 만들기, 취소, 이동. The unchosen row
+  // carries tabindex="-1", so Tab never stops on it.
   const chosen = scene.dests()[0];
   assert.equal(scene.dests()[1]?.getAttribute("tabindex"), "-1");
   const cancel = scene.find(".charinfo-batch-dialog__cancel");
@@ -1579,6 +1667,139 @@ test("dialog: 이동 confirms the chosen destination exactly once", () => {
   assert.deepEqual(scene.events, ["confirm:조연"]);
 });
 
+test("dialog: 새 그룹 만들기는 radiogroup 밖의 명확한 다음 단계다", () => {
+  const scene = openScene(rowsFor(["주연", "조연"], []), {
+    selectedCount: 2,
+  });
+  const create = scene.find(".charinfo-batch-dialog__create");
+  const list = scene.find(".charinfo-batch-dialog__list");
+  assert.equal(create.parent, list.parent);
+  assert.ok(!list.contains(create));
+  assert.equal(
+    scene.find(".charinfo-batch-dialog__create-name").textContent,
+    "새 그룹 만들기",
+  );
+  assert.equal(
+    scene.find(".charinfo-batch-dialog__create-meta").textContent,
+    "이름을 정하고 바로 옮겨요",
+  );
+  assert.equal(
+    scene.find(".charinfo-batch-dialog__create-icon").getAttribute("data-icon"),
+    "plus",
+  );
+  assert.equal(
+    scene
+      .find(".charinfo-batch-dialog__create-chevron")
+      .getAttribute("data-icon"),
+    "chevron-right",
+  );
+});
+
+test("dialog: create state focuses the name and submits a valid name with Enter", () => {
+  const scene = openScene(rowsFor(["주연"], []), { selectedCount: 2 });
+  scene.find(".charinfo-batch-dialog__create").click();
+
+  const input = scene.find(".charinfo-batch-dialog__input");
+  const confirm = scene.find(".charinfo-batch-dialog__confirm");
+  assert.equal(fakeDoc.activeElement, input);
+  assert.equal(input.getAttribute("placeholder"), "예: 조연");
+  assert.equal(confirm.textContent, "만들고 2명 옮기기");
+  assert.equal(confirm.disabled, true);
+  assert.equal(
+    scene.find(".charinfo-batch-dialog__hint").textContent,
+    "새 그룹을 만들고 선택한 2명을 바로 옮겨요.",
+  );
+
+  input.value = "  새 그룹  ";
+  input.dispatch("input");
+  assert.equal(confirm.disabled, false);
+  const enter = fakeDoc.press("Enter");
+  assert.equal(enter.defaultPrevented, true);
+  assert.deepEqual(scene.events, ["create:새 그룹"]);
+});
+
+test("dialog: create validation distinguishes selectable and no-op duplicates", () => {
+  const selectable = openScene(rowsFor(["주연", "조연"], ["주연"]), {
+    selectedCount: 2,
+  });
+  selectable.find(".charinfo-batch-dialog__create").click();
+  const selectableInput = selectable.find(".charinfo-batch-dialog__input");
+  selectableInput.value = "조연";
+  selectableInput.dispatch("input");
+  assert.equal(
+    selectable.find(".charinfo-batch-dialog__error").textContent,
+    "이미 있는 그룹이에요. 그룹 목록에서 선택해 주세요.",
+  );
+  assert.equal(selectableInput.getAttribute("aria-invalid"), "true");
+
+  const noOp = openScene(rowsFor(["주연"], ["주연", "주연"]), {
+    selectedCount: 2,
+  });
+  noOp.find(".charinfo-batch-dialog__create").click();
+  const noOpInput = noOp.find(".charinfo-batch-dialog__input");
+  noOpInput.value = "주연";
+  noOpInput.dispatch("input");
+  assert.equal(
+    noOp.find(".charinfo-batch-dialog__error").textContent,
+    "선택한 캐릭터가 이미 모두 ‘주연’ 그룹에 있어요. 다른 이름을 입력해 주세요.",
+  );
+});
+
+test("dialog: canonical name errors stay inline and Back preserves the draft", () => {
+  const scene = openScene(rowsFor(["주연"], []), {
+    selectedCount: 1,
+    validateNewGroup: (name) =>
+      name === "금지" ? "이 이름은 사용할 수 없어요." : null,
+  });
+  scene.find(".charinfo-batch-dialog__create").click();
+  let input = scene.find(".charinfo-batch-dialog__input");
+  input.value = "금지";
+  input.dispatch("input");
+  assert.equal(
+    scene.find(".charinfo-batch-dialog__error").textContent,
+    "이 이름은 사용할 수 없어요.",
+  );
+  assert.equal(scene.find(".charinfo-batch-dialog__confirm").disabled, true);
+
+  scene.find(".charinfo-batch-dialog__back").click();
+  assert.ok(
+    fakeDoc.activeElement?.classes.has("charinfo-batch-dialog__create"),
+  );
+  scene.find(".charinfo-batch-dialog__create").click();
+  input = scene.find(".charinfo-batch-dialog__input");
+  assert.equal(input.value, "금지");
+});
+
+test("dialog: saving in create state locks Back, input, and both footer actions", () => {
+  const scene = openScene([], { selectedCount: 3 });
+  scene.find(".charinfo-batch-dialog__create").click();
+  const input = scene.find(".charinfo-batch-dialog__input");
+  input.value = "새 그룹";
+  input.dispatch("input");
+  scene.dialog.beginSaving();
+
+  assert.equal(scene.find(".charinfo-batch-dialog__back").disabled, true);
+  assert.equal(input.disabled, true);
+  assert.equal(scene.find(".charinfo-batch-dialog__cancel").disabled, true);
+  assert.equal(scene.find(".charinfo-batch-dialog__confirm").disabled, true);
+  fakeDoc.press("Enter");
+  assert.deepEqual(scene.events, []);
+});
+
+test("dialog: a recoverable failure can reopen the create state with its draft", () => {
+  const scene = openScene(rowsFor(["주연"], []), {
+    selectedCount: 2,
+    initialCreateName: "새 그룹",
+  });
+  const input = scene.find(".charinfo-batch-dialog__input");
+  assert.equal(input.value, "새 그룹");
+  assert.equal(fakeDoc.activeElement, input);
+  assert.equal(
+    scene.find(".charinfo-batch-dialog__confirm").textContent,
+    "만들고 2명 옮기기",
+  );
+});
+
 test("dialog: close disposes its document listener and is idempotent", () => {
   const scene = openScene(rowsFor(["주연"], []), { selectedCount: 1 });
   assert.equal(fakeDoc.listenerCount("keydown"), 1);
@@ -1651,7 +1872,7 @@ test("dialog: its own restore returns focus to the opener, and skips a detached 
   assert.equal(fakeDoc.activeElement, chosen);
 });
 
-test("dialog: no eligible destination — 이동 is dead and the row says why", () => {
+test("dialog: no eligible destination keeps the reason and offers 새 그룹 만들기", () => {
   const scene = openScene(rowsFor(["주연"], ["주연", "주연"]), {
     selectedCount: 2,
   });
@@ -1661,16 +1882,11 @@ test("dialog: no eligible destination — 이동 is dead and the row says why", 
     dest?.querySelector(".charinfo-batch-dialog__dest-meta")?.textContent,
     "이미 모두 이 그룹에 있어요",
   );
-  assert.deepEqual(
-    scene.all(".charinfo-batch-dialog__empty").map((el) => el.textContent),
-    ["선택한 캐릭터가 이미 모든 그룹에 있어요."],
-  );
-
   const confirm = scene.find(".charinfo-batch-dialog__confirm");
   assert.equal(confirm.disabled, true);
-  // Focus falls back to 취소 — never onto a disabled row.
+  // Focus advances to the only productive action — never onto a disabled row.
   assert.ok(
-    fakeDoc.activeElement?.classes.has("charinfo-batch-dialog__cancel"),
+    fakeDoc.activeElement?.classes.has("charinfo-batch-dialog__create"),
   );
 
   // Even reaching past the disabled attribute, there is nothing to confirm.
@@ -1683,21 +1899,20 @@ test("dialog: no eligible destination — 이동 is dead and the row says why", 
   assert.deepEqual(scene.events, []);
 });
 
-test("dialog: an archive with no named group offers nothing to confirm", () => {
+test("dialog: an archive with no named group still offers 새 그룹 만들기", () => {
   const scene = openScene([], { selectedCount: 3 });
   assert.equal(scene.dests().length, 0);
-  assert.deepEqual(
-    scene.all(".charinfo-batch-dialog__empty").map((el) => el.textContent),
-    ["이 아카이브에는 옮길 그룹이 없어요."],
-  );
   const confirm = scene.find(".charinfo-batch-dialog__confirm");
   assert.equal(confirm.disabled, true);
   confirm.dispatch("click");
   assert.deepEqual(scene.events, []);
-  // The radiogroup exists but stays empty; a note is not a radio.
+  // The radiogroup stays empty; the create action is a button outside it.
   const list = scene.find(".charinfo-batch-dialog__list");
   assert.equal(list.getAttribute("role"), "radiogroup");
   assert.equal(list.children.length, 0);
+  const create = scene.find(".charinfo-batch-dialog__create");
+  assert.equal(create.parent, list.parent);
+  assert.equal(fakeDoc.activeElement, create);
 });
 
 test("dialog: two galleries can hold a dialog without colliding label ids", () => {
@@ -1854,10 +2069,20 @@ test("geometry: destination rows separate by 8px and keep a 16px shell edge", ()
   );
   assert.match(dest, /scroll-margin:\s*var\(--charinfo-space-xs\)/);
 
+});
+
+test("geometry: create controls keep safe width, alignment, and touch size", () => {
+  const create = rule(".charinfo-batch-dialog__create");
+  assert.match(create, /width:\s*auto/);
+  assert.match(create, /min-height:\s*44px/);
   assert.match(
-    rule(".charinfo-batch-dialog__empty"),
-    /padding:\s*var\(--charinfo-space-md\)\s+var\(--charinfo-space-lg\)/,
+    create,
+    /margin:\s*0 var\(--charinfo-space-xs\) var\(--charinfo-space-xs\)/,
   );
+  assert.match(rule(".charinfo-batch-dialog__back"), /min-height:\s*44px/);
+  assert.match(rule(".charinfo-batch-dialog__input"), /height:\s*44px/);
+  assert.match(rule(".charinfo-batch-dialog__form"), /min-width:\s*0/);
+  assert.match(rule(".charinfo-batch-dialog__confirm"), /white-space:\s*normal/);
 });
 
 test("geometry: the narrow sheet and bar respect the safe area", () => {

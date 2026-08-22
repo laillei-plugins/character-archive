@@ -2910,6 +2910,21 @@ span.charinfo-status.is-static {
 .charinfo-detail__title-wrap h3 {
   margin: 0;
   font-size: 1rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.charinfo-detail__title-rename {
+  flex: 0 0 auto;
+  width: var(--size-4-7, 28px);
+  height: var(--size-4-7, 28px);
+  color: var(--text-muted);
+}
+
+.charinfo-detail__title-rename:hover {
+  color: var(--text-normal);
 }
 
 .charinfo-detail__title-input {
@@ -2936,6 +2951,61 @@ span.charinfo-status.is-static {
 .charinfo-detail__title-input:focus-visible {
   border-color: var(--charinfo-accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--charinfo-accent) 28%, transparent);
+}
+
+/* Native modal shell: Obsidian owns the single close button and focus return. */
+.modal.charinfo-character-name-modal {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.charinfo-character-name-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--charinfo-space-lg, 16px);
+}
+
+.charinfo-character-name-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--charinfo-space-sm, 8px);
+}
+
+.charinfo-character-name-modal__label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  font-weight: 650;
+}
+
+.charinfo-character-name-modal__input {
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--charinfo-space-md, 12px);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s, 6px);
+  background: var(--background-primary);
+}
+
+.charinfo-character-name-modal__input:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+}
+
+.charinfo-character-name-modal__input[aria-invalid="true"] {
+  border-color: var(--text-error);
+}
+
+.charinfo-character-name-modal__error {
+  min-height: 1.35em;
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1.35;
+}
+
+.charinfo-character-name-modal__foot {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .charinfo-detail__actions {
@@ -5749,13 +5819,15 @@ button.charinfo-attr-modal__type-item:focus-visible {
   padding: var(--charinfo-space-lg);
 }
 
-.charinfo-group-rename-dialog__label {
+.charinfo-group-rename-dialog__label,
+.charinfo-batch-dialog__label {
   color: var(--charinfo-muted);
   font-size: var(--font-ui-smaller, 12px);
   font-weight: 650;
 }
 
-.charinfo-group-rename-dialog__input {
+.charinfo-group-rename-dialog__input,
+.charinfo-batch-dialog__input {
   width: 100%;
   height: 40px;
   min-width: 0;
@@ -5766,22 +5838,42 @@ button.charinfo-attr-modal__type-item:focus-visible {
   color: var(--charinfo-ink);
 }
 
-.charinfo-group-rename-dialog__input:focus {
+.charinfo-batch-dialog__input {
+  height: 44px;
+}
+
+.charinfo-group-rename-dialog__input:focus,
+.charinfo-batch-dialog__input:focus {
   border-color: var(--charinfo-accent);
   outline: none;
   box-shadow: 0 0 0 2px
     color-mix(in srgb, var(--charinfo-accent) 18%, transparent);
 }
 
-.charinfo-group-rename-dialog__input[aria-invalid="true"] {
+.charinfo-group-rename-dialog__input[aria-invalid="true"],
+.charinfo-batch-dialog__input[aria-invalid="true"] {
   border-color: var(--text-error);
 }
 
-.charinfo-group-rename-dialog__error {
+.charinfo-group-rename-dialog__error,
+.charinfo-batch-dialog__error {
   min-height: 1.35em;
   color: var(--text-error);
   font-size: var(--font-ui-smaller, 12px);
   line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * The body is the only scroll region: the head keeps the count in view and the
+ * foot keeps 취소 · 이동 reachable, so a state swap never moves either one.
+ */
+.charinfo-batch-dialog__body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
 }
 
 .charinfo-batch-dialog__list {
@@ -5789,7 +5881,6 @@ button.charinfo-attr-modal__type-item:focus-visible {
   flex-direction: column;
   gap: var(--charinfo-space-md);
   min-height: 0;
-  overflow-y: auto;
   padding: var(--charinfo-space-xs);
 }
 
@@ -5890,12 +5981,137 @@ button.charinfo-attr-modal__type-item:focus-visible {
   white-space: nowrap;
 }
 
-.charinfo-batch-dialog__empty {
+/*
+ * 새 그룹 만들기 — a door, not a room. It borrows the destination row's grid so
+ * the icon column lines up with the radio column, but it carries no radio mark
+ * and no member count: a chevron says it opens somewhere instead.
+ */
+.charinfo-batch-dialog__create {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--charinfo-space-md);
+  width: auto;
+  min-height: 44px;
+  height: auto;
+  margin: 0 var(--charinfo-space-xs) var(--charinfo-space-xs);
+  padding: var(--charinfo-space-md) var(--charinfo-space-base);
+  border: 1px solid transparent;
+  border-radius: var(--charinfo-radius-lg);
+  background: transparent;
+  box-shadow: none;
+  color: var(--charinfo-ink);
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.charinfo-batch-dialog__create:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+}
+
+.charinfo-batch-dialog__create:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.charinfo-batch-dialog__create:focus-visible {
+  outline: 2px solid var(--charinfo-accent);
+  outline-offset: 2px;
+}
+
+.charinfo-batch-dialog__create-icon,
+.charinfo-batch-dialog__create-chevron {
+  display: grid;
+  place-items: center;
+  color: var(--charinfo-muted);
+}
+
+.charinfo-batch-dialog__create-icon svg,
+.charinfo-batch-dialog__create-chevron svg,
+.charinfo-batch-dialog__back-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.charinfo-batch-dialog__create-text {
+  min-width: 0;
+  white-space: normal;
+}
+
+.charinfo-batch-dialog__create-name {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: var(--font-ui-small, 13px);
+  font-weight: 680;
+}
+
+.charinfo-batch-dialog__create-meta {
+  display: block;
+  margin-top: var(--charinfo-space-xxs);
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+/* 그룹 목록으로 — quiet, because walking back is not a decision. */
+.charinfo-batch-dialog__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--charinfo-space-sm);
+  align-self: flex-start;
+  min-height: 44px;
+  min-width: 0;
+  margin: var(--charinfo-space-sm) var(--charinfo-space-lg) 0;
+  padding: var(--charinfo-space-sm) 0;
+  border: 1px solid transparent;
+  border-radius: var(--charinfo-radius-lg);
+  background: transparent;
+  box-shadow: none;
+  color: var(--charinfo-muted);
+  font-size: var(--font-ui-smaller, 12px);
+  font-weight: 650;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.charinfo-batch-dialog__back:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+  color: var(--charinfo-ink);
+}
+
+.charinfo-batch-dialog__back:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.charinfo-batch-dialog__back:focus-visible {
+  outline: 2px solid var(--charinfo-accent);
+  outline-offset: 2px;
+}
+
+.charinfo-batch-dialog__back-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.charinfo-batch-dialog__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--charinfo-space-sm);
+  min-width: 0;
   padding: var(--charinfo-space-md) var(--charinfo-space-lg)
     var(--charinfo-space-base);
+}
+
+.charinfo-batch-dialog__hint {
   color: var(--charinfo-muted);
   font-size: var(--font-ui-smaller, 12px);
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .charinfo-batch-dialog__foot {
@@ -5911,6 +6127,10 @@ button.charinfo-attr-modal__type-item:focus-visible {
   min-width: 0;
   text-align: center;
   white-space: nowrap;
+}
+
+.charinfo-batch-dialog__confirm {
+  white-space: normal;
 }
 
 /* Saving: the dialog is locked, so it says so and stops taking input. */

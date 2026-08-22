@@ -18,6 +18,11 @@ import {
   resolveGroupSchema,
 } from "../data/groupSchema";
 import { GalleryView, VIEW_TYPE_CHARINFO_GALLERY } from "../views/GalleryView";
+import { promptCharacterName } from "../ui/CharacterNameModal";
+import {
+  characterNameProblem,
+  characterNameProblemMessage,
+} from "../data/characterName";
 
 /** User-facing product name (plugin list, tabs, settings). */
 export const PLUGIN_DISPLAY_NAME = "Character Archive";
@@ -604,8 +609,24 @@ function resolveGroupParentFolder(
 
 export async function createCharacterNote(
   plugin: CharinfoPlugin,
-  opts?: { genre?: string; group?: string; library?: string },
+  opts?: { genre?: string; group?: string; library?: string; name?: string },
 ): Promise<TFile | null> {
+  const requestedName = opts?.name?.trim() || null;
+  const title =
+    requestedName ??
+    (await promptCharacterName(plugin.app, {
+      title: "새 캐릭터",
+      initialName: "",
+      submitText: "만들기",
+      savingText: "준비 중…",
+    }));
+  if (!title) return null;
+  const titleProblem = characterNameProblem(title);
+  if (titleProblem) {
+    new Notice(characterNameProblemMessage(titleProblem));
+    return null;
+  }
+
   const library = normalizePath(
     (opts?.library ?? plugin.settings.libraryFolder).trim() ||
       "Character Archive",
@@ -614,17 +635,18 @@ export async function createCharacterNote(
     await plugin.app.vault.createFolder(library);
   }
 
-  const title = "새 캐릭터";
   const genre = (opts?.genre ?? plugin.settings.activeGenre).trim();
   const group = opts?.group?.trim() ?? "";
   const stamp = `${Date.now()}`;
-  const folderName = `${title} ${stamp}`;
+  // The container is deliberately technical and stable. Renaming a character
+  // changes only the note identity; image paths inside this folder stay put.
+  const folderName = `캐릭터 ${stamp}`;
 
   const parent = resolveGroupParentFolder(plugin, library, genre, group);
   await ensureFolder(plugin, parent);
   const destFolder = normalizePath(`${parent}/${folderName}`);
   await ensureFolder(plugin, destFolder);
-  const path = normalizePath(`${destFolder}/${folderName}.md`);
+  const path = normalizePath(`${destFolder}/${title}.md`);
 
   let source = BUNDLED_CHARACTER_TEMPLATE;
   // Archive (`장르`) override wins over the global template, then the bundle.
@@ -667,6 +689,7 @@ export async function createCharacterNote(
     );
     return null;
   }
+  plugin.trackCharacterName(file, title);
 
   try {
     await plugin.app.fileManager.processFrontMatter(file, (fm) => {

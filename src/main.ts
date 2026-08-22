@@ -44,6 +44,7 @@ import {
   dedupeOverlappingRoots,
   galleryPagePath,
   galleryWikiLink,
+  ensureFolder,
   isGalleryPage,
   listGalleryLibraryIdentities,
   readGalleryScope,
@@ -58,6 +59,21 @@ import {
 import { CharinfoSettingTab } from "./ui/SettingTab";
 import { CreateGalleryModal } from "./ui/CreateGalleryModal";
 import { GalleryView, VIEW_TYPE_CHARINFO_GALLERY } from "./views/GalleryView";
+import {
+  basenameWithoutMarkdown,
+  characterNameProblem,
+  characterNameProblemMessage,
+  hasPortablePathCollision,
+  normalizeCharacterName,
+  notePathForName,
+  portablePathIdentity,
+} from "./data/characterName";
+import {
+  UPDATE_NOTES_MARKDOWN,
+  UPDATE_NOTES_VERSION,
+  shouldOpenUpdateNotes,
+  updateNotesPath,
+} from "./data/updateNotes";
 
 /** What one schema pass did to a note. Console telemetry only. */
 type SchemaOutcome = "patched" | "clean" | "malformed";
@@ -67,6 +83,13 @@ interface SchemaTally {
   patched: number;
   malformed: number;
   failed: number;
+}
+
+export interface CharacterNameCommitResult {
+  ok: boolean;
+  name: string;
+  path: string;
+  error?: string;
 }
 
 export default class CharinfoPlugin extends Plugin {
@@ -124,6 +147,15 @@ export default class CharinfoPlugin extends Plugin {
   /** One-shot: next open of this path may load as Markdown (edit entry note). */
   private allowMarkdownOnce = new Set<string>();
   private openFileHookInstalled = false;
+  /** Last observed canonical name, keyed by the stable TFile identity. */
+  private characterNameBaseline = new WeakMap<TFile, string>();
+  /** One name/filename transaction at a time for each note. */
+  private characterNameLane = new WeakMap<TFile, Promise<unknown>>();
+  /** Final path for a plugin-owned rename; intermediate case hops are ignored. */
+  private internalCharacterRename = new WeakMap<TFile, string>();
+  private characterRenameTempId = 0;
+  /** Distinguishes an update from a first install before defaults are saved. */
+  private hadStoredSettings = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -171,7 +203,13 @@ export default class CharinfoPlugin extends Plugin {
     // Does not open a new tab — only restores tabs that already show a gallery page.
     this.app.workspace.onLayoutReady(() => {
       void this.claimLegacyWebShareAfterMetadata();
-      void this.reclaimGalleryLeaves();
+      this.seedCharacterNameBaselines();
+      void (async () => {
+        await this.reclaimGalleryLeaves();
+        await this.openUpdateNotesIfNeeded();
+      })().catch((error) => {
+        console.error("[charinfo] 시작 작업 실패", error);
+      });
       // LOCK (needs a vault; not covered by tests/property-schema.test.ts):
       // one non-blocking sequential archive scan per discovered root, with
       // zero gallery leaves open. Roots come from the metadata cache, which is
@@ -340,6 +378,7 @@ export default class CharinfoPlugin extends Plugin {
 
     this.registerEvent(
       this.app.metadataCache.on("changed", (file) => {
+        void this.observeCharacterNameProperty(file);
         // A gallery note may have just repointed `library` — new root, new scan.
         if (isGalleryPage(file, this)) this.refreshSchemaRoots({ scanNew: true });
         if (!this.fileTouchesAnyOpenGallery(file.path)) return;
@@ -349,17 +388,21 @@ export default class CharinfoPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
         if (!(file instanceof TFile)) return;
-        const galleryChanged = remapGalleryPageState(
-          this.settings,
+        const newPath = file.path;
+        const internalTarget = this.internalCharacterRename.get(file);
+        this.remapCharacterPath(
           oldPath,
-          file.path,
+          newPath,
+          file,
+          !internalTarget || newPath === internalTarget,
         );
-        const characterChanged = remapCharacterWebShareState(
-          this.settings,
-          oldPath,
-          file.path,
-        );
-        if (galleryChanged || characterChanged) void this.saveSettings();
+        void this.commitSettings((settings) => {
+          remapGalleryPageState(settings, oldPath, newPath);
+          remapCharacterWebShareState(settings, oldPath, newPath);
+        }).catch((error) => {
+          console.error("[charinfo] 이름 변경 경로 저장 실패", error);
+        });
+        this.observeCharacterFileRename(file, oldPath, newPath);
       }),
     );
     this.registerEvent(
@@ -386,11 +429,15 @@ export default class CharinfoPlugin extends Plugin {
           const dir = file.path.includes("/")
             ? file.path.slice(0, file.path.lastIndexOf("/"))
             : "";
-          const base = dir.split("/").pop() ?? "";
-          if (!dir || !base) return;
-          const notePath = `${dir}/${base}.md`;
-          const note = this.app.vault.getAbstractFileByPath(notePath);
-          if (note instanceof TFile) this.scheduleHeal(note.path, "content");
+          if (!dir) return;
+          const notes = this.app.vault.getMarkdownFiles().filter((note) => {
+            const noteDir = note.path.includes("/")
+              ? note.path.slice(0, note.path.lastIndexOf("/"))
+              : "";
+            if (noteDir !== dir) return false;
+            return this.app.metadataCache.getFileCache(note)?.frontmatter?.kind === "character";
+          });
+          if (notes.length === 1) this.scheduleHeal(notes[0]!.path, "content");
         }
         this.markGalleriesDirty();
       }),
@@ -1075,8 +1122,407 @@ export default class CharinfoPlugin extends Plugin {
     );
   }
 
+  /** Creation establishes a trustworthy baseline before cache events arrive. */
+  trackCharacterName(file: TFile, name: string): void {
+    this.characterNameBaseline.set(file, normalizeCharacterName(name));
+  }
+
+  /**
+   * Gallery title edit → filename first, then the canonical property.
+   * The filename is the durable authority: a failed property write never moves
+   * a successfully renamed note back through another link-changing operation.
+   */
+  async renameCharacterFromGallery(
+    file: TFile,
+    rawName: string,
+    expectedName: string,
+  ): Promise<CharacterNameCommitResult> {
+    const name = normalizeCharacterName(rawName);
+    const problem = characterNameProblem(name);
+    if (problem) {
+      return {
+        ok: false,
+        name: expectedName,
+        path: file.path,
+        error: characterNameProblemMessage(problem),
+      };
+    }
+
+    return this.enqueueCharacterNameWork(file, async () => {
+      if (this.unloaded) {
+        return { ok: false, name: expectedName, path: file.path, error: "플러그인이 닫혔어요." };
+      }
+      const observed = await this.readCharacterName(file);
+      if (!observed || observed.name !== normalizeCharacterName(expectedName)) {
+        return {
+          ok: false,
+          name: observed?.name ?? file.basename,
+          path: file.path,
+          error: "이름이 다른 곳에서 바뀌었어요. 다시 열고 시도해 주세요.",
+        };
+      }
+
+      const targetPath = normalizePath(notePathForName(file.path, name));
+      if (this.characterNameCollision(file.path, targetPath)) {
+        return {
+          ok: false,
+          name: observed.name,
+          path: file.path,
+          error: characterNameProblemMessage("collision"),
+        };
+      }
+
+      if (file.path !== targetPath) {
+        this.internalCharacterRename.set(file, targetPath);
+        try {
+          await this.renameCharacterFile(file, targetPath);
+        } catch (error) {
+          this.internalCharacterRename.delete(file);
+          return {
+            ok: false,
+            name: observed.name,
+            path: file.path,
+            error: `노트 이름을 바꾸지 못했어요: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      }
+
+      this.characterNameBaseline.set(file, name);
+      let wrote = false;
+      let conflict = false;
+      const write = async () => {
+        await this.app.fileManager.processFrontMatter(file, (fm) => {
+          if (String(fm.kind ?? "").trim() !== "character") {
+            conflict = true;
+            return;
+          }
+          if (!Object.prototype.hasOwnProperty.call(fm, "이름")) {
+            conflict = true;
+            return;
+          }
+          const current = normalizeCharacterName(fm.이름);
+          if (current !== observed.name && current !== name) {
+            conflict = true;
+            return;
+          }
+          fm.이름 = name;
+          wrote = true;
+        });
+      };
+      try {
+        await write();
+      } catch {
+        // One bounded retry covers a transient frontmatter write failure.
+        try {
+          await write();
+        } catch (error) {
+          return {
+            ok: false,
+            name,
+            path: file.path,
+            error: `파일명은 바뀌었지만 이름 속성을 저장하지 못했어요: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      }
+      if (conflict || !wrote) {
+        return {
+          ok: false,
+          name,
+          path: file.path,
+          error: "파일명은 바뀌었지만 이름이 다시 수정됐어요. 최신 값을 확인해 주세요.",
+        };
+      }
+      return { ok: true, name, path: file.path };
+    });
+  }
+
+  private enqueueCharacterNameWork<T>(file: TFile, work: () => Promise<T>): Promise<T> {
+    const previous = this.characterNameLane.get(file) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(work);
+    this.characterNameLane.set(file, run.then(() => undefined, () => undefined));
+    return run;
+  }
+
+  private seedCharacterNameBaselines(): void {
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const observed = this.cachedCharacterName(file);
+      if (observed) this.characterNameBaseline.set(file, observed.name);
+    }
+  }
+
+  private cachedCharacterName(
+    file: TFile,
+  ): { name: string } | null {
+    const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!fm || String(fm.kind ?? "").trim() !== "character") return null;
+    if (!Object.prototype.hasOwnProperty.call(fm, "이름")) return null;
+    if (typeof fm.이름 !== "string") return null;
+    return { name: normalizeCharacterName(fm.이름) };
+  }
+
+  /** Read through the vault so a just-edited property cannot lose to cache lag. */
+  private async readCharacterName(file: TFile): Promise<{ name: string } | null> {
+    try {
+      const text = await this.app.vault.read(file);
+      const parsed = parseFrontmatterBlock(text, (raw) => parseYaml(raw));
+      if (
+        !parsed.ok ||
+        parsed.kind !== "character" ||
+        !Object.prototype.hasOwnProperty.call(parsed.fm, "이름") ||
+        typeof parsed.fm.이름 !== "string"
+      ) {
+        return null;
+      }
+      return { name: normalizeCharacterName(parsed.fm.이름) };
+    } catch {
+      return null;
+    }
+  }
+
+  /** A direct Properties edit is intent only after a session baseline exists. */
+  private async observeCharacterNameProperty(file: TFile): Promise<void> {
+    let observed: { name: string } | null = null;
+    try {
+      const text = await this.app.vault.read(file);
+      const parsed = parseFrontmatterBlock(text, (raw) => parseYaml(raw));
+      if (
+        parsed.ok &&
+        parsed.kind === "character" &&
+        Object.prototype.hasOwnProperty.call(parsed.fm, "이름") &&
+        typeof parsed.fm.이름 === "string"
+      ) {
+        observed = { name: normalizeCharacterName(parsed.fm.이름) };
+      }
+    } catch {
+      return;
+    }
+    if (!observed) return;
+    const previous = this.characterNameBaseline.get(file);
+    if (previous === undefined) {
+      // Startup/import mismatch is ambiguous; remember it without mutating.
+      this.characterNameBaseline.set(file, observed.name);
+      return;
+    }
+    if (previous === observed.name) return;
+    this.characterNameBaseline.set(file, observed.name);
+    void this.syncFilenameFromProperty(file, observed.name);
+  }
+
+  private async syncFilenameFromProperty(file: TFile, candidate: string): Promise<void> {
+    await this.enqueueCharacterNameWork(file, async () => {
+      if (this.unloaded) return;
+      const observed = await this.readCharacterName(file);
+      if (!observed || observed.name !== candidate) return;
+      if (file.basename === candidate) return;
+
+      const problem = characterNameProblem(candidate);
+      const targetPath = normalizePath(notePathForName(file.path, candidate));
+      if (problem || this.characterNameCollision(file.path, targetPath)) {
+        const message = problem
+          ? characterNameProblemMessage(problem)
+          : characterNameProblemMessage("collision");
+        await this.restoreNameToFilename(file, candidate);
+        new Notice(`${message} 파일명에 맞춰 이름을 되돌렸어요.`);
+        return;
+      }
+
+      this.internalCharacterRename.set(file, targetPath);
+      try {
+        await this.renameCharacterFile(file, targetPath);
+        this.characterNameBaseline.set(file, candidate);
+        new Notice("이름과 노트 파일명을 바꿨어요.");
+      } catch (error) {
+        this.internalCharacterRename.delete(file);
+        await this.restoreNameToFilename(file, candidate);
+        new Notice(
+          `노트 이름을 바꾸지 못해 이름 속성을 되돌렸어요: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    });
+  }
+
+  private async restoreNameToFilename(file: TFile, expected: string): Promise<void> {
+    const fallback = file.basename;
+    this.characterNameBaseline.set(file, fallback);
+    try {
+      await this.app.fileManager.processFrontMatter(file, (fm) => {
+        if (String(fm.kind ?? "").trim() !== "character") return;
+        if (!Object.prototype.hasOwnProperty.call(fm, "이름")) return;
+        if (normalizeCharacterName(fm.이름) !== expected) return;
+        fm.이름 = fallback;
+      });
+    } catch (error) {
+      console.error("[charinfo] 이름 속성 되돌리기 실패", error);
+      new Notice("이름 속성을 되돌리지 못했어요. 파일명을 기준으로 다시 확인해 주세요.");
+    }
+  }
+
+  /** Manual basename rename wins; a folder-only move only remaps paths. */
+  private observeCharacterFileRename(file: TFile, oldPath: string, newPath: string): void {
+    if (file.extension !== "md") return;
+    const oldName = basenameWithoutMarkdown(oldPath);
+    const newName = basenameWithoutMarkdown(newPath);
+    const internalTarget = this.internalCharacterRename.get(file);
+    if (internalTarget) {
+      if (newPath === internalTarget) {
+        this.internalCharacterRename.delete(file);
+        this.characterNameBaseline.set(file, newName);
+      }
+      return;
+    }
+    if (oldName === newName) return;
+
+    this.characterNameBaseline.set(file, newName);
+    void this.enqueueCharacterNameWork(file, async () => {
+      if (file.path !== newPath || this.unloaded) return;
+      let changed = false;
+      try {
+        await this.app.fileManager.processFrontMatter(file, (fm) => {
+          if (String(fm.kind ?? "").trim() !== "character") return;
+          if (!Object.prototype.hasOwnProperty.call(fm, "이름")) return;
+          if (normalizeCharacterName(fm.이름) === newName) return;
+          fm.이름 = newName;
+          changed = true;
+        });
+        if (changed) new Notice("노트 파일명에 맞춰 이름을 바꿨어요.");
+      } catch (error) {
+        console.error("[charinfo] 파일명 → 이름 동기화 실패", error);
+        new Notice("파일명은 바뀌었지만 이름 속성을 저장하지 못했어요.");
+      }
+    });
+  }
+
+  private characterNameCollision(sourcePath: string, targetPath: string): boolean {
+    if (sourcePath === targetPath) return false;
+    const exact = this.app.vault.getAbstractFileByPath(targetPath);
+    if (exact instanceof TFile && exact.path !== sourcePath) return true;
+    return hasPortablePathCollision(
+      this.app.vault.getMarkdownFiles().map((file) => file.path),
+      sourcePath,
+      targetPath,
+    );
+  }
+
+  private async renameCharacterFile(file: TFile, targetPath: string): Promise<void> {
+    const oldPath = file.path;
+    if (oldPath === targetPath) return;
+    if (portablePathIdentity(oldPath) !== portablePathIdentity(targetPath)) {
+      await this.app.fileManager.renameFile(file, targetPath);
+      return;
+    }
+
+    // Case/normalization-only changes need a unique sibling hop on common
+    // case-insensitive filesystems. If the final hop fails, return to oldPath.
+    const parent = oldPath.includes("/") ? oldPath.slice(0, oldPath.lastIndexOf("/")) : "";
+    let tempPath = "";
+    do {
+      this.characterRenameTempId += 1;
+      const tempName = `.charinfo-rename-${Date.now()}-${this.characterRenameTempId}.md`;
+      tempPath = normalizePath(parent ? `${parent}/${tempName}` : tempName);
+    } while (this.app.vault.getAbstractFileByPath(tempPath));
+
+    await this.app.fileManager.renameFile(file, tempPath);
+    try {
+      await this.app.fileManager.renameFile(file, targetPath);
+    } catch (error) {
+      try {
+        await this.app.fileManager.renameFile(file, oldPath);
+      } catch (rollbackError) {
+        console.error("[charinfo] 대소문자 이름 되돌리기 실패", rollbackError);
+      }
+      throw error;
+    }
+  }
+
+  /** Rename events must repair every copied path before queued refreshes run. */
+  private remapCharacterPath(
+    oldPath: string,
+    newPath: string,
+    file: TFile,
+    syncTitle: boolean,
+  ): void {
+    if (oldPath === newPath) return;
+
+    const noteTimer = this.noteChangeTimers.get(oldPath);
+    if (noteTimer != null) {
+      window.clearTimeout(noteTimer);
+      this.noteChangeTimers.delete(oldPath);
+      this.scheduleNoteChange(newPath);
+    }
+    const healTimer = this.healTimers.get(oldPath);
+    const pending = this.pendingHealBits.get(oldPath);
+    if (healTimer != null) window.clearTimeout(healTimer);
+    this.healTimers.delete(oldPath);
+    this.pendingHealBits.delete(oldPath);
+    if (pending) {
+      for (const bit of pending) this.scheduleHeal(newPath, bit);
+    }
+    if (this.dirtyGalleryPaths.delete(oldPath)) this.dirtyGalleryPaths.add(newPath);
+    if (this.healFailureNoticed.delete(oldPath)) this.healFailureNoticed.add(newPath);
+
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY)) {
+      const view = leaf.view;
+      if (view instanceof GalleryView) {
+        view.handleCharacterRenamed(oldPath, newPath, file, syncTitle);
+      }
+    }
+  }
+
   async loadSettings(): Promise<void> {
-    this.settings = migrateSettings(await this.loadData());
+    const stored = await this.loadData();
+    this.hadStoredSettings = stored !== null && stored !== undefined;
+    this.settings = migrateSettings(stored);
+  }
+
+  /** Open this release's Markdown note once for updates, never first installs. */
+  private async openUpdateNotesIfNeeded(): Promise<void> {
+    const installedVersion = this.manifest.version;
+    if (!this.hadStoredSettings) {
+      if (installedVersion === UPDATE_NOTES_VERSION) {
+        await this.commitSettings((settings) => {
+          settings.lastOpenedUpdateNotesVersion = UPDATE_NOTES_VERSION;
+        });
+      }
+      return;
+    }
+    if (
+      !shouldOpenUpdateNotes({
+        installedVersion,
+        seenVersion: this.settings.lastOpenedUpdateNotesVersion,
+        hadStoredSettings: this.hadStoredSettings,
+      })
+    ) {
+      return;
+    }
+
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const notePath = normalizePath(
+          updateNotesPath(this.defaultLibraryRoot()),
+        );
+        const folderPath = notePath.slice(0, notePath.lastIndexOf("/"));
+        await ensureFolder(this, folderPath);
+
+        const existing = this.app.vault.getAbstractFileByPath(notePath);
+        const file =
+          existing instanceof TFile
+            ? existing
+            : await this.app.vault.create(notePath, UPDATE_NOTES_MARKDOWN);
+        await this.app.workspace.getLeaf("tab").openFile(file, { active: true });
+        await this.commitSettings((settings) => {
+          settings.lastOpenedUpdateNotesVersion = UPDATE_NOTES_VERSION;
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    console.error("[charinfo] 업데이트 안내 열기 실패", lastError);
+    // A permanent path or permission error must not repeat on every launch.
+    await this.commitSettings((settings) => {
+      settings.lastOpenedUpdateNotesVersion = UPDATE_NOTES_VERSION;
+    });
   }
 
   /** Metadata is reliable only after layout ready; never guess legacy ownership. */

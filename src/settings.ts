@@ -45,6 +45,7 @@ import {
   characterWebShareStatePath,
   remapWebShareRecord,
 } from "./share/webShareState";
+import { normalizeSeenUpdateNotesVersion } from "./data/updateNotes";
 
 /** Vault-relative path normalize (no Obsidian import in settings). */
 function normalizePath(path: string): string {
@@ -165,6 +166,8 @@ export interface WebShareLastState {
 }
 
 export interface CharinfoSettings {
+  /** Latest bundled update note successfully opened, or silently seeded on install. */
+  lastOpenedUpdateNotesVersion: string;
   /** Folder that holds character notes (scanned for kind: character). */
   libraryFolder: string;
   /** Where new uploads go. Existing vault embeds stay untouched. */
@@ -328,6 +331,7 @@ export interface CharinfoSettings {
 }
 
 export const DEFAULT_SETTINGS: CharinfoSettings = {
+  lastOpenedUpdateNotesVersion: "",
   libraryFolder: "Character Archive",
   mediaRootMode: "vault",
   imageUploadDestination: "vault",
@@ -674,6 +678,9 @@ export function migrateSettings(
   const merged: CharinfoSettings = {
     ...DEFAULT_SETTINGS,
     ...src,
+    lastOpenedUpdateNotesVersion: normalizeSeenUpdateNotesVersion(
+      src.lastOpenedUpdateNotesVersion,
+    ),
     activeGenre,
     libraryFolder,
     vaultMediaFolder,
