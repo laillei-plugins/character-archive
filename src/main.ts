@@ -2,6 +2,7 @@ import {
   Plugin,
   Platform,
   TFile,
+  TFolder,
   WorkspaceLeaf,
   Notice,
   normalizePath,
@@ -16,7 +17,14 @@ import {
   type CharinfoSettings,
 } from "./settings";
 import { CharacterStore } from "./data/CharacterStore";
-import { healCollapsedImageEmbeds, healCharacterCardFields, healNaiPromptEmphasis } from "./data/images";
+import { healCollapsedImageEmbeds, healCharacterCardFields, healNaiPromptEmphasis, rewriteLibraryPathPrefix } from "./data/images";
+import {
+  normalizeFolderPath,
+  planMirroredFolderNoteRename,
+  remapLibraryFolderSettings,
+  remapLibraryIdentities,
+  shouldRewriteGalleryLibrary,
+} from "./data/libraryFolderRename";
 import {
   MAX_LANE_ATTEMPTS,
   PathWorkLane,
@@ -48,6 +56,7 @@ import {
   fileHasGalleryFrontmatter,
   isGalleryPage,
   listGalleryLibraryIdentities,
+  listGalleryPagePathsForLibrary,
   readGalleryScope,
   registerCharinfoCodeBlock,
   resolveGalleryPageFile,
@@ -175,6 +184,7 @@ export default class CharinfoPlugin extends Plugin {
   private characterRenameTempId = 0;
   /** Distinguishes an update from a first install before defaults are saved. */
   private hadStoredSettings = false;
+  private libraryFolderRenameLane: Promise<void> = Promise.resolve();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -405,6 +415,15 @@ export default class CharinfoPlugin extends Plugin {
     );
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
+        if (file instanceof TFolder) {
+          void this.followLibraryFolderRename(file, oldPath).catch((error) => {
+            console.error(error);
+            new Notice(
+              "폴더 이름을 따라가지 못했어요 — 설정의 「카드가 있는 폴더」를 확인해 주세요.",
+            );
+          });
+          return;
+        }
         if (!(file instanceof TFile)) return;
         const newPath = file.path;
         const internalTarget = this.internalCharacterRename.get(file);
@@ -1047,6 +1066,132 @@ export default class CharinfoPlugin extends Plugin {
         gate.cancel();
       }
     });
+  }
+
+  /** Explorer folder rename: keep the same gallery bound to the new name. */
+  private async followLibraryFolderRename(
+    folder: TFolder,
+    oldPath: string,
+  ): Promise<void> {
+    const run = this.libraryFolderRenameLane.then(() =>
+      this.applyLibraryFolderRename(folder, oldPath),
+    );
+    this.libraryFolderRenameLane = run.catch(() => undefined);
+    await run;
+  }
+
+  private async applyLibraryFolderRename(
+    folder: TFolder,
+    oldPath: string,
+  ): Promise<void> {
+    const oldFolder = normalizeFolderPath(oldPath);
+    const newFolder = normalizeFolderPath(folder.path);
+    if (!oldFolder || oldFolder === newFolder) return;
+    const affected = remapLibraryIdentities(
+      listGalleryLibraryIdentities(this),
+      oldFolder,
+      newFolder,
+    );
+    if (affected.length === 0) return;
+
+    let noteRename: { file: TFile; from: string; to: string } | null = null;
+    let rewrittenNotes = 0;
+    let settingsCommitted = false;
+    let followError: unknown = null;
+    this.suppressGalleryRefresh = true;
+    try {
+      for (const pair of affected) {
+        const pages = listGalleryPagePathsForLibrary(this, pair.from);
+        for (const pagePath of pages) {
+          const file = this.app.vault.getAbstractFileByPath(pagePath);
+          if (!(file instanceof TFile)) continue;
+          const cache = this.app.metadataCache.getFileCache(file)?.frontmatter;
+          const explicit =
+            typeof cache?.library === "string" ? cache.library : null;
+          if (!shouldRewriteGalleryLibrary(explicit, pair.from)) continue;
+          await this.app.fileManager.processFrontMatter(file, (fm) => {
+            if (
+              typeof fm.library === "string" &&
+              shouldRewriteGalleryLibrary(fm.library, pair.from)
+            ) {
+              fm.library = pair.to;
+            }
+          });
+        }
+        rewrittenNotes += await rewriteLibraryPathPrefix(
+          this.app,
+          pair.to,
+          pair.from,
+          pair.to,
+        );
+      }
+
+      const oldBase = oldFolder.split("/").pop() || "";
+      const planned = planMirroredFolderNoteRename({
+        newFolder,
+        oldFolderName: oldBase,
+        occupiedPaths: this.app.vault.getMarkdownFiles().map((file) => file.path),
+      });
+      if (planned) {
+        const src = this.app.vault.getAbstractFileByPath(planned.from);
+        if (src instanceof TFile) {
+          await this.app.fileManager.renameFile(src, planned.to);
+          noteRename = { file: src, from: planned.from, to: planned.to };
+        }
+      }
+
+      await this.commitSettings((settings) => {
+        remapLibraryFolderSettings(
+          settings,
+          oldFolder,
+          newFolder,
+          noteRename ? { from: noteRename.from, to: noteRename.to } : null,
+        );
+      });
+      settingsCommitted = true;
+    } catch (error) {
+      // Explorer already moved the folder. Restoring old `library:` / image
+      // prefixes / the mirrored folder note would point the gallery at a
+      // missing root. Keep every new-root write and finish settings if we can.
+      if (!settingsCommitted) {
+        try {
+          await this.commitSettings((settings) => {
+            remapLibraryFolderSettings(
+              settings,
+              oldFolder,
+              newFolder,
+              noteRename ? { from: noteRename.from, to: noteRename.to } : null,
+            );
+          });
+        } catch (settingsError) {
+          console.error(settingsError);
+        }
+      }
+      followError = error;
+    } finally {
+      this.suppressGalleryRefresh = false;
+    }
+
+    await this.refreshGalleriesAfterLibraryFolderRename();
+    if (followError) throw followError;
+    if (rewrittenNotes > 0) {
+      new Notice(`이미지 다시 연결됨 · 노트 ${rewrittenNotes}개`);
+    }
+  }
+
+  private async refreshGalleriesAfterLibraryFolderRename(): Promise<void> {
+    try {
+      this.refreshSchemaRoots({ scanNew: true });
+      for (const leaf of this.app.workspace.getLeavesOfType(
+        VIEW_TYPE_CHARINFO_GALLERY,
+      )) {
+        if (leaf.view instanceof GalleryView) {
+          await leaf.view.followBoundLibraryRename();
+        }
+      }
+    } catch (error) {
+      console.error("[charinfo] 보관함 폴더 이름 새로고침 실패", error);
+    }
   }
 
   private async reclaimOpenedGalleryNote(file: TFile): Promise<void> {

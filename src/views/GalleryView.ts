@@ -560,6 +560,18 @@ export class GalleryView extends FileView {
     await this.refresh();
   }
 
+  /** Same leaf after an explorer library-folder rename. */
+  async followBoundLibraryRename(): Promise<void> {
+    if (this.file) {
+      try {
+        this.scopeBody = await this.app.vault.cachedRead(this.file);
+      } catch {
+        this.scopeBody = "";
+      }
+    }
+    await this.refresh();
+  }
+
   async onUnloadFile(_file: TFile): Promise<void> {
     this.scopeBody = "";
     this.selected = null;

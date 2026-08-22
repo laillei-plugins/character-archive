@@ -1,4 +1,4 @@
-export const UPDATE_NOTES_VERSION = "0.1.22";
+export const UPDATE_NOTES_VERSION = "0.1.23";
 
 export function normalizeSeenUpdateNotesVersion(raw: unknown): string {
   return typeof raw === "string" ? raw.trim() : "";
@@ -43,11 +43,11 @@ kind: "character-archive-update"
 
 ## 업데이트 내용
 
-- 보관함 폴더 이름을 눌러도 안쪽 폴더는 펼쳐지지 않아요. 갤러리만 열려요.
+- 보관함 폴더 이름을 바꿔도 갤러리는 그대로 열려요.
 
 ---
 
 ## What's new
 
-- Clicking a library folder name no longer expands inner folders. Only the gallery opens.
+- Renaming the archive folder keeps the same gallery working.
 `;

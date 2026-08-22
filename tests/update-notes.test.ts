@@ -59,7 +59,7 @@ test("fresh installs and a different plugin version do not open this note", () =
 
 test("stored seen versions are normalized before comparison", () => {
   assert.equal(normalizeSeenUpdateNotesVersion(null), "");
-  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.22 "), "0.1.22");
+  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.23 "), "0.1.23");
   assert.equal(normalizeSeenUpdateNotesVersion(18), "");
 });
 
@@ -73,11 +73,11 @@ test("one update note keeps Korean before the equivalent English section", () =>
   assert.ok(korean >= 0 && english > korean);
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /보관함 폴더 이름을 눌러도 안쪽 폴더는 펼쳐지지 않아요/,
+    /보관함 폴더 이름을 바꿔도 갤러리는 그대로 열려요/,
   );
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /no longer expands inner folders/,
+    /Renaming the archive folder keeps the same gallery working/,
   );
 });
 

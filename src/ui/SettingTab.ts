@@ -115,7 +115,7 @@ export class CharinfoSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("카드가 있는 폴더")
       .setDesc(
-        "캐릭터 노트가 들어 있는 상자입니다. 여기를 바꾸면 카드가 안 보일 수 있어요. 폴더 이름을 바꿨다면 여기도 맞춘 뒤 칸 밖을 누르세요.",
+        "캐릭터 노트가 들어 있는 상자입니다. 여기를 바꾸면 카드가 안 보일 수 있어요.",
       )
       .addText((text) => {
         const input = text

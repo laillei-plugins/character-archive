@@ -1,5 +1,6 @@
 import { App, TFile, TFolder, normalizePath } from "obsidian";
 import type { CharacterRecord } from "./CharacterStore";
+import { rewriteImageWikiLibraryPrefix } from "./libraryFolderRename";
 import {
   COVER_NONE,
   canonicalRemoteUrl,
@@ -142,9 +143,8 @@ export async function rewriteLibraryPathPrefix(
     const cache = app.metadataCache.getFileCache(file);
     if (cache?.frontmatter?.kind !== "character") continue;
     const markdown = await app.vault.read(file);
-    if (!markdown.includes(from)) continue;
-    // Path segment replace — keep trailing slash semantics for wiki targets.
-    const next = markdown.split(`${from}/`).join(`${to}/`);
+    if (!markdown.includes(`![[${from}/`)) continue;
+    const next = rewriteImageWikiLibraryPrefix(markdown, from, to);
     if (next === markdown) continue;
     await app.vault.modify(file, next);
     changedNotes += 1;
