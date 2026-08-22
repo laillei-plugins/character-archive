@@ -59,7 +59,7 @@ test("fresh installs and a different plugin version do not open this note", () =
 
 test("stored seen versions are normalized before comparison", () => {
   assert.equal(normalizeSeenUpdateNotesVersion(null), "");
-  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.21 "), "0.1.21");
+  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.22 "), "0.1.22");
   assert.equal(normalizeSeenUpdateNotesVersion(18), "");
 });
 
@@ -73,11 +73,11 @@ test("one update note keeps Korean before the equivalent English section", () =>
   assert.ok(korean >= 0 && english > korean);
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /연필을 켜거나 꺼도 보던 카드 자리에 그대로 있어요/,
+    /보관함 폴더 이름을 눌러도 안쪽 폴더는 펼쳐지지 않아요/,
   );
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /keeps the same cards in view/,
+    /no longer expands inner folders/,
   );
 });
 

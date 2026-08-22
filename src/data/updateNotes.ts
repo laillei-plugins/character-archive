@@ -1,4 +1,4 @@
-export const UPDATE_NOTES_VERSION = "0.1.21";
+export const UPDATE_NOTES_VERSION = "0.1.22";
 
 export function normalizeSeenUpdateNotesVersion(raw: unknown): string {
   return typeof raw === "string" ? raw.trim() : "";
@@ -43,11 +43,11 @@ kind: "character-archive-update"
 
 ## 업데이트 내용
 
-- 연필을 켜거나 꺼도 보던 카드 자리에 그대로 있어요. 맨 위로 올라가지 않아요.
+- 보관함 폴더 이름을 눌러도 안쪽 폴더는 펼쳐지지 않아요. 갤러리만 열려요.
 
 ---
 
 ## What's new
 
-- Turning the pencil on or off keeps the same cards in view. The gallery no longer jumps to the top.
+- Clicking a library folder name no longer expands inner folders. Only the gallery opens.
 `;

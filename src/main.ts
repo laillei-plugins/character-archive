@@ -70,6 +70,7 @@ import {
   AutoRevealRestoreError,
   LIBRARY_FOLDER_CHEVRON_SELECTOR,
   classifyLibraryFolderClick,
+  createAutoRevealSettleGate,
   decideGalleryOpenLeaf,
   decideRibbonOpen,
   pickGalleryLeafForLibrary,
@@ -1011,20 +1012,40 @@ export default class CharinfoPlugin extends Plugin {
       }
     }
 
+    const gate = createAutoRevealSettleGate({
+      subscribeFileOpen: (cb) => {
+        const ref = this.app.workspace.on("file-open", (file) => {
+          cb(file?.path ?? null);
+        });
+        return () => this.app.workspace.offref(ref);
+      },
+      sleep: (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
+    });
+
     await withAutoRevealSuppressed(explorers, async () => {
-      const open = pickGalleryLeafForLibrary(
-        this.app.workspace.getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY),
-        lib,
-        (leaf) =>
-          leaf.view instanceof GalleryView ? leaf.view.pageLibrary() : null,
-      );
-      if (open) {
-        await this.revealGalleryLeaf(open);
-        return;
+      try {
+        const open = pickGalleryLeafForLibrary(
+          this.app.workspace.getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY),
+          lib,
+          (leaf) =>
+            leaf.view instanceof GalleryView ? leaf.view.pageLibrary() : null,
+        );
+        if (open) {
+          const path =
+            open.view instanceof GalleryView ? open.view.file?.path ?? "" : "";
+          if (path) gate.setTarget(path);
+          await this.revealGalleryLeaf(open);
+          await gate.wait();
+          return;
+        }
+        const file = await resolveOrCreateGalleryPageForLibrary(this, lib);
+        if (!file) return;
+        gate.setTarget(file.path);
+        await this.activateGalleryView({ replaceActive: true, file });
+        await gate.wait();
+      } finally {
+        gate.cancel();
       }
-      const file = await resolveOrCreateGalleryPageForLibrary(this, lib);
-      if (!file) return;
-      await this.activateGalleryView({ replaceActive: true, file });
     });
   }
 

@@ -8,8 +8,11 @@ import { test } from "node:test";
 import {
   AutoRevealRestoreError,
   classifyLibraryFolderClick,
+  createAutoRevealSettleGate,
+  decideAutoRevealRestoreEvent,
   decideGalleryOpenLeaf,
   libraryFolderNotePath,
+  mergeAutoRevealState,
   pickGalleryLeafForLibrary,
   isGalleryByCache,
   pickLibraryCreatePath,
@@ -346,6 +349,109 @@ test("restore failure wins even when the open also fails", async () => {
     },
   );
   assert.equal(explorer.getState().autoReveal, false);
+});
+
+test("restore keeps live sort and search instead of the snapshot", async () => {
+  const explorer = mockExplorer(true);
+  await withAutoRevealSuppressed([explorer], async () => {
+    await explorer.setState(
+      {
+        sortOrder: "modified",
+        autoReveal: false,
+        searchQuery: "new",
+      },
+      { history: false },
+    );
+  });
+  assert.deepEqual(explorer.getState(), {
+    sortOrder: "modified",
+    autoReveal: true,
+    searchQuery: "new",
+  });
+});
+
+test("gallery file-open settles, a different file restores now", () => {
+  assert.equal(
+    decideAutoRevealRestoreEvent({
+      openedPath: "Character Archive/Character Archive.md",
+      targetPath: "Character Archive/Character Archive.md",
+    }),
+    "settle-then-restore",
+  );
+  assert.equal(
+    decideAutoRevealRestoreEvent({
+      openedPath: "Notes/daily.md",
+      targetPath: "Character Archive/Character Archive.md",
+    }),
+    "restore-now",
+  );
+  assert.equal(
+    decideAutoRevealRestoreEvent({
+      openedPath: null,
+      targetPath: "Character Archive/Character Archive.md",
+    }),
+    "ignore",
+  );
+});
+
+test("merge only writes the auto-reveal flag", () => {
+  assert.deepEqual(
+    mergeAutoRevealState({ sortOrder: "modified", autoReveal: false }, true),
+    { sortOrder: "modified", autoReveal: true },
+  );
+});
+
+function fakeSleep(msLog: number[]) {
+  return (ms: number) => {
+    msLog.push(ms);
+    return Promise.resolve();
+  };
+}
+
+test("settle gate waits after the target file-open, including a late attach", async () => {
+  const sleeps: number[] = [];
+  const listeners: Array<(path: string | null) => void> = [];
+  const gate = createAutoRevealSettleGate({
+    subscribeFileOpen: (cb) => {
+      listeners.push(cb);
+      return () => undefined;
+    },
+    sleep: fakeSleep(sleeps),
+    fallbackMs: 400,
+    settleMs: 50,
+  });
+  listeners[0]?.("Character Archive/Character Archive.md");
+  gate.setTarget("Character Archive/Character Archive.md");
+  const reason = await gate.wait();
+  assert.equal(reason, "target-settled");
+  assert.ok(sleeps.includes(50));
+});
+
+test("settle gate restores immediately when another note opens", async () => {
+  const listeners: Array<(path: string | null) => void> = [];
+  const gate = createAutoRevealSettleGate({
+    subscribeFileOpen: (cb) => {
+      listeners.push(cb);
+      return () => undefined;
+    },
+    sleep: fakeSleep([]),
+    fallbackMs: 400,
+    settleMs: 50,
+  });
+  gate.setTarget("Character Archive/Character Archive.md");
+  listeners[0]?.("Notes/daily.md");
+  assert.equal(await gate.wait(), "left-gallery");
+});
+
+test("settle gate times out when no file-open arrives", async () => {
+  const gate = createAutoRevealSettleGate({
+    subscribeFileOpen: () => () => undefined,
+    sleep: fakeSleep([]),
+    fallbackMs: 400,
+    settleMs: 50,
+  });
+  gate.setTarget("Character Archive/Character Archive.md");
+  assert.equal(await gate.wait(), "timeout");
 });
 
 test("restore failure is reported after a successful open", async () => {

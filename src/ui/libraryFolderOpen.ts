@@ -171,19 +171,133 @@ export type ExplorerViewLike = {
   ) => void | Promise<void>;
 };
 
+/** How long to keep auto-reveal off if no `file-open` arrives. */
+export const AUTO_REVEAL_FALLBACK_MS = 400;
+/** Extra quiet window after the gallery note’s own `file-open` / queued sort. */
+export const AUTO_REVEAL_SETTLE_MS = 50;
+
+export type AutoRevealSettleReason =
+  | "target-settled"
+  | "left-gallery"
+  | "timeout";
+
+/** Merge the saved flag into live explorer state so sort/search are not wiped. */
+export function mergeAutoRevealState(
+  current: Record<string, unknown>,
+  autoReveal: boolean,
+): Record<string, unknown> {
+  return { ...current, autoReveal };
+}
+
+export function decideAutoRevealRestoreEvent(input: {
+  openedPath: string | null;
+  targetPath: string;
+}): "settle-then-restore" | "restore-now" | "ignore" {
+  if (!input.openedPath || !input.targetPath) return "ignore";
+  const opened = normalizeLibraryPath(input.openedPath);
+  const target = normalizeLibraryPath(input.targetPath);
+  return opened === target ? "settle-then-restore" : "restore-now";
+}
+
+export function createAutoRevealSettleGate(input: {
+  subscribeFileOpen: (cb: (path: string | null) => void) => () => void;
+  sleep: (ms: number) => Promise<void>;
+  fallbackMs?: number;
+  settleMs?: number;
+}): {
+  setTarget: (path: string) => void;
+  wait: () => Promise<AutoRevealSettleReason>;
+  cancel: () => void;
+} {
+  const fallbackMs = input.fallbackMs ?? AUTO_REVEAL_FALLBACK_MS;
+  const settleMs = input.settleMs ?? AUTO_REVEAL_SETTLE_MS;
+  const seen: string[] = [];
+  let target = "";
+  let done: AutoRevealSettleReason | "cancel" | null = null;
+  let resolveWait: ((reason: AutoRevealSettleReason) => void) | null = null;
+  let settleStarted = false;
+
+  const unsubscribe = input.subscribeFileOpen((path) => {
+    if (!path) return;
+    seen.push(normalizeLibraryPath(path));
+    void consider();
+  });
+
+  const finish = (reason: AutoRevealSettleReason | "cancel") => {
+    if (done) return;
+    done = reason;
+    unsubscribe();
+    if (reason === "cancel") {
+      resolveWait?.("timeout");
+      return;
+    }
+    resolveWait?.(reason);
+  };
+
+  const consider = async () => {
+    if (done || !target) return;
+    for (const path of seen) {
+      const decision = decideAutoRevealRestoreEvent({
+        openedPath: path,
+        targetPath: target,
+      });
+      if (decision === "restore-now") {
+        finish("left-gallery");
+        return;
+      }
+    }
+    if (
+      seen.some(
+        (path) =>
+          decideAutoRevealRestoreEvent({
+            openedPath: path,
+            targetPath: target,
+          }) === "settle-then-restore",
+      )
+    ) {
+      if (settleStarted) return;
+      settleStarted = true;
+      await input.sleep(settleMs);
+      if (done) return;
+      finish("target-settled");
+    }
+  };
+
+  return {
+    setTarget(path: string) {
+      target = normalizeLibraryPath(path);
+      void consider();
+    },
+    wait() {
+      return new Promise<AutoRevealSettleReason>((resolve) => {
+        if (done) {
+          resolve(done === "cancel" ? "timeout" : done);
+          return;
+        }
+        resolveWait = resolve;
+        void input.sleep(fallbackMs).then(() => {
+          if (!done) finish("timeout");
+        });
+        void consider();
+      });
+    },
+    cancel() {
+      finish("cancel");
+    },
+  };
+}
+
 /**
  * File Explorer auto-reveal expands ancestors of the active file. Opening the
  * gallery FileView would reopen the library folder after the title click
- * cancelled the native expand. Suppress only for this operation.
+ * cancelled the native expand. Suppress only for this operation, then merge
+ * the original flag back after `fn` (including any settle wait inside it).
  */
 export async function withAutoRevealSuppressed<T>(
   views: ExplorerViewLike[],
   fn: () => Promise<T>,
 ): Promise<T> {
-  const restored: Array<{
-    view: ExplorerViewLike;
-    state: Record<string, unknown>;
-  }> = [];
+  const restored: ExplorerViewLike[] = [];
   let thrown: unknown;
   try {
     for (const view of views) {
@@ -197,7 +311,7 @@ export async function withAutoRevealSuppressed<T>(
       if (!state || typeof state !== "object" || state.autoReveal !== true) {
         continue;
       }
-      restored.push({ view, state: { ...state } });
+      restored.push(view);
       await view.setState({ ...state, autoReveal: false }, { history: false });
     }
     return await fn();
@@ -206,9 +320,14 @@ export async function withAutoRevealSuppressed<T>(
     throw error;
   } finally {
     let restoreError: unknown;
-    for (const { view, state } of restored) {
+    for (const view of restored) {
       try {
-        await view.setState(state, { history: false });
+        const current = view.getState();
+        const live =
+          current && typeof current === "object" ? current : {};
+        await view.setState(mergeAutoRevealState(live, true), {
+          history: false,
+        });
       } catch (error) {
         restoreError = error;
       }
