@@ -1,4 +1,4 @@
-export const UPDATE_NOTES_VERSION = "0.1.23";
+export const UPDATE_NOTES_VERSION = "0.1.24";
 
 export function normalizeSeenUpdateNotesVersion(raw: unknown): string {
   return typeof raw === "string" ? raw.trim() : "";
@@ -43,11 +43,15 @@ kind: "character-archive-update"
 
 ## 업데이트 내용
 
-- 보관함 폴더 이름을 바꿔도 갤러리는 그대로 열려요.
+- 모바일에서는 검색이 필요할 때만 펼쳐져 상단이 더 간결해요.
+- 좁은 화면의 공유, 속성 관리, 여러 선택, 새로고침을 보기 메뉴에서 쉽게 찾을 수 있어요.
+- 화면 너비가 바뀌거나 검색과 여러 선택을 끝내도 키보드 초점이 보이는 버튼에 남아요.
 
 ---
 
 ## What's new
 
-- Renaming the archive folder keeps the same gallery working.
+- On mobile, search expands only when needed, keeping the header simpler.
+- On narrow screens, Share, Manage attributes, Multi-select, and Refresh are easy to find in the View menu.
+- Keyboard focus stays on a visible control after resizing or leaving search and multi-select.
 `;

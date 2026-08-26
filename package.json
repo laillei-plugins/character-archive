@@ -1,6 +1,6 @@
 {
   "name": "character-archive",
-  "version": "0.1.23",
+  "version": "0.1.24",
   "description": "Card-view character archive. Local notes, easy share.",
   "main": "main.js",
   "type": "module",

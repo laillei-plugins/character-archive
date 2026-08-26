@@ -59,7 +59,7 @@ test("fresh installs and a different plugin version do not open this note", () =
 
 test("stored seen versions are normalized before comparison", () => {
   assert.equal(normalizeSeenUpdateNotesVersion(null), "");
-  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.23 "), "0.1.23");
+  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.24 "), "0.1.24");
   assert.equal(normalizeSeenUpdateNotesVersion(18), "");
 });
 
@@ -73,11 +73,11 @@ test("one update note keeps Korean before the equivalent English section", () =>
   assert.ok(korean >= 0 && english > korean);
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /보관함 폴더 이름을 바꿔도 갤러리는 그대로 열려요/,
+    /모바일에서는 검색이 필요할 때만 펼쳐져 상단이 더 간결해요/,
   );
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /Renaming the archive folder keeps the same gallery working/,
+    /On mobile, search expands only when needed, keeping the header simpler/,
   );
 });
 

@@ -105,6 +105,23 @@ import {
   shouldOpenImageFocus,
 } from "../ui/imageFocus";
 import {
+  AsyncSingleFlight,
+  activateDescribedBatchAction,
+  batchToggleFocusTarget,
+  describeBatchAction,
+  foldTierForWidth,
+  fullRenderFocusTarget,
+  imageFocusAfterStep,
+  imageFocusTabTarget,
+  responsiveFocusTargetAfterResize,
+  transitionSearchDisclosure,
+  type BatchActionDescriptor,
+  type FoldTier,
+  type ResponsiveFocusOwner,
+  type ResponsiveFocusTarget,
+  type SearchDisclosureEvent,
+} from "../ui/searchDisclosure";
+import {
   FILTER_AXIS_IDS,
   axisFor,
   axisLabel,
@@ -173,6 +190,7 @@ import {
 export const VIEW_TYPE_CHARINFO_GALLERY = "charinfo-gallery";
 
 const NARROW_PX = 720;
+let gallerySearchDisclosureId = 0;
 /** Tags shown on a card before collapsing the rest into `+n`. */
 const CARD_TAG_LIMIT = 3;
 /** Peek placeholder for an unset field — a muted em dash, not “비어 있음”. */
@@ -252,9 +270,13 @@ export class GalleryView extends FileView {
   store: CharacterStore;
   editMode = false;
   searchQuery = "";
+  private searchExpanded = false;
   records: CharacterRecord[] = [];
   selected: CharacterRecord | null = null;
   private searchInput: HTMLInputElement | null = null;
+  private searchMagnifier: HTMLButtonElement | null = null;
+  private readonly searchWrapId =
+    `charinfo-gallery-search-${++gallerySearchDisclosureId}`;
   private searchTimer: number | null = null;
   private suppressClick = false;
   private viewMenu: ViewSettingsPopover | null = null;
@@ -272,6 +294,7 @@ export class GalleryView extends FileView {
   private peekStripFingerprint = "";
   private resizeObserver: ResizeObserver | null = null;
   private isNarrow = false;
+  private foldTier: FoldTier = "none";
   private peekOpen = false;
   /** Last file body, for `library` when metadata cache is still empty. */
   private scopeBody = "";
@@ -297,6 +320,8 @@ export class GalleryView extends FileView {
   private batchDialog: BatchGroupMoveDialog | null = null;
   /** True from the first schema write until the transaction settles. */
   private batchSaving = false;
+  /** Manual refresh ownership survives popover close and full Gallery renders. */
+  private refreshFlight = new AsyncSingleFlight();
   /** Real per-view transaction guard — `suppressGalleryRefresh` is not one. */
   private batchFreeze = new BatchRefreshFreeze();
   private batchNoticeTimer: number | null = null;
@@ -378,6 +403,136 @@ export class GalleryView extends FileView {
     return batchModeSurface({
       editMode: this.editMode,
       batchMode: this.batchMode,
+    });
+  }
+
+  private searchDisclosureState() {
+    return {
+      expanded: this.searchExpanded,
+      isNarrow: this.isNarrow,
+      query: this.searchQuery,
+    };
+  }
+
+  /** Apply class/ARIA/value in place; the header DOM remains owned by render(). */
+  private syncSearchDisclosure(): void {
+    const normalized = transitionSearchDisclosure(
+      this.searchDisclosureState(),
+      { type: "compact-change" },
+    ).state;
+    this.searchExpanded = normalized.expanded;
+    this.contentEl.toggleClass("is-search-open", this.searchExpanded);
+    this.searchMagnifier?.setAttribute(
+      "aria-expanded",
+      this.searchExpanded ? "true" : "false",
+    );
+    if (this.searchInput && this.searchInput.value !== this.searchQuery) {
+      this.searchInput.value = this.searchQuery;
+    }
+  }
+
+  private applySearchDisclosureTransition(
+    event: SearchDisclosureEvent,
+  ): void {
+    const transition = transitionSearchDisclosure(
+      this.searchDisclosureState(),
+      event,
+    );
+    this.searchExpanded = transition.state.expanded;
+    this.searchQuery = transition.state.query;
+    this.syncSearchDisclosure();
+    if (transition.effect === "focus-input") this.searchInput?.focus();
+  }
+
+  private cancelSearchDebounce(): void {
+    if (this.searchTimer == null) return;
+    window.clearTimeout(this.searchTimer);
+    this.searchTimer = null;
+  }
+
+  /** Narrow close sequence is deliberately one body render and no header render. */
+  private closeSearchDisclosure(opts: { focusTrigger: boolean }): void {
+    const transition = transitionSearchDisclosure(
+      this.searchDisclosureState(),
+      { type: "close" },
+    );
+    if (transition.effect !== "close") return;
+    this.cancelSearchDebounce();
+    if (this.searchInput) this.searchInput.value = "";
+    this.searchQuery = transition.state.query;
+    this.renderBody();
+    this.searchInput?.blur();
+    this.searchExpanded = transition.state.expanded;
+    this.syncSearchDisclosure();
+    if (opts.focusTrigger) this.searchMagnifier?.focus();
+  }
+
+  private clearSearchExternally(): void {
+    this.cancelSearchDebounce();
+    const transition = transitionSearchDisclosure(
+      this.searchDisclosureState(),
+      { type: "external-query", query: "" },
+    );
+    this.searchQuery = transition.state.query;
+    this.searchExpanded = transition.state.expanded;
+    if (this.searchInput) this.searchInput.value = "";
+    this.renderBody();
+    this.syncSearchDisclosure();
+    if (this.isNarrow) this.searchMagnifier?.focus();
+    else this.searchInput?.focus();
+  }
+
+  private batchActionDescriptor(): BatchActionDescriptor {
+    return describeBatchAction({
+      editMode: this.editMode,
+      batchMode: this.batchMode,
+      batchSaving: this.batchSaving,
+    });
+  }
+
+  private syncBatchActionRoutes(): void {
+    const descriptor = this.batchActionDescriptor();
+    this.contentEl
+      .querySelectorAll<HTMLElement>('[data-charinfo="batch"]')
+      .forEach((button) => {
+        button.setAttribute("aria-label", descriptor.label);
+        button.setAttribute("title", descriptor.label);
+        button.setAttribute("aria-pressed", descriptor.pressed ? "true" : "false");
+        button.setAttribute("aria-disabled", descriptor.disabled ? "true" : "false");
+        button.toggleClass("is-active", descriptor.classes.includes("is-active"));
+        button.toggleClass("is-locked", descriptor.classes.includes("is-locked"));
+      });
+  }
+
+  private activateBatchAction(): void {
+    const descriptor = this.batchActionDescriptor();
+    activateDescribedBatchAction(descriptor, () => {
+      if (!this.editMode) {
+        new Notice("편집 모드(연필)를 켜면 여러 캐릭터를 고를 수 있어요.");
+        this.contentEl
+          .querySelector<HTMLElement>('[data-charinfo="edit"]')
+          ?.focus();
+        return;
+      }
+      this.setBatchMode(!descriptor.pressed);
+    });
+  }
+
+  private viewSettingsState() {
+    return {
+      foldTier: this.foldTier,
+      editMode: this.editMode,
+      batchMode: this.batchMode,
+      batchSaving: this.batchSaving,
+      cardEditActive: this.cardEditActive,
+      refreshPending: this.refreshFlight.pending,
+    };
+  }
+
+  private requestManualRefresh(): Promise<void> {
+    return this.refreshFlight.run(() => this.refresh(), (error) => {
+      console.error("[charinfo] 새로고침 실패", error);
+      new Notice("새로고침에 실패했어요. 다시 시도해 주세요.");
     });
   }
 
@@ -699,6 +854,13 @@ export class GalleryView extends FileView {
     });
     await this.plugin.saveSettings();
     this.selected = null;
+    const search = transitionSearchDisclosure(
+      this.searchDisclosureState(),
+      { type: "archive-change" },
+    ).state;
+    this.cancelSearchDebounce();
+    this.searchQuery = search.query;
+    this.searchExpanded = search.expanded;
     this.render();
     this.leaf.setEphemeralState({ ...this.leaf.getEphemeralState() });
   }
@@ -864,6 +1026,16 @@ export class GalleryView extends FileView {
     this.viewClosed = false;
     this.registerDomEvent(this.containerEl, "keydown", (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (this.imageFocus) {
+          event.preventDefault();
+          this.closeImageFocus({ restoreFocus: true });
+          return;
+        }
+        if (this.isNarrow && this.searchExpanded) {
+          event.preventDefault();
+          this.closeSearchDisclosure({ focusTrigger: true });
+          return;
+        }
         // Batch owns Escape first, in exactly this order: a running write
         // swallows the key, then the destination dialog, then selection mode.
         const batch = batchEscapeAction({
@@ -899,11 +1071,6 @@ export class GalleryView extends FileView {
           event.preventDefault();
           return;
         }
-        if (this.imageFocus) {
-          event.preventDefault();
-          this.closeImageFocus({ restoreFocus: true });
-          return;
-        }
         if (this.isNarrow && this.peekOpen) {
           event.preventDefault();
           this.closePeek();
@@ -924,17 +1091,46 @@ export class GalleryView extends FileView {
       }
       if (event.key === "/" && !(event.target instanceof HTMLInputElement)) {
         event.preventDefault();
-        this.searchInput?.focus();
+        this.applySearchDisclosureTransition({ type: "slash" });
       }
     });
     this.resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
-      const next = entry.contentRect.width < NARROW_PX;
-      if (next === this.isNarrow) return;
-      this.isNarrow = next;
-      this.contentEl.toggleClass("is-narrow", next);
-      if (this.peekOpen) this.syncPeekChrome();
+      const width = entry.contentRect.width;
+      const nextNarrow = width < NARROW_PX;
+      const nextTier = foldTierForWidth(width);
+      const narrowChanged = nextNarrow !== this.isNarrow;
+      const tierChanged = nextTier !== this.foldTier;
+      if (!narrowChanged && !tierChanged) return;
+      const focusOwner = this.responsiveFocusOwner();
+      const searchOwnedFocus = this.searchInput === document.activeElement;
+      this.viewMenu?.close();
+      if (narrowChanged) {
+        this.isNarrow = nextNarrow;
+        this.contentEl.toggleClass("is-narrow", nextNarrow);
+        this.applySearchDisclosureTransition({
+          type: "resize",
+          isNarrow: nextNarrow,
+          inputOwnedFocus: searchOwnedFocus,
+        });
+        if (this.peekOpen) this.syncPeekChrome();
+      }
+      if (tierChanged) {
+        this.foldTier = nextTier;
+        this.contentEl.toggleClass("is-compact", nextTier === "compact");
+        this.applySearchDisclosureTransition({ type: "compact-change" });
+      }
+      this.syncChipOverflowAndReveal();
+      this.restoreResponsiveFocus(
+        responsiveFocusTargetAfterResize({
+          owner: focusOwner,
+          nextTier: this.foldTier,
+          editMode: this.editMode,
+          batchMode: this.batchMode,
+          searchExpanded: this.searchExpanded,
+        }),
+      );
     });
     this.resizeObserver.observe(this.contentEl);
     // FileView loads the note via onLoadFile — only refresh here if already bound.
@@ -942,6 +1138,7 @@ export class GalleryView extends FileView {
   }
 
   async onClose(): Promise<void> {
+    this.cancelSearchDebounce();
     if (this.tipTimer != null) {
       window.clearTimeout(this.tipTimer);
       this.tipTimer = null;
@@ -1099,6 +1296,7 @@ export class GalleryView extends FileView {
     this.chipFilter = next;
     await this.plugin.saveSettings();
     this.syncChipFilters();
+    this.syncChipOverflowAndReveal();
     this.renderBody();
   }
 
@@ -1801,8 +1999,16 @@ export class GalleryView extends FileView {
     } else {
       this.teardownBatchMode();
     }
+    this.applySearchDisclosureTransition({ type: "batch-change" });
+    const focusTarget = batchToggleFocusTarget({
+      enabled,
+      foldTier: this.foldTier,
+      searchExpanded: this.searchExpanded,
+    });
     this.render();
-    this.focusBatchHeaderButton();
+    if (focusTarget === "search") this.searchInput?.focus();
+    else if (focusTarget === "view") this.focusViewHeaderButton();
+    else this.focusBatchHeaderButton();
   }
 
   /** Idempotent teardown — safe from Escape, edit exit, unload, and close. */
@@ -1922,9 +2128,50 @@ export class GalleryView extends FileView {
   }
 
   private focusBatchHeaderButton(): void {
-    const button = this.contentEl.querySelector(
-      '.charinfo-gallery__icon-btn[data-charinfo="batch"]',
-    );
+    const selector =
+      this.isNarrow && this.searchExpanded && this.batchMode
+        ? '.charinfo-gallery__search-batch[data-charinfo="batch"]'
+        : '.charinfo-gallery__actions [data-charinfo="batch"]';
+    const button = this.contentEl.querySelector(selector);
+    if (button instanceof HTMLElement) button.focus();
+  }
+
+  private responsiveFocusOwner(): ResponsiveFocusOwner {
+    if (this.viewMenu?.ownsFocus()) return "view-popover";
+    const active = document.activeElement;
+    if (active === this.searchInput) return "search-input";
+    if (active === this.searchMagnifier) return "search-trigger";
+    if (!(active instanceof HTMLElement)) return "none";
+    if (active.matches(".charinfo-gallery__search-close")) return "search-close";
+    if (active.matches('[data-charinfo="batch"]')) return "batch";
+    if (active.matches('[data-charinfo="view"]')) return "view";
+    return "none";
+  }
+
+  private restoreResponsiveFocus(target: ResponsiveFocusTarget): void {
+    if (target === "search-input") this.searchInput?.focus();
+    else if (target === "search-trigger") this.searchMagnifier?.focus();
+    else if (target === "search-close") {
+      this.contentEl
+        .querySelector<HTMLElement>(".charinfo-gallery__search-close")
+        ?.focus();
+    } else if (target === "batch") this.focusBatchHeaderButton();
+    else if (target === "view") this.focusViewHeaderButton();
+  }
+
+  private focusAfterBatchExit(): void {
+    const target = batchToggleFocusTarget({
+      enabled: false,
+      foldTier: this.foldTier,
+      searchExpanded: this.searchExpanded,
+    });
+    if (target === "search") this.searchInput?.focus();
+    else if (target === "view") this.focusViewHeaderButton();
+    else this.focusBatchHeaderButton();
+  }
+
+  private focusViewHeaderButton(): void {
+    const button = this.contentEl.querySelector('[data-charinfo="view"]');
     if (button instanceof HTMLElement) button.focus();
   }
 
@@ -2011,6 +2258,7 @@ export class GalleryView extends FileView {
 
     const generation = this.uiGeneration;
     this.batchSaving = true;
+    this.syncBatchActionRoutes();
     dialog.beginSaving();
 
     await runBatchTransaction({
@@ -2042,6 +2290,7 @@ export class GalleryView extends FileView {
       thaw: () => this.batchFreeze.thaw(),
       settle: () => {
         this.batchSaving = false;
+        this.syncBatchActionRoutes();
       },
       commit: (outcome: BatchMoveOutcome) => {
         for (const move of outcome.applied) {
@@ -2074,7 +2323,7 @@ export class GalleryView extends FileView {
           batchMoveSuccessMessage(outcome.changed, plan.destination),
           BATCH_NOTICE_MS,
         );
-        this.focusBatchHeaderButton();
+        this.focusAfterBatchExit();
       },
     });
   }
@@ -2121,6 +2370,7 @@ export class GalleryView extends FileView {
 
     const generation = this.uiGeneration;
     this.batchSaving = true;
+    this.syncBatchActionRoutes();
     dialog.beginSaving();
 
     await runBatchTransaction({
@@ -2162,6 +2412,7 @@ export class GalleryView extends FileView {
       thaw: () => this.batchFreeze.thaw(),
       settle: () => {
         this.batchSaving = false;
+        this.syncBatchActionRoutes();
       },
       commit: (outcome: BatchMoveOutcome) => {
         for (const move of outcome.applied) {
@@ -2199,7 +2450,7 @@ export class GalleryView extends FileView {
           batchMoveSuccessMessage(outcome.changed, plan.destination),
           BATCH_NOTICE_MS,
         );
-        this.focusBatchHeaderButton();
+        this.focusAfterBatchExit();
       },
     });
   }
@@ -2448,6 +2699,7 @@ export class GalleryView extends FileView {
     if (!enabled) this.closeGroupRenameDialog();
     if (enabled) this.closeImageFocus({ restoreFocus: false });
     this.editMode = enabled;
+    this.applySearchDisclosureTransition({ type: "edit-change" });
     this.render();
     if (turningOn) {
       this.showGalleryTip(
@@ -2766,6 +3018,11 @@ export class GalleryView extends FileView {
 
   render(): void {
     const root = this.contentEl;
+    const searchOwnedFocus = this.searchInput === document.activeElement;
+    const repaintFocusTarget = fullRenderFocusTarget({
+      searchOwnedFocus,
+      batchMode: this.batchMode,
+    });
     this.invalidateProjectionCaches();
     this.viewMenu?.close();
     this.viewMenu = null;
@@ -2776,16 +3033,25 @@ export class GalleryView extends FileView {
     this.closeGroupRenameDialog();
     this.disposeImageFocusDom();
     root.empty();
+    this.searchInput = null;
+    this.searchMagnifier = null;
     root.addClass("charinfo-gallery");
     root.toggleClass("is-edit", this.editMode);
     root.toggleClass("is-batch", this.batchMode);
     root.toggleClass("is-fit-image", this.plugin.settings.cardFitImage);
     root.toggleClass("is-narrow", this.isNarrow);
+    root.toggleClass("is-compact", this.foldTier === "compact");
+    root.toggleClass("is-search-open", this.searchExpanded);
     root.toggleClass("is-peek-open", this.peekOpen);
     root.tabIndex = 0;
     this.applySheetSnap();
 
     this.renderHeader(root);
+    this.applySearchDisclosureTransition({
+      type: "full-render",
+      inputOwnedFocus: searchOwnedFocus,
+    });
+    this.syncChipOverflowAndReveal();
     this.syncGalleryInert();
     root.createDiv({ cls: "charinfo-gallery__body" });
     this.renderBody();
@@ -2803,6 +3069,7 @@ export class GalleryView extends FileView {
     } else if (this.imageFocus) {
       this.closeImageFocus({ restoreFocus: false });
     }
+    if (repaintFocusTarget === "batch") this.focusBatchHeaderButton();
   }
 
   private renderBody(): void {
@@ -2868,13 +3135,31 @@ export class GalleryView extends FileView {
         : "";
     tokens.empty();
     this.fillChipFilters(tokens);
-    if (!focusedId) return;
-    // The focused chip may have just been hidden — land on 「전체」 instead.
-    const next =
-      tokens.querySelector(
-        `.charinfo-status-filter[data-filter="${CSS.escape(focusedId)}"]`,
-      ) ?? tokens.querySelector(".charinfo-status-filter.is-all");
-    if (next instanceof HTMLElement) next.focus();
+    if (focusedId) {
+      // The focused chip may have just been hidden — land on 「전체」 instead.
+      const next =
+        tokens.querySelector(
+          `.charinfo-status-filter[data-filter="${CSS.escape(focusedId)}"]`,
+        ) ?? tokens.querySelector(".charinfo-status-filter.is-all");
+      if (next instanceof HTMLElement) next.focus();
+    }
+    this.syncChipOverflowAndReveal();
+  }
+
+  /** Nearest-edge reveal with no smooth scroll and no vertical movement. */
+  private syncChipOverflowAndReveal(): void {
+    const tokens = this.contentEl.querySelector(".charinfo-gallery__filters");
+    if (!(tokens instanceof HTMLElement)) return;
+    tokens.toggleClass("is-scrollable", tokens.scrollWidth > tokens.clientWidth);
+    const active = tokens.querySelector(".charinfo-status-filter.is-active");
+    if (!(active instanceof HTMLElement)) return;
+    const viewport = tokens.getBoundingClientRect();
+    const chip = active.getBoundingClientRect();
+    if (chip.left < viewport.left) {
+      tokens.scrollLeft -= viewport.left - chip.left;
+    } else if (chip.right > viewport.right) {
+      tokens.scrollLeft += chip.right - viewport.right;
+    }
   }
 
   /** 「전체」 + every option with at least one card in this archive. */
@@ -3060,6 +3345,7 @@ export class GalleryView extends FileView {
 
     const searchWrap = header.createDiv({
       cls: "charinfo-gallery__search-wrap",
+      attr: { id: this.searchWrapId },
     });
     this.searchInput = searchWrap.createEl("input", {
       type: "search",
@@ -3073,19 +3359,73 @@ export class GalleryView extends FileView {
     this.searchInput.value = this.searchQuery;
     this.searchInput.addEventListener("input", () => {
       this.searchQuery = this.searchInput?.value ?? "";
+      this.syncSearchDisclosure();
       if (this.searchTimer != null) window.clearTimeout(this.searchTimer);
       this.searchTimer = window.setTimeout(() => {
+        this.searchTimer = null;
         this.renderBody();
       }, 120);
     });
 
+    if (this.batchMode) {
+      const descriptor = this.batchActionDescriptor();
+      const searchBatch = searchWrap.createEl("button", {
+        cls:
+          "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn charinfo-gallery__search-batch" +
+          descriptor.classes,
+        attr: {
+          type: "button",
+          title: descriptor.label,
+          "aria-label": descriptor.label,
+          "aria-pressed": descriptor.pressed ? "true" : "false",
+          "aria-disabled": descriptor.disabled ? "true" : "false",
+          "data-charinfo": "batch",
+        },
+      });
+      setIcon(searchBatch, "list-checks");
+      searchBatch.addEventListener("click", (event) => {
+        event.preventDefault();
+        this.activateBatchAction();
+      });
+    }
+
+    const searchClose = searchWrap.createEl("button", {
+      cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn charinfo-gallery__search-close",
+      attr: {
+        type: "button",
+        title: "검색 닫기",
+        "aria-label": "검색 닫기",
+      },
+    });
+    setIcon(searchClose, "x");
+    searchClose.addEventListener("click", (event) => {
+      event.preventDefault();
+      this.closeSearchDisclosure({ focusTrigger: true });
+    });
+
     const actions = header.createDiv({ cls: "charinfo-gallery__actions" });
+
+    this.searchMagnifier = actions.createEl("button", {
+      cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn charinfo-gallery__search-open",
+      attr: {
+        type: "button",
+        title: "검색",
+        "aria-label": "검색",
+        "aria-expanded": this.searchExpanded ? "true" : "false",
+        "aria-controls": this.searchWrapId,
+      },
+    });
+    setIcon(this.searchMagnifier, "search");
+    this.searchMagnifier.addEventListener("click", (event) => {
+      event.preventDefault();
+      this.applySearchDisclosureTransition({ type: "open" });
+    });
 
     // Selection mode locks the pencil: the selection icon is the only exit.
     const surface = this.batchSurface();
     const toggleBtn = actions.createEl("button", {
       cls:
-        "clickable-icon charinfo-gallery__icon-btn" +
+        "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn" +
         (this.editMode ? " is-active" : "") +
         (surface.editToggleEnabled ? "" : " is-locked"),
       attr: {
@@ -3110,41 +3450,34 @@ export class GalleryView extends FileView {
 
     // Directly after the pencil: selection is a mode *inside* Gallery Edit, and
     // its active state is the only visible way back out.
-    const batchLabel = this.batchMode
-      ? "여러 캐릭터 선택 끝내기"
-      : "여러 캐릭터 선택";
+    const batchDescriptor = this.batchActionDescriptor();
     const batchBtn = actions.createEl("button", {
       cls:
-        "clickable-icon charinfo-gallery__icon-btn" +
-        (this.batchMode ? " is-active" : "") +
-        (this.editMode ? "" : " is-locked"),
+        "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn" +
+        batchDescriptor.classes,
       attr: {
         type: "button",
         title: this.editMode
-          ? batchLabel
+          ? batchDescriptor.label
           : "여러 캐릭터 선택 — 편집 모드에서 열려요",
         "aria-label": this.editMode
-          ? batchLabel
+          ? batchDescriptor.label
           : "여러 캐릭터 선택 — 편집 모드에서 열려요",
-        "aria-pressed": this.batchMode ? "true" : "false",
-        "aria-disabled": this.editMode ? "false" : "true",
+        "aria-pressed": batchDescriptor.pressed ? "true" : "false",
+        "aria-disabled": batchDescriptor.disabled ? "true" : "false",
         "data-charinfo": "batch",
+        "data-fold": "compact-edit",
       },
     });
     setIcon(batchBtn, "list-checks");
     batchBtn.addEventListener("click", (event) => {
       event.preventDefault();
-      if (!this.editMode) {
-        new Notice("편집 모드(연필)를 켜면 여러 캐릭터를 고를 수 있어요.");
-        toggleBtn.focus();
-        return;
-      }
-      this.setBatchMode(!this.batchMode);
+      this.activateBatchAction();
     });
 
     const attrBtn = actions.createEl("button", {
       cls:
-        "clickable-icon charinfo-gallery__icon-btn" +
+        "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn" +
         (this.cardEditActive ? "" : " is-locked"),
       attr: {
         type: "button",
@@ -3159,6 +3492,7 @@ export class GalleryView extends FileView {
             ? "속성 관리 — 여러 선택을 끝내면 열려요"
             : "속성 관리 — 편집 모드에서 열려요",
         "aria-disabled": this.cardEditActive ? "false" : "true",
+        "data-fold": "compact",
       },
     });
     setIcon(attrBtn, "book");
@@ -3178,11 +3512,12 @@ export class GalleryView extends FileView {
     });
 
     const viewBtn = actions.createEl("button", {
-      cls: "clickable-icon charinfo-gallery__icon-btn",
+      cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn",
       attr: {
         type: "button",
-        "aria-label": "카드에 보일 항목",
-        title: "카드에 보일 항목",
+        "aria-label": "보기 설정",
+        title: "보기 설정",
+        "data-charinfo": "view",
       },
     });
     setIcon(viewBtn, "sliders-horizontal");
@@ -3226,6 +3561,20 @@ export class GalleryView extends FileView {
           (option) => option.label,
         ),
       setPageAxis: (next) => this.setPageFilter(next),
+      onShare: () => {
+        this.viewMenu?.close();
+        this.openWebShare();
+      },
+      onManageAttributes: () => {
+        // Explicit guard: aria-disabled alone does not suppress activation.
+        if (this.batchMode || !this.cardEditActive) return;
+        this.viewMenu?.close();
+        this.openAttrManage();
+      },
+      batchAction: () => this.batchActionDescriptor(),
+      activateBatchAction: () => this.activateBatchAction(),
+      refresh: () => this.requestManualRefresh(),
+      isRefreshPending: () => this.refreshFlight.pending,
       onChange: () => {
         root.toggleClass("is-fit-image", this.plugin.settings.cardFitImage);
         this.renderBody();
@@ -3234,15 +3583,16 @@ export class GalleryView extends FileView {
     viewBtn.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      this.viewMenu?.toggle();
+      this.viewMenu?.toggle(this.viewSettingsState());
     });
 
     const linkBtn = actions.createEl("button", {
-      cls: "clickable-icon charinfo-gallery__icon-btn",
+      cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn",
       attr: {
         type: "button",
         "aria-label": "공유",
         title: "공유",
+        "data-fold": "narrow",
       },
     });
     setIcon(linkBtn, "globe");
@@ -3252,15 +3602,17 @@ export class GalleryView extends FileView {
 
     if (this.editMode) {
       const refreshBtn = actions.createEl("button", {
-        cls: "clickable-icon charinfo-gallery__icon-btn charinfo-gallery__icon-btn--quiet",
+        cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn charinfo-gallery__icon-btn--quiet",
         attr: {
           type: "button",
           title: "새로고침",
           "aria-label": "새로고침",
+          "aria-disabled": this.refreshFlight.pending ? "true" : "false",
+          "data-fold": "narrow-refresh",
         },
       });
       setIcon(refreshBtn, "refresh-cw");
-      refreshBtn.addEventListener("click", () => void this.refresh());
+      refreshBtn.addEventListener("click", () => void this.requestManualRefresh());
     }
   }
 
@@ -3386,9 +3738,7 @@ export class GalleryView extends FileView {
         attr: { type: "button" },
       });
       clearSearch.addEventListener("click", () => {
-        this.searchQuery = "";
-        if (this.searchInput) this.searchInput.value = "";
-        this.render();
+        this.clearSearchExternally();
       });
       return;
     }
@@ -3400,9 +3750,7 @@ export class GalleryView extends FileView {
         attr: { type: "button" },
       });
       clearSearch.addEventListener("click", () => {
-        this.searchQuery = "";
-        if (this.searchInput) this.searchInput.value = "";
-        this.render();
+        this.clearSearchExternally();
       });
       return;
     }
@@ -5797,9 +6145,22 @@ export class GalleryView extends FileView {
     this.paintImageFocus(images);
   }
 
-  private stepImageFocus(dir: -1 | 1): void {
+  private stepImageFocus(
+    dir: -1 | 1,
+    activated?: "prev" | "next",
+  ): void {
     const state = this.imageFocus;
     if (!state) return;
+    const focused = document.activeElement;
+    const focusControl =
+      activated ??
+      (focused instanceof HTMLElement &&
+      focused.classList.contains("charinfo-focus__prev")
+        ? "prev"
+        : focused instanceof HTMLElement &&
+            focused.classList.contains("charinfo-focus__next")
+          ? "next"
+          : undefined);
     const next = advanceFocus(state.index, dir, state.keys.length);
     if (next === state.index) return;
     const key = state.keys[next];
@@ -5807,10 +6168,15 @@ export class GalleryView extends FileView {
     this.imageFocus = {
       keys: state.keys,
       index: next,
-      returnKey: key,
+      returnKey: state.returnKey,
       recordPath: state.recordPath,
     };
-    this.paintImageFocus(this.imageFocusImages);
+    this.paintImageFocus(
+      this.imageFocusImages,
+      focusControl
+        ? imageFocusAfterStep(focusControl, next, state.keys.length)
+        : undefined,
+    );
   }
 
   private reconcileOpenImageFocus(
@@ -5830,14 +6196,17 @@ export class GalleryView extends FileView {
     this.imageFocus = {
       keys,
       index: next.index,
-      returnKey: keys[next.index] ?? openKey,
+      returnKey: state.returnKey,
       recordPath: record.path,
     };
     this.imageFocusImages = images;
     this.paintImageFocus(images);
   }
 
-  private paintImageFocus(images: CoverRef[]): void {
+  private paintImageFocus(
+    images: CoverRef[],
+    focusControl?: "prev" | "next",
+  ): void {
     const state = this.imageFocus;
     const image = state ? images[state.index] : undefined;
     if (!state || !image) {
@@ -5872,7 +6241,8 @@ export class GalleryView extends FileView {
     });
     const arrows = focusArrowState(state.index, state.keys.length);
     if (arrows.show) {
-      const prev = overlay.createEl("button", {
+      const nav = overlay.createDiv({ cls: "charinfo-focus__nav" });
+      const prev = nav.createEl("button", {
         cls: "clickable-icon charinfo-icon-btn charinfo-focus__prev",
         attr: {
           type: "button",
@@ -5884,9 +6254,9 @@ export class GalleryView extends FileView {
       prev.addEventListener("click", (event) => {
         event.stopPropagation();
         if (arrows.prevDisabled) return;
-        this.stepImageFocus(-1);
+        this.stepImageFocus(-1, "prev");
       });
-      const next = overlay.createEl("button", {
+      const next = nav.createEl("button", {
         cls: "clickable-icon charinfo-icon-btn charinfo-focus__next",
         attr: {
           type: "button",
@@ -5898,7 +6268,7 @@ export class GalleryView extends FileView {
       next.addEventListener("click", (event) => {
         event.stopPropagation();
         if (arrows.nextDisabled) return;
-        this.stepImageFocus(1);
+        this.stepImageFocus(1, "next");
       });
     }
     const close = overlay.createEl("button", {
@@ -5911,7 +6281,10 @@ export class GalleryView extends FileView {
       this.closeImageFocus({ restoreFocus: true });
     });
     this.syncImageFocusInert(true);
-    close.focus();
+    const requested = focusControl
+      ? overlay.querySelector<HTMLElement>(`.charinfo-focus__${focusControl}`)
+      : close;
+    requested?.focus();
   }
 
   private disposeImageFocusDom(): void {
@@ -5935,6 +6308,28 @@ export class GalleryView extends FileView {
     if (this.imageFocusKey) return;
     this.imageFocusKey = (event: KeyboardEvent) => {
       if (!this.imageFocus) return;
+      if (event.key === "Tab") {
+        const focused = document.activeElement;
+        const current =
+          focused instanceof HTMLElement &&
+          focused.classList.contains("charinfo-focus__prev")
+            ? "prev"
+            : focused instanceof HTMLElement &&
+                focused.classList.contains("charinfo-focus__next")
+              ? "next"
+              : "close";
+        const target = imageFocusTabTarget(
+          current,
+          event.shiftKey,
+          this.imageFocus.keys.length,
+        );
+        event.preventDefault();
+        event.stopPropagation();
+        this.imageFocusEl
+          ?.querySelector<HTMLElement>(`.charinfo-focus__${target}`)
+          ?.focus();
+        return;
+      }
       const action = focusKeyAction(event.key);
       if (action === "none") return;
       event.preventDefault();

@@ -4,6 +4,10 @@ import {
   type PrimaryFilterProperty,
 } from "../settings";
 import { placeAnchoredPopover } from "./typeMenuPlacement";
+import type {
+  BatchActionDescriptor,
+  FoldTier,
+} from "./searchDisclosure";
 
 /** One 보기 row: a field of the current page + active archive. */
 export interface ViewFieldRow {
@@ -24,7 +28,22 @@ export interface ViewSettingsPopoverHandlers {
   axisReachable: (id: PrimaryFilterProperty) => boolean;
   axisOptions: (id: PrimaryFilterProperty) => string[];
   setPageAxis: (next: PrimaryFilterProperty | null) => void | Promise<void>;
+  onShare: () => void;
+  onManageAttributes: () => void;
+  batchAction: () => BatchActionDescriptor;
+  activateBatchAction: () => void;
+  refresh: () => Promise<void>;
+  isRefreshPending: () => boolean;
   onChange: () => void;
+}
+
+export interface ViewSettingsPopoverState {
+  foldTier: FoldTier;
+  editMode: boolean;
+  batchMode: boolean;
+  batchSaving: boolean;
+  cardEditActive: boolean;
+  refreshPending: boolean;
 }
 
 let viewSettingsPopoverId = 0;
@@ -41,6 +60,14 @@ export class ViewSettingsPopover {
   private pending = false;
   private pageAxisOverride: PrimaryFilterProperty | null | undefined;
   private axisFocusKey = "";
+  private responsiveState: ViewSettingsPopoverState = {
+    foldTier: "none",
+    editMode: false,
+    batchMode: false,
+    batchSaving: false,
+    cardEditActive: false,
+    refreshPending: false,
+  };
   private readonly axisRadioName =
     `charinfo-page-axis-${++viewSettingsPopoverId}`;
 
@@ -49,9 +76,9 @@ export class ViewSettingsPopover {
     private handlers: ViewSettingsPopoverHandlers,
   ) {}
 
-  toggle(): void {
+  toggle(state: ViewSettingsPopoverState): void {
     if (this.panel) this.close();
-    else this.open();
+    else this.open(state);
   }
 
   close(): void {
@@ -71,8 +98,13 @@ export class ViewSettingsPopover {
     }
   }
 
-  private open(): void {
+  ownsFocus(): boolean {
+    return this.panel?.contains(document.activeElement) ?? false;
+  }
+
+  private open(state: ViewSettingsPopoverState): void {
     this.close();
+    this.responsiveState = { ...state };
     this.pageAxisOverride = undefined;
     const panel = document.body.createDiv({ cls: "charinfo-view-menu" });
     this.panel = panel;
@@ -88,7 +120,10 @@ export class ViewSettingsPopover {
       this.close();
     };
     this.onKey = (event) => {
-      if (event.key === "Escape") this.close();
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      this.close();
+      if (this.anchor.isConnected) this.anchor.focus();
     };
     this.onScroll = (event) => {
       if (event.target instanceof Node && panel.contains(event.target)) return;
@@ -131,7 +166,7 @@ export class ViewSettingsPopover {
 
   private render(panel: HTMLElement): void {
     panel.empty();
-    panel.createDiv({ cls: "charinfo-view-menu__title", text: "카드에 보일 항목" });
+    panel.createDiv({ cls: "charinfo-view-menu__title", text: "보기 설정" });
     panel.createDiv({
       cls: "charinfo-view-menu__hint",
       text: "순서는 속성 관리에서 정해요.",
@@ -178,6 +213,9 @@ export class ViewSettingsPopover {
       this.handlers.onChange();
     });
 
+    this.renderFoldedActions(panel);
+    this.renderRefreshAction(panel);
+
     if (this.axisFocusKey && !this.pending) {
       const focusKey = this.axisFocusKey;
       this.axisFocusKey = "";
@@ -186,6 +224,108 @@ export class ViewSettingsPopover {
         ?.focus();
     }
     this.placePanel();
+  }
+
+  private renderFoldedActions(panel: HTMLElement): void {
+    const state = this.responsiveState;
+    const rows: {
+      label: string;
+      icon: string;
+      disabled: boolean;
+      pressed?: boolean;
+      classes?: string;
+      activate: () => void;
+    }[] = [];
+    if (state.foldTier !== "none") {
+      rows.push({
+        label: "공유",
+        icon: "globe",
+        disabled: false,
+        activate: this.handlers.onShare,
+      });
+    }
+    if (state.foldTier === "compact") {
+      rows.push({
+        label: "속성 관리",
+        icon: "book",
+        disabled: state.batchMode || !state.cardEditActive,
+        activate: () => {
+          // aria-disabled does not suppress keyboard or scripted activation.
+          if (this.responsiveState.batchMode || !this.responsiveState.cardEditActive) {
+            return;
+          }
+          this.handlers.onManageAttributes();
+        },
+      });
+      if (state.editMode && !state.batchMode) {
+        const descriptor = this.handlers.batchAction();
+        rows.push({
+          label: descriptor.label,
+          icon: "list-checks",
+          disabled: descriptor.disabled,
+          pressed: descriptor.pressed,
+          classes: descriptor.classes,
+          activate: this.handlers.activateBatchAction,
+        });
+      }
+    }
+    if (rows.length === 0) return;
+    const section = panel.createDiv({ cls: "charinfo-view-menu__actions" });
+    for (const row of rows) {
+      this.renderActionRow(section, row);
+    }
+  }
+
+  private renderRefreshAction(panel: HTMLElement): void {
+    const state = this.responsiveState;
+    if (state.foldTier === "none" || !state.editMode) return;
+    const section = panel.createDiv({
+      cls: "charinfo-view-menu__actions charinfo-view-menu__actions--refresh",
+    });
+    const pending = this.handlers.isRefreshPending();
+    this.renderActionRow(section, {
+      label: "새로고침",
+      icon: "refresh-cw",
+      disabled: pending,
+      classes: pending ? " is-pending" : "",
+      activate: () => {
+        void this.handlers.refresh().finally(() => {
+          if (panel.isConnected) this.render(panel);
+        });
+        if (panel.isConnected) this.render(panel);
+      },
+    });
+  }
+
+  private renderActionRow(
+    section: HTMLElement,
+    row: {
+      label: string;
+      icon: string;
+      disabled: boolean;
+      pressed?: boolean;
+      classes?: string;
+      activate: () => void;
+    },
+  ): void {
+    const button = section.createEl("button", {
+      cls: "charinfo-view-menu__action" + (row.classes ?? ""),
+      attr: {
+        type: "button",
+        "aria-disabled": row.disabled ? "true" : "false",
+        ...(row.pressed == null
+          ? {}
+          : { "aria-pressed": row.pressed ? "true" : "false" }),
+      },
+    });
+    const icon = button.createSpan({ cls: "charinfo-view-menu__action-icon" });
+    setIcon(icon, row.icon);
+    button.createSpan({ text: row.label });
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (row.disabled) return;
+      row.activate();
+    });
   }
 
   private renderPageFilter(panel: HTMLElement, rerender: () => void): void {

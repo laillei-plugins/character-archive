@@ -652,6 +652,116 @@ button.charinfo-gallery__genre:hover,
   justify-self: end;
 }
 
+/* D2: the disclosure exists only on narrow leaves; desktop keeps its field. */
+.charinfo-gallery:not(.is-narrow) .charinfo-gallery__search-open,
+.charinfo-gallery:not(.is-narrow) .charinfo-gallery__search-close,
+.charinfo-gallery:not(.is-narrow) .charinfo-gallery__search-batch {
+  display: none;
+}
+
+.charinfo-gallery.is-narrow .charinfo-gallery__header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "genre actions"
+    "filters filters";
+  align-items: center;
+  row-gap: var(--charinfo-space-sm);
+  padding-bottom: var(--charinfo-space-md);
+}
+
+.charinfo-gallery.is-narrow.is-edit .charinfo-gallery__header {
+  grid-template-areas:
+    "genre actions"
+    "sort sort"
+    "filters filters";
+}
+
+.charinfo-gallery.is-narrow .charinfo-gallery__header-left {
+  min-height: 44px;
+  justify-content: center;
+}
+
+.charinfo-gallery.is-narrow .charinfo-gallery__genre-row {
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--charinfo-space-xs);
+}
+
+.charinfo-gallery.is-narrow .charinfo-gallery__genre {
+  min-width: calc(var(--size-4-12) + var(--size-4-10));
+  min-height: var(--size-4-6);
+}
+
+.charinfo-gallery.is-narrow .charinfo-gallery__actions {
+  align-self: center;
+  gap: var(--charinfo-space-sm);
+}
+
+.charinfo-gallery.is-narrow .charinfo-gallery__search-wrap {
+  display: none;
+}
+
+.charinfo-gallery.is-narrow.is-search-open .charinfo-gallery__header-left,
+.charinfo-gallery.is-narrow.is-search-open .charinfo-gallery__actions {
+  display: none;
+}
+
+.charinfo-gallery.is-narrow.is-search-open .charinfo-gallery__search-wrap {
+  display: flex;
+  grid-area: genre / genre / actions / actions;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: var(--charinfo-space-md);
+  min-height: 44px;
+}
+
+.charinfo-gallery.is-narrow.is-search-open .charinfo-gallery__search {
+  flex: 1 1 auto;
+  min-height: var(--size-4-8);
+}
+
+.charinfo-gallery.is-narrow .charinfo-gallery__filters {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.charinfo-gallery.is-narrow .charinfo-gallery__filters.is-scrollable {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    var(--charinfo-ink) calc(100% - var(--charinfo-space-xl)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    var(--charinfo-ink) calc(100% - var(--charinfo-space-xl)),
+    transparent
+  );
+}
+
+.charinfo-gallery.is-narrow .charinfo-gallery__filters::-webkit-scrollbar {
+  display: none;
+}
+
+.charinfo-gallery.is-narrow .charinfo-status-filter {
+  flex: 0 0 auto;
+}
+
+.charinfo-gallery.is-narrow
+  .charinfo-gallery__actions
+  [data-fold="narrow"],
+.charinfo-gallery.is-narrow
+  .charinfo-gallery__actions
+  [data-fold="narrow-refresh"],
+.charinfo-gallery.is-compact
+  .charinfo-gallery__actions
+  [data-fold="compact"],
+.charinfo-gallery.is-compact.is-edit:not(.is-batch)
+  .charinfo-gallery__actions
+  [data-fold="compact-edit"] {
+  display: none;
+}
+
 .charinfo-gallery__sort {
   grid-area: sort;
   display: flex;
@@ -1757,6 +1867,61 @@ button.charinfo-gallery__genre:hover,
   padding: var(--charinfo-space-md) var(--charinfo-space-md)
     var(--charinfo-space-xs);
   border-top: 1px solid var(--charinfo-line);
+}
+
+.charinfo-view-menu__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--charinfo-space-xxs);
+  margin-top: var(--charinfo-space-xs);
+  padding-top: var(--charinfo-space-xs);
+  border-top: 1px solid var(--charinfo-line);
+}
+
+.charinfo-view-menu__actions--refresh {
+  margin-top: var(--charinfo-space-xs);
+}
+
+.charinfo-view-menu__action {
+  display: flex;
+  align-items: center;
+  gap: var(--charinfo-space-md);
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 var(--charinfo-space-md);
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--charinfo-ink);
+  font: inherit;
+  font-size: var(--font-ui-small);
+  text-align: left;
+  cursor: pointer;
+}
+
+.charinfo-view-menu__action:hover {
+  background: var(--background-modifier-hover);
+}
+
+.charinfo-view-menu__action-icon {
+  display: inline-flex;
+  color: var(--icon-color);
+}
+
+.charinfo-view-menu__action-icon svg {
+  width: var(--icon-m);
+  height: var(--icon-m);
+  stroke-width: var(--icon-stroke);
+}
+
+.charinfo-view-menu__action[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.charinfo-view-menu__action[aria-disabled="true"]:hover {
+  background: transparent;
 }
 
 .charinfo-view-menu__toggle-label {
@@ -6333,25 +6498,54 @@ button.charinfo-attr-modal__type-item:focus-visible {
   cursor: default;
 }
 
-.charinfo-gallery.is-narrow .charinfo-focus__stage {
-  left: var(--charinfo-space-lg);
-  right: var(--charinfo-space-lg);
-  bottom: calc(var(--size-4-8, 32px) + var(--charinfo-space-xl));
+.charinfo-gallery.is-narrow .charinfo-focus__stage,
+.charinfo-gallery.is-narrow .charinfo-focus__nav {
+  top: var(--charinfo-space-lg);
+  right: var(--charinfo-space-md);
+  bottom: calc(
+    var(--charinfo-space-lg) + env(safe-area-inset-bottom, 0px)
+  );
+  left: var(--charinfo-space-md);
+}
+
+.charinfo-gallery.is-narrow .charinfo-focus__nav {
+  position: absolute;
+  pointer-events: none;
+}
+
+.charinfo-gallery.is-narrow .charinfo-focus__nav .charinfo-icon-btn {
+  top: 50%;
+  bottom: auto;
+  width: var(--size-4-12);
+  height: var(--size-4-12);
+  min-width: var(--size-4-12);
+  min-height: var(--size-4-12);
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background: color-mix(
+    in srgb,
+    var(--background-primary) 72%,
+    transparent
+  );
+  box-shadow: var(--shadow-s);
+  pointer-events: auto;
 }
 
 .charinfo-gallery.is-narrow .charinfo-focus__prev {
-  top: auto;
-  bottom: var(--charinfo-space-lg);
-  left: 25%;
-  transform: translateX(-50%);
+  right: auto;
+  left: 0;
 }
 
 .charinfo-gallery.is-narrow .charinfo-focus__next {
-  top: auto;
-  bottom: var(--charinfo-space-lg);
-  right: auto;
-  left: 75%;
-  transform: translateX(-50%);
+  right: 0;
+  left: auto;
+}
+
+.charinfo-gallery.is-narrow
+  .charinfo-focus__nav
+  .charinfo-icon-btn[aria-disabled="true"] {
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 .charinfo-image-strip:not(.is-editable) .charinfo-thumb {
