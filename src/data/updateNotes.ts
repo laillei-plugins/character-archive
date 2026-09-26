@@ -57,7 +57,7 @@ kind: "character-archive-update"
 - Select several images at once in gallery edit mode. Added images also appear in the note.
 - Your selected cover stays in place. If it is removed, the first remaining image becomes the cover.
 - Reorder images in the gallery, and the note uses the same order.
-- Remove a non-cover image with the trash button. It is also removed from the note; choose Undo if you change your mind.
-- Turn on “Show added images on the web” when sharing to include multiple images. Open an image for a larger view and browse through the others.
+- Remove a non-cover image with the trash button. It is also removed from the note; choose Undo (되돌리기) if you change your mind.
+- Turn on “Show added images on the web” (추가한 이미지도 웹에 표시) when sharing to include multiple images. Open an image for a larger view and browse through the others.
 - Reopening the app now avoids repeating checks on unchanged notes.
 `;
