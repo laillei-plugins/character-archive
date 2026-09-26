@@ -14,11 +14,16 @@ import {
 } from "../data/CharacterStore";
 import {
   type CoverRef,
+  appendNoteImages,
   listNoteCoverCandidates,
   reorderNoteImages,
+  removeNoteImage,
+  restoreNoteImage,
+  noteImageState,
   resolveCover,
   coverDisplaySrc,
   coverRefKey,
+  pinnedCoverKey,
   setCharacterCover,
   setCharacterCoverUrl,
   setCharacterCoverNone,
@@ -366,6 +371,7 @@ export class GalleryView extends FileView {
   private orderLaneGeneration = 0;
   /** Serialize cover writes per character so rapid strip taps don't race. */
   private coverWriteChain = new Map<TFile, Promise<void>>();
+  private imageRemovalBusy = new Set<TFile>();
   /** Latest cover intent per path (coalesce while a write is in flight). */
   private coverLatest = new Map<
     TFile,
@@ -5507,6 +5513,7 @@ export class GalleryView extends FileView {
   }
 
   private async openCoverPicker(record: CharacterRecord): Promise<void> {
+    if (this.imageRemovalBusy.has(record.file)) return;
     const markdown = await this.app.vault.read(record.file);
     const images = listNoteCoverCandidates(this.app, record.file, markdown);
     const currentCover = resolveCover(this.app, record, markdown);
@@ -5543,6 +5550,54 @@ export class GalleryView extends FileView {
           }
         }, 0);
       },
+      async (newImages) => {
+        if (this.imageRemovalBusy.has(record.file)) throw new Error("이미지 변경 중이에요. 잠시 후 다시 시도해 주세요.");
+        this.plugin.suppressGalleryRefresh = true;
+        let added: number;
+        try {
+          added = await appendNoteImages(this.app, record.file, newImages);
+        } catch (error) {
+          console.error("Batch note image write failed", error);
+          throw new Error("노트 반영 실패 · 저장된 이미지는 남아 있어요. 다시 추가해 주세요.");
+        } finally {
+          this.plugin.suppressGalleryRefresh = false;
+        }
+        let nextMarkdown: string;
+        try {
+          nextMarkdown = await this.app.vault.read(record.file);
+        } catch (error) {
+          console.error("Batch note image refresh failed", error);
+          throw new Error("이미지는 추가됐지만 화면 갱신에 실패했어요. 갤러리를 다시 열어 확인하세요.");
+        }
+        const nextImages = listNoteCoverCandidates(this.app, record.file, nextMarkdown);
+        if (!isCoverNone(record.cover) && record.cover.trim()) {
+          const pinKey = pinnedCoverKey(this.app, record.path, record.cover);
+          if (!pinKey || !nextImages.some((image) => coverRefKey(image) === pinKey)) {
+            // Keep the stored pin untouched; the live record follows the same
+            // missing-pin fallback CharacterStore applies on its next read.
+            record.cover = "";
+          }
+        }
+        record.autoCover = nextImages[0];
+        record.noteImagesKnown = true;
+        this.syncCoverPreview(record, nextImages);
+        const detail = this.contentEl.querySelector(".charinfo-gallery__detail");
+        let refreshFailed = false;
+        if (detail instanceof HTMLElement && this.selected?.path === record.path) {
+          try {
+            await this.renderDetail(detail);
+          } catch (error) {
+            console.error("Batch gallery refresh failed", error);
+            refreshFailed = true;
+          }
+        }
+        return {
+          images: nextImages,
+          currentCover: resolveCover(this.app, record, nextMarkdown),
+          added,
+          refreshFailed,
+        };
+      },
     ).open();
   }
 
@@ -5560,6 +5615,7 @@ export class GalleryView extends FileView {
     opts?: { quiet?: boolean },
   ): Promise<void> {
     const quiet = opts?.quiet === true;
+    if (this.imageRemovalBusy.has(record.file)) return;
     // TFile identity survives a rename; path strings do not. Keeping cover
     // writes on the file prevents a name edit from opening a second lane.
     const key = record.file;
@@ -5680,6 +5736,7 @@ export class GalleryView extends FileView {
     toPath: string,
     place: "before" | "after",
   ): Promise<void> {
+    if (this.imageRemovalBusy.has(record.file)) return;
     const markdown = await this.app.vault.read(record.file);
     const candidates = listNoteCoverCandidates(this.app, record.file, markdown);
     const images = candidates.map(coverRefKey);
@@ -5708,10 +5765,20 @@ export class GalleryView extends FileView {
 
     // Move thumbs in-place — no full gallery refresh.
     this.moveDomItem(
-      `.charinfo-thumb[data-id="${CSS.escape(fromPath)}"]`,
-      `.charinfo-thumb[data-id="${CSS.escape(toPath)}"]`,
+      `.charinfo-image-tile[data-id="${CSS.escape(fromPath)}"]`,
+      `.charinfo-image-tile[data-id="${CSS.escape(toPath)}"]`,
       place,
     );
+    const row = this.contentEl.querySelector(".charinfo-image-strip__row");
+    if (row instanceof HTMLElement) {
+      const tiles = Array.from(row.querySelectorAll<HTMLElement>(".charinfo-image-tile"));
+      tiles.forEach((tile, index) => {
+        const previous = tile.querySelector(".charinfo-image-tile__move-prev") as HTMLButtonElement | null;
+        const next = tile.querySelector(".charinfo-image-tile__move-next") as HTMLButtonElement | null;
+        if (previous) previous.disabled = index === 0;
+        if (next) next.disabled = index === tiles.length - 1;
+      });
+    }
     const byKey = new Map(candidates.map((cover) => [coverRefKey(cover), cover]));
     const orderedCovers = images.flatMap((key) => {
       const cover = byKey.get(key);
@@ -5719,7 +5786,99 @@ export class GalleryView extends FileView {
     });
     if (!record.cover.trim()) record.autoCover = orderedCovers[0];
     this.syncCoverPreview(record, orderedCovers);
-    this.suppressClick = true;
+  }
+
+  /** Refresh the note-backed panel without rebuilding the gallery or its chrome. */
+  private async refreshAfterImageRemoval(record: CharacterRecord, focusKey?: string): Promise<void> {
+    const markdown = await this.app.vault.read(record.file);
+    const state = noteImageState(this.app, record.file, markdown);
+    const live = this.records.find((item) => item.file === record.file) ?? record;
+    for (const item of new Set([record, live, ...(this.selected?.file === record.file ? [this.selected] : [])])) {
+      const pinKey = state.cover ? pinnedCoverKey(this.app, record.file.path, state.cover) : null;
+      item.cover = isCoverNone(state.cover) || (pinKey != null && pinKey === state.key)
+        ? state.cover : "";
+      item.autoCover = state.images[0];
+      item.noteImagesKnown = true;
+    }
+    // Do not repaint another card's strip if the user switched cards mid-write.
+    if (this.selected?.file !== record.file) {
+      this.repaintCard(live);
+      return;
+    }
+    const detail = this.contentEl.querySelector<HTMLElement>(".charinfo-gallery__detail");
+    const row = detail?.querySelector<HTMLElement>(".charinfo-image-strip__row");
+    const scrollTop = detail?.scrollTop ?? 0;
+    const scrollLeft = row?.scrollLeft ?? 0;
+    await this.refreshNoteRegions(this.selected);
+    if (this.selected?.file !== record.file) return;
+    this.syncCoverPreview(this.selected, state.images);
+    if (detail?.isConnected) detail.scrollTop = scrollTop;
+    const nextRow = detail?.querySelector<HTMLElement>(".charinfo-image-strip__row");
+    if (nextRow) nextRow.scrollLeft = scrollLeft;
+    if (focusKey) {
+      const tile = nextRow?.querySelector<HTMLElement>(`[data-id="${CSS.escape(focusKey)}"]`);
+      const target = tile?.querySelector<HTMLElement>(".charinfo-image-tile__remove:not(:disabled)") ??
+        tile?.querySelector<HTMLElement>(".charinfo-thumb") ??
+        detail?.querySelector<HTMLElement>(".charinfo-image-strip__label");
+      target?.focus({ preventScroll: true });
+    }
+  }
+
+  private async removeGalleryImage(record: CharacterRecord, key: string, button: HTMLButtonElement): Promise<void> {
+    if (!this.cardEditActive || this.imageRemovalBusy.has(record.file)) return;
+    this.imageRemovalBusy.add(record.file);
+    button.disabled = true;
+    const tile = button.closest<HTMLElement>(".charinfo-image-tile");
+    const nextKey = (tile?.nextElementSibling as HTMLElement | null)?.dataset.id ??
+      (tile?.previousElementSibling as HTMLElement | null)?.dataset.id ?? key;
+    tile?.classList.add("is-removing");
+    try {
+      await this.coverWriteChain.get(record.file);
+      const removal = await removeNoteImage(this.app, record.file, key);
+      if (removal) {
+        const message = document.createDocumentFragment();
+        message.append("이미지를 제거했어요. ");
+        const undo = document.createElement("button");
+        undo.textContent = "되돌리기";
+        undo.className = "charinfo-image-undo";
+        message.append(undo);
+        const notice = new Notice(message, 10000);
+        undo.addEventListener("click", (event) => {
+          event.stopPropagation();
+          if (this.imageRemovalBusy.has(record.file)) return;
+          this.imageRemovalBusy.add(record.file);
+          undo.disabled = true;
+          void (async () => {
+            try {
+              await this.coverWriteChain.get(record.file);
+              const appended = await restoreNoteImage(this.app, record.file, removal);
+              notice.hide();
+              new Notice(appended ? "노트가 바뀌어 끝에 다시 넣었어요" : "다시 넣었어요");
+              await this.refreshAfterImageRemoval(record, key).catch(() => {
+                new Notice("이미지는 복원됐어요. 화면을 다시 열어 확인해 주세요.");
+              });
+            } catch (error) {
+              undo.disabled = false;
+              new Notice(error instanceof Error ? error.message : "되돌리지 못했어요. 다시 시도해 주세요.");
+            } finally {
+              this.imageRemovalBusy.delete(record.file);
+            }
+          })();
+        });
+      }
+      await this.refreshAfterImageRemoval(record, nextKey).catch(() => {
+        new Notice("노트에 반영됐어요. 화면을 다시 열어 확인해 주세요.");
+      });
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : "제거하지 못했어요. 다시 시도해 주세요.");
+      button.disabled = false;
+      // A direct note edit may have made this image the cover. Reconcile the
+      // protected state even though removal correctly refused the stale click.
+      await this.refreshAfterImageRemoval(record, key).catch(() => undefined);
+    } finally {
+      tile?.classList.remove("is-removing");
+      this.imageRemovalBusy.delete(record.file);
+    }
   }
 
   /**
@@ -5732,10 +5891,13 @@ export class GalleryView extends FileView {
   ): void {
     const none = isCoverNone(record.cover);
     const automatic = !none && !record.cover.trim();
+    const pinnedKey = !automatic && !none && orderedCovers
+      ? pinnedCoverKey(this.app, record.path, record.cover)
+      : null;
     const resolved = none
       ? null
-      : automatic && orderedCovers
-        ? (orderedCovers[0] ?? null)
+      : orderedCovers
+        ? (orderedCovers.find((cover) => coverRefKey(cover) === pinnedKey) ?? orderedCovers[0] ?? null)
         : resolveCover(this.app, record);
     const resolvedKey = resolved ? coverRefKey(resolved) : null;
 
@@ -5748,6 +5910,11 @@ export class GalleryView extends FileView {
           !none &&
           resolvedKey != null && id === resolvedKey;
         thumb.classList.toggle("is-cover", isCover);
+        const remove = thumb.parentElement?.querySelector<HTMLButtonElement>(".charinfo-image-tile__remove");
+        if (remove) {
+          remove.disabled = isCover;
+          remove.title = isCover ? "현재 커버예요 · 먼저 다른 이미지를 커버로 골라 주세요" : "노트에서 제거";
+        }
         thumb.querySelector(".charinfo-thumb__badge")?.remove();
         if (isCover) {
           thumb.setAttribute("title", "현재 커버");
@@ -6380,6 +6547,7 @@ export class GalleryView extends FileView {
     head.createDiv({
       cls: "charinfo-image-strip__label",
       text: editable ? "이미지 · 탭하면 커버" : "이미지",
+      attr: { tabindex: "-1" },
     });
 
     if (images.length === 0) {
@@ -6398,11 +6566,13 @@ export class GalleryView extends FileView {
     const resolvedCoverKey = resolvedCover ? coverRefKey(resolvedCover) : null;
     const row = strip.createDiv({ cls: "charinfo-image-strip__row" });
 
-    for (const image of images) {
+    for (const [index, image] of images.entries()) {
       const imageKey = coverRefKey(image);
       const imageLabel = this.coverLabel(image);
       const isCover = resolvedCoverKey === imageKey;
-      const thumb = row.createDiv({
+      const tile = row.createDiv({ cls: "charinfo-image-tile" });
+      tile.dataset.id = imageKey;
+      const thumb = tile.createDiv({
         cls: "charinfo-thumb" + (isCover ? " is-cover" : ""),
         attr: {
           role: "button",
@@ -6448,16 +6618,67 @@ export class GalleryView extends FileView {
       });
 
       if (editable && images.length > 1) {
-        attachHoldDrag(thumb, imageKey, {
-          canDrag: () => this.cardEditActive,
+        const moves = tile.createDiv({ cls: "charinfo-image-tile__moves" });
+        const move = (direction: -1 | 1): void => {
+          const button = moves.createEl("button", {
+            cls: direction < 0
+              ? "charinfo-image-tile__move-prev"
+              : "charinfo-image-tile__move-next",
+            text: direction < 0 ? "←" : "→",
+            attr: {
+              type: "button",
+              "aria-label": `${imageLabel} ${direction < 0 ? "왼쪽" : "오른쪽"}으로 이동`,
+              title: direction < 0 ? "왼쪽으로 이동" : "오른쪽으로 이동",
+            },
+          });
+          button.disabled = direction < 0 ? index === 0 : index === images.length - 1;
+          button.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const neighbor = direction < 0 ? tile.previousElementSibling : tile.nextElementSibling;
+            if (!(neighbor instanceof HTMLElement) || !neighbor.dataset.id) return;
+            void this.handleImageReorder(
+              record,
+              imageKey,
+              neighbor.dataset.id,
+              direction < 0 ? "before" : "after",
+            ).then(() => {
+              const focusTarget = button.disabled
+                ? moves.querySelector<HTMLButtonElement>("button:not(:disabled)") ?? thumb
+                : button;
+              focusTarget.focus();
+            });
+          });
+        };
+        move(-1);
+        move(1);
+        attachHoldDrag(tile, imageKey, {
+          canDrag: () => this.cardEditActive && !this.imageRemovalBusy.has(record.file),
           activation: "hold",
           holdMs: 240,
-          dropSelector: ".charinfo-thumb",
+          handleSelector: ".charinfo-thumb",
+          dropSelector: ".charinfo-image-tile",
           ghostClass: "charinfo-thumb-ghost",
           slotClass: "charinfo-thumb-slot",
           onReorder: (fromId, toId, place) => {
             void this.handleImageReorder(record, fromId, toId, place);
           },
+        });
+      }
+      if (editable) {
+        const remove = tile.createEl("button", {
+          cls: "charinfo-image-tile__remove",
+          attr: {
+            type: "button",
+            "aria-label": `${imageLabel} 노트에서 제거`,
+            title: isCover ? "현재 커버예요 · 먼저 다른 이미지를 커버로 골라 주세요" : "노트에서 제거",
+          },
+        });
+        setIcon(remove.createSpan({ attr: { "aria-hidden": "true" } }), "trash");
+        remove.createSpan({ text: "제거" });
+        remove.disabled = isCover;
+        remove.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void this.removeGalleryImage(record, imageKey, remove);
         });
       }
     }

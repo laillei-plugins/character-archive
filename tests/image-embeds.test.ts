@@ -22,8 +22,13 @@ import {
   isCoverNone,
   isImageLink,
   listEmbedIdentities,
+  planEmbedAppendMany,
   planEmbedInsert,
   planEmbedReorder,
+  planEmbedRemove,
+  planEmbedRestore,
+  safeImageEmbedFilename,
+  selectCoverCandidateKey,
   scanEmbeds,
   splitFrontmatter,
   type VaultImageResolver,
@@ -53,6 +58,18 @@ const resolve: VaultImageResolver = (target) => {
 
 const keys = (markdown: string): string[] =>
   listEmbedIdentities(markdown, resolve).map(embedKey);
+
+test("a pinned cover survives reorder, then falls back when its embed or file is gone", () => {
+  const b = "Archive/Rin/b.png";
+  const first = keys(`${FM}![[a.png]]\n![[b.png]]\n![[c.png]]\n`);
+  assert.equal(selectCoverCandidateKey(first, b), b);
+  const reordered = keys(`${FM}![[c.png]]\n![[a.png]]\n![[b.png]]\n`);
+  assert.equal(selectCoverCandidateKey(reordered, b), b);
+  const removed = keys(`${FM}![[c.png]]\n![[a.png]]\n`);
+  assert.equal(selectCoverCandidateKey(removed, b), "Archive/Rin/c.png");
+  assert.equal(selectCoverCandidateKey(removed, null), "Archive/Rin/c.png");
+  assert.equal(selectCoverCandidateKey([], b), null);
+});
 
 test("mixed wiki and markdown embeds scan in exact source order", () => {
   const note = `${FM}![[a.png]]\ntext\n![](https://i.imgur.com/x.png)\n![[b.png|300]]\n`;
@@ -138,6 +155,73 @@ test("a remote cover is embedded once, fragments aside", () => {
   );
   assert.equal(canonicalRemoteUrl(`${url}?w=64#anchor`), `${url}?w=64`);
   assert.equal(isImageLink(`${url}?w=64`), true);
+});
+
+test("batch import appends in returned order and keeps the existing cover field", () => {
+  const pinned = "---\nkind: character\ncover: b.png\n---\n";
+  const note = `${pinned}![[a.png]]\n![[b.png]]\n`;
+  const plan = planEmbedAppendMany(note, [
+    { syntax: "wiki", target: "c.png" },
+    { syntax: "md", target: "https://i.imgur.com/new.png" },
+  ], resolve);
+  assert.equal(plan.added, 2);
+  assert.ok(plan.text.startsWith(pinned));
+  assert.deepEqual(keys(plan.text), [
+    "Archive/Rin/a.png", "Archive/Rin/b.png", "Archive/Rin/c.png", "https://i.imgur.com/new.png",
+  ]);
+  assert.equal(selectCoverCandidateKey(keys(plan.text), "Archive/Rin/b.png"), "Archive/Rin/b.png");
+  assert.equal(selectCoverCandidateKey(keys(plan.text), null), "Archive/Rin/a.png");
+});
+
+test("batch import makes the first returned image the automatic cover only for an empty note", () => {
+  const note = `${FM}# 프로필\n본문\n`;
+  const plan = planEmbedAppendMany(note, [
+    { syntax: "wiki", target: "b.png" },
+    { syntax: "wiki", target: "a.png" },
+  ], resolve);
+  assert.equal(plan.text, `${note}\n![[b.png]]\n![[a.png]]\n`);
+  assert.equal(selectCoverCandidateKey(keys(plan.text), null), "Archive/Rin/b.png");
+  assert.equal(planEmbedAppendMany(plan.text, [
+    { syntax: "wiki", target: "Archive/Rin/b.png" },
+    { syntax: "wiki", target: "a.png" },
+  ], resolve).changed, false);
+});
+
+test("batch import dedupes existing and repeated images and keeps hidden cover hidden", () => {
+  const note = "---\ncover: __none__\n---\n![[a.png]]\n";
+  const plan = planEmbedAppendMany(note, [
+    { syntax: "wiki", target: "Archive/Rin/a.png" },
+    { syntax: "wiki", target: "b.png" },
+    { syntax: "wiki", target: "b.png" },
+  ], resolve);
+  assert.equal(plan.added, 1);
+  assert.deepEqual(keys(plan.text), ["Archive/Rin/a.png", "Archive/Rin/b.png"]);
+  assert.ok(plan.text.startsWith("---\ncover: __none__\n---\n"));
+});
+
+test("batch import appends safely to empty and CRLF notes", () => {
+  assert.equal(
+    planEmbedAppendMany("", [{ syntax: "wiki", target: "a.png" }], resolve).text,
+    "![[a.png]]\n",
+  );
+  const note = "---\r\nkind: character\r\n---\r\n![[a.png]]\r\n";
+  const plan = planEmbedAppendMany(note, [{ syntax: "wiki", target: "b.png" }], resolve);
+  assert.equal(plan.text, `${note}\r\n![[b.png]]\r\n`);
+  assert.equal(
+    planEmbedAppendMany("---\nkind: character\n---", [
+      { syntax: "wiki", target: "a.png" },
+    ], resolve).text,
+    "---\nkind: character\n---\n![[a.png]]\n",
+  );
+});
+
+test("imported filenames stay parseable as wiki image targets", () => {
+  const safe = safeImageEmbedFilename("photo #1|[draft].png");
+  assert.equal(safe, "photo -1--draft-.png");
+  const note = planEmbedAppendMany(FM, [
+    { syntax: "wiki", target: safe },
+  ], (target) => target === safe ? `Archive/Rin/${safe}` : null).text;
+  assert.deepEqual(scanEmbeds(note).map((hit) => hit.target), [safe]);
 });
 
 test("extensionless https image embeds are candidates and normalize identity", () => {
@@ -293,5 +377,61 @@ test("the vault side embeds before it pins, and heals no cover", () => {
     images.slice(images.indexOf("export async function reorderNoteImages(")),
     /listFolderImages|listCharacterImages/,
   );
-  assert.match(store, /listNoteCoverCandidates\(this\.app, file, text\)\[0\]/);
+  assert.match(store, /listNoteCoverCandidates\(this\.app, file, text\)/);
+  assert.match(store, /selectCoverCandidateKey\(/);
+});
+
+test("remove deletes all equivalent embeds while preserving cover, prose, code and order", () => {
+  const before = FM + '![[a.png]]\nText ![[b.png|300]] stays.\n![[Archive/Rin/b.png]]\n![[c.png]]\n`![[b.png]]`\n```md\n![[b.png]]\n```\n';
+  const removed = planEmbedRemove(before, FILES[1]!, resolve, FILES[0]!);
+  assert.equal(removed.removed.length, 2);
+  assert.equal(removed.text, FM + '![[a.png]]\nText  stays.\n![[c.png]]\n`![[b.png]]`\n```md\n![[b.png]]\n```\n');
+  assert.deepEqual(listEmbedIdentities(removed.text, resolve).map(embedKey), [FILES[0], FILES[2]]);
+  assert.equal(planEmbedRestore(removed.text, removed, resolve).text, before);
+});
+
+test("resolved cover is protected, whether automatic or pinned", () => {
+  const note = FM + '![[a.png]]\n![[b.png]]\n';
+  for (const key of [FILES[0]!, FILES[1]!]) {
+    const result = planEmbedRemove(note, key, resolve, key);
+    assert.equal(result.text, note);
+    assert.equal(result.removed.length, 0);
+  }
+});
+
+test("remove preserves CRLF, frontmatter and neighboring inline text byte-for-byte", () => {
+  const note = '---\r\ncover: __none__\r\n---\r\n  ![[b.png|200]]  \r\nhello ![[b.png]] world\r\n';
+  const result = planEmbedRemove(note, FILES[1]!, resolve, null);
+  assert.equal(result.text, '---\r\ncover: __none__\r\n---\r\nhello  world\r\n');
+  assert.equal(planEmbedRestore(result.text, result, resolve).text, note);
+});
+
+test("remote removal canonicalizes fragments but keeps distinct signed URLs", () => {
+  const note = '![](https://cdn.test/img?sig=one#x)\n![](https://cdn.test/img?sig=two)\n';
+  const result = planEmbedRemove(note, 'https://cdn.test/img?sig=one#z', resolve, null);
+  assert.equal(result.text, '![](https://cdn.test/img?sig=two)\n');
+});
+
+test("Undo after newer edits preserves them and appends original embeds including sizes", () => {
+  const note = '![[a.png]]\n![[b.png|300]]\n![[b.png|600]]\n';
+  const removed = planEmbedRemove(note, FILES[1]!, resolve, FILES[0]!);
+  const edited = removed.text + '\nNew text\n';
+  const restored = planEmbedRestore(edited, removed, resolve);
+  assert.equal(restored.appended, true);
+  assert.ok(restored.text.startsWith(edited));
+  assert.ok(restored.text.endsWith('![[b.png|300]]\n![[b.png|600]]\n'));
+  assert.equal(listEmbedIdentities(restored.text, resolve).map(embedKey)[0], FILES[0]);
+  assert.equal(planEmbedRestore(restored.text, removed, resolve).text, restored.text);
+});
+
+test("Undo does not insert invisible embeds into an unfinished fence", () => {
+  const removed = planEmbedRemove('![[a.png]]\n![[b.png]]\n', FILES[1]!, resolve, FILES[0]!);
+  assert.throws(() => planEmbedRestore(removed.text + '```md\nnew code', removed, resolve));
+});
+
+test("no-cover note may remove its final image; absent identity is a no-op", () => {
+  const removed = planEmbedRemove('![[b.png]]', FILES[1]!, resolve, null);
+  assert.equal(removed.text, '');
+  assert.equal(planEmbedRestore('', removed, resolve).text, '![[b.png]]');
+  assert.equal(planEmbedRemove('hello', FILES[1]!, resolve, null).text, 'hello');
 });

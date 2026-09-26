@@ -1,6 +1,12 @@
 import { App, requestUrl } from "obsidian";
 import type { CharacterRecord } from "../data/CharacterStore";
-import { resolveCover, isRemoteCoverUrl } from "../data/images";
+import {
+  resolveCover,
+  isRemoteCoverUrl,
+  listNoteCoverCandidates,
+  coverRefKey,
+  type CoverRef,
+} from "../data/images";
 import type { CardPropertyPref } from "../data/cardProperties";
 import {
   CHIP_AXIS_FIELD_IDS,
@@ -14,6 +20,7 @@ import {
   type GroupSchemaStore,
 } from "../data/groupSchema";
 import type { FilterAxisSource } from "../data/filterAxis";
+import { exportShareNoteImages } from "./shareImages";
 import { parseDetailDoc, type DetailProp } from "../ui/cleanBody";
 import {
   isShareSurfaceField,
@@ -68,6 +75,10 @@ export interface ShareCard {
   detailTagIds: string[];
   group: string;
   coverDataUrl: string | null;
+  /** Embedded note images in note order; empty unless explicitly included. */
+  noteImagesDataUrls: string[];
+  /** Index of the selected cover in noteImagesDataUrls, when present. */
+  coverImageIndex: number;
   coverPosition: string;
   /** Eye-visible properties for the card strip. */
   props: DetailProp[];
@@ -187,13 +198,7 @@ async function bytesToShareDataUrl(
   }
 }
 
-async function coverDataUrl(
-  app: App,
-  record: CharacterRecord,
-  markdown: string,
-): Promise<string | null> {
-  const cover = resolveCover(app, record, markdown);
-  if (!cover) return null;
+async function imageDataUrl(app: App, cover: CoverRef): Promise<string | null> {
   if (cover.kind === "remote") {
     if (!isRemoteCoverUrl(cover.url)) return null;
     try {
@@ -326,6 +331,8 @@ export async function buildSharePayload(
     groupOrder?: string[];
     /** Side panel headers to include (「속성」, note H2s, 프롬프트…). */
     panelHeaders?: string[];
+    /** Explicit opt-in: include note image embeds on the public page. */
+    includeNoteImages?: boolean;
     /**
      * Legacy panel mode. `"preview"` is accepted and behaves as `"all"` — the
      * panel is never narrowed by card eyes.
@@ -515,6 +522,21 @@ export async function buildSharePayload(
             ).id;
     }
 
+    const cover = resolveCover(app, record, markdown);
+    const coverImage = cover ? await imageDataUrl(app, cover) : null;
+    const shareImages = await exportShareNoteImages({
+      include: Boolean(opts.includeNoteImages),
+      noteTitle: record.title,
+      cover,
+      coverDataUrl: coverImage,
+      candidates: () => listNoteCoverCandidates(app, record.file, markdown),
+      key: coverRefKey,
+      encode: (image) => imageDataUrl(app, image),
+      label: (image) => image.kind === "vault"
+        ? image.file.name
+        : new URL(image.url).host,
+    });
+
     cards.push({
       id: `c${cards.length + 1}`,
       title: record.title,
@@ -525,7 +547,9 @@ export async function buildSharePayload(
       cardTagIds: tags.cardTagIds,
       detailTagIds: tags.detailTagIds,
       group: record.그룹 || "미분류",
-      coverDataUrl: await coverDataUrl(app, record, markdown),
+      coverDataUrl: coverImage,
+      noteImagesDataUrls: shareImages.dataUrls,
+      coverImageIndex: shareImages.coverIndex,
       coverPosition: record.coverPosition || "50% 50%",
       props,
       detailProps,
@@ -588,8 +612,10 @@ function escapeHtml(text: string): string {
  * current. 9: tags split into card / panel surfaces (`showTags` removed).
  * 10: twelve preset color tokens + custom `#RRGGBB` chips.
  * 11: schema-gated status surfaces + shared page/archive field order.
+ * 12: current card and panel presentation.
+ * 13: default inspector cover and explicitly opted-in note image payload.
  */
-export const SHARE_HTML_VERSION = 12;
+export const SHARE_HTML_VERSION = 13;
 
 /** Self-contained read-only gallery HTML.
  * Visual language: Apple HIG (clarity / deference / depth) + Obsidian DESIGN.md tokens
@@ -976,6 +1002,85 @@ button {
   flex: 1;
 }
 .inspector__body { padding: 1rem 1.1rem 0; }
+.inspector__media { margin: 0 0 1.25rem; }
+.inspector__image {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  background: var(--surface-2);
+  cursor: zoom-in;
+}
+.inspector__image img {
+  display: block;
+  width: 100%;
+  max-height: min(48vh, 30rem);
+  min-height: 10rem;
+  object-fit: contain;
+}
+.inspector__thumbnails {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0.6rem 0 0.2rem;
+  -webkit-overflow-scrolling: touch;
+}
+.inspector__thumbnail {
+  flex: 0 0 3.5rem;
+  height: 3.5rem;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.inspector__thumbnail[aria-pressed="true"] {
+  border: 2px solid var(--accent);
+}
+.inspector__thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+.image-focus {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  grid-template-columns: minmax(3.5rem, 1fr) minmax(0, 80rem) minmax(3.5rem, 1fr);
+  align-items: center;
+  background: rgba(0, 0, 0, 0.94);
+  color: #fff;
+  padding: max(1rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+}
+.image-focus__image {
+  grid-column: 2;
+  max-width: 100%;
+  max-height: calc(100dvh - 5rem);
+  margin: auto;
+  object-fit: contain;
+}
+.image-focus__close, .image-focus__nav {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  cursor: pointer;
+  font-size: 1.7rem;
+}
+.image-focus__close { position: absolute; top: max(1rem, env(safe-area-inset-top)); right: max(1rem, env(safe-area-inset-right)); }
+.image-focus__prev { grid-column: 1; justify-self: start; grid-row: 1; }
+.image-focus__next { grid-column: 3; justify-self: end; grid-row: 1; }
+.image-focus__nav:disabled { opacity: 0.28; cursor: default; }
+.image-focus__count { position: absolute; bottom: max(1rem, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); font-size: 0.8rem; }
+@media (max-width: 760px) {
+  .image-focus { grid-template-columns: 3rem minmax(0, 1fr) 3rem; padding-left: 0.25rem; padding-right: 0.25rem; }
+  .image-focus__nav { align-self: end; margin-bottom: max(1rem, env(safe-area-inset-bottom)); }
+  .image-focus__image { max-height: calc(100dvh - 7rem); }
+}
 .props {
   border: 1px solid var(--hairline);
   border-radius: var(--radius-card);
@@ -1366,7 +1471,138 @@ async function copyText(text, button) {
   }, 1100);
 }
 
+let imageFocus = null;
+function closeImageFocus() {
+  if (!imageFocus) return;
+  const state = imageFocus;
+  imageFocus = null;
+  document.removeEventListener("keydown", state.onKey);
+  state.overlay.remove();
+  root.inert = false;
+  if (state.returnTo && state.returnTo.isConnected) state.returnTo.focus();
+}
+
+function openImageFocus(images, initial, returnTo, onChange) {
+  closeImageFocus();
+  if (!images.length) return;
+  const overlay = document.createElement("div");
+  overlay.className = "image-focus";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", "이미지 보기");
+  const image = document.createElement("img");
+  image.className = "image-focus__image";
+  image.alt = "";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "image-focus__close";
+  close.setAttribute("aria-label", "닫기");
+  close.textContent = "×";
+  const prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "image-focus__nav image-focus__prev";
+  prev.setAttribute("aria-label", "이전 이미지");
+  prev.textContent = "‹";
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "image-focus__nav image-focus__next";
+  next.setAttribute("aria-label", "다음 이미지");
+  next.textContent = "›";
+  const count = document.createElement("div");
+  count.className = "image-focus__count";
+  overlay.append(close, prev, image, next, count);
+  let index = Math.max(0, Math.min(initial, images.length - 1));
+  const show = function () {
+    image.src = images[index];
+    count.textContent = String(index + 1) + " / " + String(images.length);
+    prev.disabled = index === 0;
+    next.disabled = index === images.length - 1;
+    if ((prev.disabled && document.activeElement === prev) ||
+        (next.disabled && document.activeElement === next)) close.focus();
+    if (onChange) onChange(index);
+  };
+  prev.addEventListener("click", function () { if (index > 0) { index--; show(); } });
+  next.addEventListener("click", function () { if (index < images.length - 1) { index++; show(); } });
+  close.addEventListener("click", closeImageFocus);
+  overlay.addEventListener("click", function (event) { if (event.target === overlay) closeImageFocus(); });
+  let touchX = null;
+  overlay.addEventListener("touchstart", function (event) { touchX = event.touches[0] ? event.touches[0].clientX : null; }, { passive: true });
+  overlay.addEventListener("touchend", function (event) {
+    if (touchX == null || !event.changedTouches[0]) return;
+    const delta = event.changedTouches[0].clientX - touchX;
+    touchX = null;
+    if (Math.abs(delta) < 45) return;
+    if (delta > 0 && index > 0) index--;
+    if (delta < 0 && index < images.length - 1) index++;
+    show();
+  }, { passive: true });
+  const onKey = function (event) {
+    if (event.key === "Escape") { event.preventDefault(); closeImageFocus(); }
+    if (event.key === "ArrowLeft" && index > 0) { event.preventDefault(); index--; show(); }
+    if (event.key === "ArrowRight" && index < images.length - 1) { event.preventDefault(); index++; show(); }
+    if (event.key === "Tab") {
+      const controls = [close, prev, next].filter(function (button) { return !button.disabled; });
+      const current = controls.indexOf(document.activeElement);
+      if (event.shiftKey && current <= 0) { event.preventDefault(); controls[controls.length - 1].focus(); }
+      if (!event.shiftKey && current === controls.length - 1) { event.preventDefault(); controls[0].focus(); }
+    }
+  };
+  imageFocus = { overlay, onKey, returnTo };
+  document.body.appendChild(overlay);
+  root.inert = true;
+  document.addEventListener("keydown", onKey);
+  show();
+  close.focus();
+}
+
+function renderInspectorMedia(card, body) {
+  const images = Array.isArray(card.noteImagesDataUrls) && card.noteImagesDataUrls.length
+    ? card.noteImagesDataUrls
+    : (card.coverDataUrl ? [card.coverDataUrl] : []);
+  if (!images.length) return;
+  let index = card.coverImageIndex >= 0 ? card.coverImageIndex : 0;
+  const media = document.createElement("div");
+  media.className = "inspector__media";
+  const hero = document.createElement("button");
+  hero.type = "button";
+  hero.className = "inspector__image";
+  hero.setAttribute("aria-label", "이미지 크게 보기");
+  const image = document.createElement("img");
+  image.alt = "";
+  hero.appendChild(image);
+  hero.addEventListener("click", function () {
+    openImageFocus(images, index, hero, function (nextIndex) { index = nextIndex; sync(); });
+  });
+  media.appendChild(hero);
+  const thumbs = [];
+  if (images.length > 1) {
+    const rail = document.createElement("div");
+    rail.className = "inspector__thumbnails";
+    for (let i = 0; i < images.length; i++) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "inspector__thumbnail";
+      button.setAttribute("aria-label", "이미지 " + String(i + 1));
+      const thumb = document.createElement("img");
+      thumb.src = images[i];
+      thumb.alt = "";
+      button.appendChild(thumb);
+      button.addEventListener("click", function () { index = i; sync(); });
+      rail.appendChild(button);
+      thumbs.push(button);
+    }
+    media.appendChild(rail);
+  }
+  const sync = function () {
+    image.src = images[index];
+    thumbs.forEach(function (button, i) { button.setAttribute("aria-pressed", i === index ? "true" : "false"); });
+  };
+  sync();
+  body.appendChild(media);
+}
+
 function closePeek() {
+  closeImageFocus();
   root.classList.remove("is-open");
   detail.replaceChildren();
   document.querySelectorAll(".card.is-selected").forEach(function (el) {
@@ -1415,6 +1651,7 @@ function select(id) {
 
   const body = document.createElement("div");
   body.className = "inspector__body";
+  renderInspectorMedia(card, body);
 
   const detailProps = card.detailProps || [];
   if (card.showAttrs) {

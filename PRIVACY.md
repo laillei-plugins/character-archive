@@ -6,8 +6,8 @@ Character Archive is local-first. Ordinary gallery viewing, editing, filtering, 
 
 Network activity is limited to features you explicitly use:
 
-- **Hosted Web share:** pressing the hosted publish or update button creates a public HTML page containing the cards and panel sections selected in the share dialog. Selected prompts and covers are included when enabled or present.
-- **Remote covers during Web share:** when a selected cover is already a remote URL, the plugin retrieves it so it can be embedded in the published page. The remote image host receives that request.
+- **Hosted Web share:** pressing the hosted publish or update button creates a public HTML page containing the cards and panel sections selected in the share dialog. Selected prompts and covers are included when enabled or present. Turning on “Show added images on the web” also includes the selected cards' note images, in note order. This option is off by default.
+- **Remote images during Web share:** the plugin retrieves remote covers and, when the note-image option is on, remote note images so they can be embedded in the published page. Each remote image host receives those requests.
 - **GitHub Pages:** after you connect GitHub and press publish, the same generated HTML is uploaded to the configured public GitHub repository.
 - **Imgur:** images are uploaded only after you choose Imgur as the upload destination and perform an image upload.
 

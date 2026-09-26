@@ -6,9 +6,12 @@ import {
   COVER_NONE,
   isCoverNone,
   listNoteCoverCandidates,
+  coverRefKey,
+  pinnedCoverKey,
   type CoverRef,
 } from "./images";
 import { NEVER_CREATE_KEYS } from "./propertySchema";
+import { selectCoverCandidateKey } from "./imageEmbeds";
 
 export interface CharacterRecord {
   file: TFile;
@@ -29,6 +32,8 @@ export interface CharacterRecord {
   cover: string;
   /** First body image when frontmatter cover is empty; never persisted. */
   autoCover?: CoverRef;
+  /** The note body was checked, including the valid no-image case. */
+  noteImagesKnown?: boolean;
   /** CSS object-position percentages, e.g. "50% 40%". */
   coverPosition: string;
   order: number;
@@ -152,14 +157,26 @@ export class CharacterStore {
     const orderRaw = data.order ?? data.charinfo_order;
     const order = typeof orderRaw === "number" ? orderRaw : Number(orderRaw) || 0;
 
-    const cover = parseCover(asString(data.cover));
+    const storedCover = parseCover(asString(data.cover));
+    let cover = storedCover;
     let autoCover: CoverRef | undefined;
-    // Keep the persisted cover faithful to frontmatter. Automatic first-image
-    // state lives separately so vault and remote embeds behave symmetrically.
-    // Sentinel `__none__` stays empty-of-fallback (intentional no cover).
-    if (!cover && !isCoverNone(asString(data.cover))) {
-      const text = await this.app.vault.read(file);
-      autoCover = listNoteCoverCandidates(this.app, file, text)[0];
+    // The frontmatter pin remains stored unchanged. This record reflects the
+    // visible cover: a pin missing from the body yields the first note image.
+    // Reading the body also handles remote embeds and their true order.
+    if (!isCoverNone(storedCover)) {
+      const text = await this.app.vault.cachedRead(file);
+      const candidates = listNoteCoverCandidates(this.app, file, text);
+      const pinnedKey = storedCover
+        ? pinnedCoverKey(this.app, file.path, storedCover)
+        : null;
+      const chosenKey = selectCoverCandidateKey(
+        candidates.map(coverRefKey),
+        pinnedKey,
+      );
+      if (!pinnedKey || chosenKey !== pinnedKey) {
+        cover = "";
+        autoCover = candidates[0];
+      }
     }
 
     const partial = {
@@ -185,6 +202,7 @@ export class CharacterStore {
       태그: parseTagIds(data.태그),
       cover,
       autoCover,
+      noteImagesKnown: true,
       coverPosition: parseCoverPosition(data.coverPosition ?? data.cover_position),
       order,
       title: displayTitle(partial),

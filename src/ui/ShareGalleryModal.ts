@@ -101,6 +101,7 @@ export class ShareGalleryModal extends Modal {
   private advancedOpen = false;
   private pendingGithubToken: string;
   private panelHeaders: Set<string>;
+  private includeNoteImages = false;
   private availableHeaders: string[] = [SHARE_ATTR_HEADER];
   private headerChipsEl: HTMLElement | null = null;
   private selectionLocked: boolean;
@@ -145,6 +146,7 @@ export class ShareGalleryModal extends Modal {
     this.panel = preferGithub ? "github" : "hosted";
     this.pageFile = opts.pageFile ?? null;
     this.characterShare = Boolean(opts.selectionLocked);
+    this.includeNoteImages = this.pageHostedShare()?.includeNoteImages === true;
     // Only single-character share locks scope. Gallery share always keeps
     // archive / group / panel-header chips selectable.
     this.selectionLocked = this.characterShare;
@@ -487,6 +489,17 @@ export class ShareGalleryModal extends Modal {
   }
 
   private renderAdvancedOptions(root: HTMLElement): void {
+    const imageField = this.renderField(root, "노트 이미지");
+    const imageToggle = imageField.createEl("label", {
+      cls: "charinfo-share-modal__image-toggle",
+    });
+    const imageInput = imageToggle.createEl("input", { attr: { type: "checkbox" } });
+    imageInput.checked = this.includeNoteImages;
+    imageInput.addEventListener("change", () => {
+      this.includeNoteImages = imageInput.checked;
+    });
+    imageToggle.createSpan({ text: "추가한 이미지도 웹에 표시" });
+
     // Panel header chips are always visible — not buried behind a toggle.
     // (Users need to pick what the shared page shows on both hosted + GitHub.)
     const field = this.renderField(root, "옆 패널에 보일 정보");
@@ -1088,6 +1101,7 @@ export class ShareGalleryModal extends Modal {
       cardProperties: this.plugin.settings.cardProperties,
       groupOrder,
       panelHeaders: [...this.panelHeaders],
+      includeNoteImages: this.includeNoteImages,
       panelProps: this.plugin.settings.webSharePanelProps,
       statuses: this.plugin.settings.statuses,
       filterProperty: axis.propertyId,
@@ -1102,7 +1116,11 @@ export class ShareGalleryModal extends Modal {
       library,
       pagePath: this.pageFile?.path ?? "",
     });
-    return renderShareHtml(payload);
+    const html = renderShareHtml(payload);
+    if (new Blob([html]).size > 11_000_000) {
+      throw new Error("이미지가 많아 공유 용량을 넘었어요. 이미지를 줄인 뒤 다시 시도하세요.");
+    }
+    return html;
   }
 
   private async publish(opts: { update?: boolean } = {}): Promise<void> {
@@ -1171,6 +1189,7 @@ export class ShareGalleryModal extends Modal {
           manageKey,
           at,
           htmlVersion: SHARE_HTML_VERSION,
+          includeNoteImages: this.includeNoteImages,
         });
         const ttlLabel =
           result.ttl === "permanent"

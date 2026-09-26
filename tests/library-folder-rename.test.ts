@@ -101,6 +101,7 @@ test("image rewrite touches wiki embeds only and keeps NAI ::", () => {
     "![[Character Archive/Hero/cover.webp]]",
     "```",
     "1.2::Character Archive/not-a-path::",
+    "![[Character Archive/literal-inside-fence.webp]]",
     "```",
     "",
   ].join("\n");
@@ -112,6 +113,20 @@ test("image rewrite touches wiki embeds only and keeps NAI ::", () => {
   assert.match(next, /!\[\[Story Vault\/Hero\/cover\.webp\]\]/);
   assert.match(next, /See Character Archive\/docs in prose/);
   assert.match(next, /1\.2::Character Archive\/not-a-path::/);
+  assert.match(next, /!\[\[Character Archive\/literal-inside-fence\.webp\]\]/);
+});
+
+test("web-share remap keeps a retained credential at the destination key", () => {
+  const settings = emptySettings();
+  settings.webShareByPage = {
+    "@character/Character Archive/Hero.md": { token: "live" },
+    "@character/Story Vault/Hero.md": { token: "retained" },
+  };
+  remapLibraryFolderSettings(settings, "Character Archive", "Story Vault");
+  assert.deepEqual(settings.webShareByPage, {
+    "@character/Character Archive/Hero.md": { token: "live" },
+    "@character/Story Vault/Hero.md": { token: "retained" },
+  });
 });
 
 test("mirrored folder note renames unless the destination is occupied", () => {

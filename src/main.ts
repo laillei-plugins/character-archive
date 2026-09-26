@@ -17,6 +17,7 @@ import {
   type CharinfoSettings,
 } from "./settings";
 import { CharacterStore } from "./data/CharacterStore";
+import { fileFingerprint, isStableSchemaScan, needsSchemaScan } from "./data/schemaScanCache";
 import { healCollapsedImageEmbeds, healCharacterCardFields, healNaiPromptEmphasis, rewriteLibraryPathPrefix } from "./data/images";
 import {
   normalizeFolderPath,
@@ -163,6 +164,8 @@ export default class CharinfoPlugin extends Plugin {
   /** Identities already reconciled — a nested one appearing later gets its own pass. */
   private scannedIdentityRoots = new Set<string>();
   private schemaTally: SchemaTally | null = null;
+  private schemaScanPending = new Set<string>();
+  private schemaOutcomes = new Map<string, SchemaOutcome>();
   private schemaScanChain: Promise<void> = Promise.resolve();
   private knownLibraryFolder = "";
   private unloaded = false;
@@ -416,7 +419,8 @@ export default class CharinfoPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
         if (file instanceof TFolder) {
-          void this.followLibraryFolderRename(file, oldPath).catch((error) => {
+          // Capture the path now — a queued later rename mutates `file.path`.
+          void this.followLibraryFolderRename(file.path, oldPath).catch((error) => {
             console.error(error);
             new Notice(
               "폴더 이름을 따라가지 못했어요 — 설정의 「카드가 있는 폴더」를 확인해 주세요.",
@@ -584,7 +588,10 @@ export default class CharinfoPlugin extends Plugin {
 
     let malformed = false;
     if (bits.includes("schema")) {
-      malformed = (await this.applySchemaPatch(file)) === "malformed";
+      if (this.schemaScanPending.has(path)) this.schemaOutcomes.delete(path);
+      const outcome = await this.applySchemaPatch(file);
+      if (this.schemaScanPending.has(path)) this.schemaOutcomes.set(path, outcome);
+      malformed = outcome === "malformed";
       if (malformed) {
         // Not transient — preserve the file, say so once, and retry only on the
         // next modification or archive scan.
@@ -807,13 +814,23 @@ export default class CharinfoPlugin extends Plugin {
   /**
    * Sequential archive scan — one note at a time through the same lane, so a
    * concurrent edit on a scanned path can never race the scan's own write.
-   * Nothing is persisted: this is cheap enough to redo every load.
+   * Successful file fingerprints persist; routine mobile launches only read
+   * notes changed since the last completed pass.
    *
    * The tally is console diagnostics; edits made while the scan runs count
    * toward it too, which is fine — nothing reads these numbers back.
    */
   private async scanSchemaRoots(roots: string[]): Promise<void> {
     if (this.unloaded || roots.length === 0) return;
+
+    const signature = JSON.stringify([
+      this.manifest.version,
+      [...this.identityRoots].sort(),
+      this.settings.groupSchemas,
+    ]);
+    const stored = this.settings.schemaScanCache;
+    const files = stored.signature === signature ? { ...stored.files } : {};
+    let cacheChanged = stored.signature !== signature;
 
     // Nested roots can match the same file twice — unique the paths first so
     // one scan never hands the lane the same note two times.
@@ -831,13 +848,55 @@ export default class CharinfoPlugin extends Plugin {
     try {
       for (const path of paths) {
         if (this.unloaded) return;
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) continue;
+        const before = fileFingerprint(file.stat);
+        if (!needsSchemaScan({ signature, files }, signature, path, before)) {
+          continue;
+        }
+        this.schemaOutcomes.delete(path);
+        this.schemaScanPending.add(path);
+        let failed = false;
         await this.healLane.enqueue(path, "schema").catch((error) => {
+          failed = true;
           tally.failed += 1;
           this.reportHealFailure(path, error, MAX_LANE_ATTEMPTS);
         });
+        const afterFile = this.app.vault.getAbstractFileByPath(path);
+        const outcome = this.schemaOutcomes.get(path);
+        this.schemaOutcomes.delete(path);
+        this.schemaScanPending.delete(path);
+        if (
+          !failed && outcome && outcome !== "malformed" &&
+          afterFile instanceof TFile && isStableSchemaScan(before, fileFingerprint(afterFile.stat))
+        ) {
+          const after = fileFingerprint(afterFile.stat);
+          if (files[path] !== after) {
+            files[path] = after;
+            cacheChanged = true;
+          }
+        } else if (path in files) {
+          delete files[path];
+          cacheChanged = true;
+        }
       }
     } finally {
       this.schemaTally = null;
+    }
+    // A note removed while the app was closed should not leave stale data.
+    const livePaths = new Set(collectScanPaths(
+      this.app.vault.getMarkdownFiles().map((file) => file.path),
+      this.schemaRoots,
+    ));
+    for (const path of Object.keys(files)) {
+      if (livePaths.has(path)) continue;
+      delete files[path];
+      cacheChanged = true;
+    }
+    if (cacheChanged && !this.unloaded) {
+      await this.commitSettings((settings) => {
+        settings.schemaScanCache = { signature, files };
+      });
     }
     console.info(
       `[charinfo] 속성 스캔 · 폴더 ${roots.join(", ")} · 확인 ${tally.scanned} · 보정 ${tally.patched} · YAML 손상 ${tally.malformed} · 실패 ${tally.failed}`,
@@ -1070,22 +1129,22 @@ export default class CharinfoPlugin extends Plugin {
 
   /** Explorer folder rename: keep the same gallery bound to the new name. */
   private async followLibraryFolderRename(
-    folder: TFolder,
+    newPath: string,
     oldPath: string,
   ): Promise<void> {
     const run = this.libraryFolderRenameLane.then(() =>
-      this.applyLibraryFolderRename(folder, oldPath),
+      this.applyLibraryFolderRename(newPath, oldPath),
     );
     this.libraryFolderRenameLane = run.catch(() => undefined);
     await run;
   }
 
   private async applyLibraryFolderRename(
-    folder: TFolder,
+    newPath: string,
     oldPath: string,
   ): Promise<void> {
     const oldFolder = normalizeFolderPath(oldPath);
-    const newFolder = normalizeFolderPath(folder.path);
+    const newFolder = normalizeFolderPath(newPath);
     if (!oldFolder || oldFolder === newFolder) return;
     const affected = remapLibraryIdentities(
       listGalleryLibraryIdentities(this),

@@ -63,6 +63,20 @@ function maskMarkdownCode(markdown: string): string {
  */
 export const COVER_NONE = "__none__";
 
+/** Characters that would break a wiki image target or a vault path. */
+export function safeImageEmbedFilename(filename: string): string {
+  return filename.replace(/[\\/#|\[\]\r\n:*?"<>]/g, "-").trim();
+}
+
+/** A pin only wins while its image is still among the note's embeds. */
+export function selectCoverCandidateKey(
+  candidateKeys: string[],
+  pinnedKey: string | null,
+): string | null {
+  if (pinnedKey && candidateKeys.includes(pinnedKey)) return pinnedKey;
+  return candidateKeys[0] ?? null;
+}
+
 export type EmbedSyntax = "wiki" | "md";
 
 export interface EmbedHit {
@@ -249,6 +263,47 @@ export function planEmbedInsert(
 }
 
 /**
+ * Batch import appends new images in the picker-returned order. Unlike a cover
+ * pick, it never prepends or changes frontmatter, so an existing automatic
+ * first-image cover stays where it is. One plan means one vault.process write.
+ */
+export function planEmbedAppendMany(
+  markdown: string,
+  embeds: Array<{ syntax: EmbedSyntax; target: string }>,
+  resolve: VaultImageResolver,
+): { text: string; changed: boolean; added: number } {
+  const keyOf = (value: string): string => {
+    const identity = embedIdentity(value, resolve);
+    return identity ? embedKey(identity) : normalizeEmbedKey(value);
+  };
+  const seen = new Set(scanEmbeds(markdown).map((hit) => keyOf(hit.target)));
+  const lines: string[] = [];
+  for (const embed of embeds) {
+    const target = embed.target.trim();
+    if (!target) continue;
+    const key = keyOf(target);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(embedText({ syntax: embed.syntax, target }));
+  }
+  if (lines.length === 0) return { text: markdown, changed: false, added: 0 };
+
+  const newline = markdown.includes("\r\n") ? "\r\n" : "\n";
+  const { body } = splitFrontmatter(markdown);
+  let separator = "";
+  if (markdown && !body) {
+    separator = markdown.endsWith(newline) ? "" : newline;
+  } else if (body && !markdown.endsWith(`${newline}${newline}`)) {
+    separator = markdown.endsWith(newline) ? newline : `${newline}${newline}`;
+  }
+  return {
+    text: markdown + separator + lines.join(newline) + newline,
+    changed: true,
+    added: lines.length,
+  };
+}
+
+/**
  * Reorder the note's image embeds to match `orderedKeys` (vault paths and/or
  * remote URLs). Only images the note already embeds move — an unknown key, such
  * as a folder-only file, is never pulled into the body — and each embed keeps
@@ -298,4 +353,60 @@ export function planEmbedReorder(
     text = text.slice(0, slot.hit.start) + raw + text.slice(slot.hit.end);
   }
   return { text, changed: text !== markdown };
+}
+
+export interface ImageRemoval {
+  before: string;
+  text: string;
+  key: string;
+  removed: string[];
+}
+
+/** Remove a displayed identity, including repeated embeds, never its file. */
+export function planEmbedRemove(
+  markdown: string,
+  key: string,
+  resolve: VaultImageResolver,
+  protectedKey: string | null,
+): ImageRemoval {
+  const normalized = normalizeEmbedKey(key);
+  const plan: ImageRemoval = { before: markdown, text: markdown, key: normalized, removed: [] };
+  if (protectedKey === normalized) return plan;
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const hit of scanEmbeds(markdown)) {
+    const identity = embedIdentity(hit.target, resolve);
+    if (!identity || embedKey(identity) !== normalized) continue;
+    plan.removed.push(hit.raw);
+    const lineStart = markdown.lastIndexOf("\n", hit.start - 1) + 1;
+    const nextLine = markdown.indexOf("\n", hit.end);
+    const lineEnd = nextLine < 0 ? markdown.length : nextLine + 1;
+    const alone = !markdown.slice(lineStart, hit.start).trim() &&
+      !markdown.slice(hit.end, lineEnd).trim();
+    ranges.push(alone ? { start: lineStart, end: lineEnd } : hit);
+  }
+  for (const range of ranges.reverse()) {
+    plan.text = plan.text.slice(0, range.start) + plan.text.slice(range.end);
+  }
+  return plan;
+}
+
+/** Exact Undo when safe; otherwise append without overwriting intervening edits. */
+export function planEmbedRestore(
+  markdown: string,
+  removal: ImageRemoval,
+  resolve: VaultImageResolver,
+): { text: string; appended: boolean } {
+  if (markdown === removal.text) return { text: removal.before, appended: false };
+  if (listEmbedIdentities(markdown, resolve).some((image) => embedKey(image) === removal.key)) {
+    return { text: markdown, appended: false };
+  }
+  const newline = markdown.includes("\r\n") ? "\r\n" : "\n";
+  const text = markdown + (markdown.endsWith(newline) ? newline : newline + newline) +
+    removal.removed.join(newline) + newline;
+  // An unfinished fenced block can swallow an appended image. Leave the note
+  // untouched rather than claiming a successful restore in that case.
+  if (!listEmbedIdentities(text, resolve).some((image) => embedKey(image) === removal.key)) {
+    throw new Error("노트가 바뀌어 되돌리지 못했어요. 노트에서 이미지를 다시 넣어 주세요.");
+  }
+  return { text, appended: true };
 }

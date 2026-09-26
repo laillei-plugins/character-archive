@@ -17,6 +17,9 @@ test("public-host network use and retention are disclosed", () => {
   assert.match(readmeKo, /계정 없이 새 공유/);
   assert.match(privacy, /does not add analytics or telemetry/);
   assert.match(privacy, /not included in generated public share HTML/);
+  assert.match(privacy, /Show added images on the web/);
+  assert.match(privacy, /option is off by default/);
+  assert.match(privacy, /remote note images/);
 });
 
 test("hosted-share UI warns before publish and labels one-year retention honestly", () => {

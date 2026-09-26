@@ -50,6 +50,7 @@ import {
   normalizeLastOpenedGalleryPath,
   remapLastOpenedGalleryPath,
 } from "./ui/libraryFolderOpen";
+import { normalizeSchemaScanCache, type SchemaScanCache } from "./data/schemaScanCache";
 
 /** Vault-relative path normalize (no Obsidian import in settings). */
 function normalizePath(path: string): string {
@@ -157,6 +158,8 @@ export interface GalleryPageState {
  * never be shared across pages.
  */
 export interface WebShareLastState {
+  /** Explicit image-sharing choice from the last successful publish. */
+  includeNoteImages?: boolean;
   /** Public URL (hosted `/g/:id` or the Pages URL). */
   url: string;
   /** Hosted share id (`/g/:id`). Empty for GitHub Pages shares. */
@@ -170,6 +173,8 @@ export interface WebShareLastState {
 }
 
 export interface CharinfoSettings {
+  /** Successful per-note schema passes; lets routine app starts skip unchanged notes. */
+  schemaScanCache: SchemaScanCache;
   /** Latest bundled update note successfully opened, or silently seeded on install. */
   lastOpenedUpdateNotesVersion: string;
   /** Last gallery note the user actually opened. Empty = fall back to libraryFolder. */
@@ -337,6 +342,7 @@ export interface CharinfoSettings {
 }
 
 export const DEFAULT_SETTINGS: CharinfoSettings = {
+  schemaScanCache: { signature: "", files: {} },
   lastOpenedUpdateNotesVersion: "",
   lastOpenedGalleryPath: "",
   libraryFolder: "Character Archive",
@@ -428,6 +434,7 @@ function normalizeWebShareState(raw: unknown): WebShareLastState | null {
   const text = (value: unknown): string =>
     typeof value === "string" ? value.trim() : "";
   const state: WebShareLastState = {
+    includeNoteImages: src.includeNoteImages === true,
     url: text(src.url),
     id: text(src.id),
     manageKey: text(src.manageKey),
@@ -685,6 +692,9 @@ export function migrateSettings(
   const merged: CharinfoSettings = {
     ...DEFAULT_SETTINGS,
     ...src,
+    schemaScanCache: normalizeSchemaScanCache(
+      (src as { schemaScanCache?: unknown }).schemaScanCache,
+    ),
     lastOpenedUpdateNotesVersion: normalizeSeenUpdateNotesVersion(
       src.lastOpenedUpdateNotesVersion,
     ),

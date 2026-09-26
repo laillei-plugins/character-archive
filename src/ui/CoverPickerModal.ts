@@ -8,10 +8,12 @@ import {
 } from "obsidian";
 import type CharinfoPlugin from "../main";
 import type { CharacterRecord } from "../data/CharacterStore";
+import { safeImageEmbedFilename } from "../data/imageEmbeds";
 import {
   type CoverRef,
   coverDisplaySrc,
   coverRefKey,
+  isCoverNone,
   isImagePath,
   isRemoteCoverUrl,
 } from "../data/images";
@@ -26,6 +28,13 @@ export type CoverPickResult =
   | { kind: "default" }
   | { kind: "none" };
 
+export type CoverBatchResult = {
+  images: CoverRef[];
+  currentCover: CoverRef | null;
+  added: number;
+  refreshFailed?: boolean;
+};
+
 const MAX_REMOTE_BYTES = 8_000_000;
 
 /**
@@ -35,10 +44,12 @@ const MAX_REMOTE_BYTES = 8_000_000;
 export class CoverPickerModal extends Modal {
   private images: CoverRef[];
   private onPick: (result: CoverPickResult) => void | Promise<void>;
+  private onAddFiles: (images: CoverRef[]) => Promise<CoverBatchResult>;
   private plugin: CharinfoPlugin;
   private record: CharacterRecord;
   private currentCover: CoverRef | null;
   private busy = false;
+  private fileDialogOpen = false;
   private statusEl: HTMLElement | null = null;
   private linkInput: HTMLInputElement | null = null;
   private linkPanel: HTMLElement | null = null;
@@ -51,6 +62,7 @@ export class CoverPickerModal extends Modal {
     images: CoverRef[],
     currentCover: CoverRef | null,
     onPick: (result: CoverPickResult) => void | Promise<void>,
+    onAddFiles: (images: CoverRef[]) => Promise<CoverBatchResult>,
   ) {
     super(app);
     this.plugin = plugin;
@@ -58,6 +70,7 @@ export class CoverPickerModal extends Modal {
     this.images = images;
     this.currentCover = currentCover;
     this.onPick = onPick;
+    this.onAddFiles = onAddFiles;
   }
 
   onOpen(): void {
@@ -174,10 +187,11 @@ export class CoverPickerModal extends Modal {
       cls: "charinfo-cover-picker__action-label",
       text: "파일",
     });
+    fileBtn.setAttribute("title", "여러 이미지를 한 번에 선택할 수 있어요");
     fileBtn.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (this.busy) return;
+      if (this.busy || this.fileDialogOpen) return;
       this.pickLocalFile();
     });
 
@@ -273,6 +287,7 @@ export class CoverPickerModal extends Modal {
 
   onClose(): void {
     this.opToken += 1;
+    this.fileDialogOpen = false;
     this.contentEl.empty();
   }
 
@@ -301,59 +316,104 @@ export class CoverPickerModal extends Modal {
   }
 
   private pickLocalFile(): void {
-    if (this.busy) return;
+    if (this.busy || this.fileDialogOpen) return;
+    this.fileDialogOpen = true;
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "image/png,image/jpeg,image/webp,image/gif,image/*";
-    input.multiple = false;
+    input.multiple = true;
+    let settled = false;
+    const clearDialog = (): void => {
+      if (settled) return;
+      settled = true;
+      this.fileDialogOpen = false;
+      window.removeEventListener("focus", onFocus);
+    };
+    const onFocus = (): void => {
+      window.setTimeout(() => {
+        if (!input.files?.length) clearDialog();
+      }, 750);
+    };
+    window.addEventListener("focus", onFocus, { once: true });
+    input.addEventListener("cancel", clearDialog, { once: true });
     input.addEventListener("change", () => {
-      const file = input.files?.[0];
-      if (file) void this.uploadLocal(file);
-    });
+      clearDialog();
+      const files = Array.from(input.files ?? []);
+      if (files.length) void this.uploadLocalFiles(files);
+    }, { once: true });
     input.click();
   }
 
-  private async uploadLocal(file: File): Promise<void> {
+  private async uploadLocalFiles(files: File[]): Promise<void> {
     if (this.busy) return;
-    if (!file.type.startsWith("image/") && !isImagePath(file.name)) {
-      this.setStatus("이미지 파일만 가능해요.", true);
-      return;
-    }
-    if (file.size > MAX_REMOTE_BYTES) {
-      this.setStatus("최대 8MB.", true);
-      return;
-    }
-
     const token = ++this.opToken;
+    const hadImages = this.images.length > 0;
+    const coverWasHidden = isCoverNone(this.record.cover);
     this.setBusy(true);
-    this.setStatus("올리는 중…");
+    const uploaded: CoverRef[] = [];
+    const failed: string[] = [];
+    let vaultFallbacks = 0;
     try {
-      if (this.preferImgur()) {
-        const result = await uploadFileViaImgurPlugin(this.app, file);
-        if (token !== this.opToken) return;
-        if (!result.ok) {
-          this.setStatus(`Imgur 실패 → vault`, true);
-          const data = await file.arrayBuffer();
-          const saved = await this.saveBytes(file.name, data);
-          if (token !== this.opToken) return;
-          if (saved) await this.commit({ kind: "vault", file: saved });
-          return;
+      for (const [index, file] of files.entries()) {
+        if (token === this.opToken) this.setStatus(`올리는 중… ${index + 1}/${files.length}`);
+        if (!isImagePath(file.name)) {
+          failed.push(`${file.name}: 이미지 파일 아님`);
+          continue;
         }
-        await this.commit({ kind: "remote", url: result.url });
-        return;
+        if (file.size > MAX_REMOTE_BYTES) {
+          failed.push(`${file.name}: 최대 8MB`);
+          continue;
+        }
+        try {
+          if (this.preferImgur()) {
+            const result = await uploadFileViaImgurPlugin(this.app, file);
+            if (result.ok) {
+              uploaded.push({ kind: "remote", url: result.url });
+              continue;
+            }
+            const saved = await this.saveBytes(file.name, await file.arrayBuffer());
+            vaultFallbacks += 1;
+            uploaded.push({ kind: "vault", file: saved });
+            continue;
+          }
+          const saved = await this.saveBytes(file.name, await file.arrayBuffer());
+          uploaded.push({ kind: "vault", file: saved });
+        } catch (error) {
+          console.error("Image import failed", file.name, error);
+          failed.push(`${file.name}: ${error instanceof Error ? error.message : "저장 실패"}`);
+        }
       }
-
-      const data = await file.arrayBuffer();
-      const saved = await this.saveBytes(file.name, data);
+      let added = 0;
+      let refreshFailed = false;
+      if (uploaded.length > 0) {
+        // A batch is one note edit. The picker remains open so the new order
+        // and current cover are visible before the user leaves.
+        const result = await this.onAddFiles(uploaded);
+        added = result.added;
+        refreshFailed = result.refreshFailed === true;
+        this.images = result.images;
+        this.currentCover = result.currentCover;
+      }
       if (token !== this.opToken) return;
-      if (saved) await this.commit({ kind: "vault", file: saved });
+      this.onOpen();
+      const coverMessage = coverWasHidden
+        ? " · 커버 숨김 유지"
+        : !hadImages && added > 0 && this.currentCover
+          ? " · 첫 이미지가 커버"
+          : " · 커버 그대로";
+      const fallbackMessage = vaultFallbacks ? ` · ${vaultFallbacks}장 vault에 저장` : "";
+      const failedMessage = failed.length
+        ? ` · ${failed.length}장 실패: ${failed.slice(0, 2).join(", ")}${failed.length > 2 ? " 외" : ""}`
+        : "";
+      const refreshMessage = refreshFailed ? " · 갤러리를 다시 열어 확인하세요" : "";
+      this.setStatus(`${added}장 추가${coverMessage}${fallbackMessage}${failedMessage}${refreshMessage}`, failed.length > 0 || refreshFailed);
     } catch (error) {
-      if (token !== this.opToken) return;
       console.error(error);
-      this.setStatus(
-        `실패: ${error instanceof Error ? error.message : String(error)}`,
-        true,
-      );
+      if (token !== this.opToken) return;
+      const failedSummary = failed.length
+        ? ` · ${failed.length}장 실패: ${failed.slice(0, 2).join(", ")}`
+        : "";
+      this.setStatus(`${error instanceof Error ? error.message : `실패: ${String(error)}`}${failedSummary}`, true);
     } finally {
       if (token === this.opToken) this.setBusy(false);
     }
@@ -408,9 +468,9 @@ export class CoverPickerModal extends Modal {
   private async saveBytes(
     filename: string,
     data: ArrayBuffer,
-  ): Promise<TFile | null> {
+  ): Promise<TFile> {
     const folder = await this.ensureCharacterMediaFolder();
-    const safe = filename.replace(/[\\/]/g, "-");
+    const safe = safeImageEmbedFilename(filename);
     let vaultPath = normalizePath(`${folder}/${safe}`);
     let existing = this.app.vault.getAbstractFileByPath(vaultPath);
     if (existing instanceof TFile) {
@@ -419,6 +479,11 @@ export class CoverPickerModal extends Modal {
       const ext = dot > 0 ? safe.slice(dot) : "";
       let n = 1;
       while (existing instanceof TFile) {
+        const previous = new Uint8Array(await this.app.vault.readBinary(existing));
+        const incoming = new Uint8Array(data);
+        if (previous.length === incoming.length && previous.every((byte, i) => byte === incoming[i])) {
+          return existing;
+        }
         vaultPath = normalizePath(`${folder}/${base}-${n}${ext}`);
         existing = this.app.vault.getAbstractFileByPath(vaultPath);
         n += 1;

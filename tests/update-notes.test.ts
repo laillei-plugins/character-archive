@@ -59,7 +59,7 @@ test("fresh installs and a different plugin version do not open this note", () =
 
 test("stored seen versions are normalized before comparison", () => {
   assert.equal(normalizeSeenUpdateNotesVersion(null), "");
-  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.24 "), "0.1.24");
+  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.25 "), "0.1.25");
   assert.equal(normalizeSeenUpdateNotesVersion(18), "");
 });
 
@@ -73,11 +73,11 @@ test("one update note keeps Korean before the equivalent English section", () =>
   assert.ok(korean >= 0 && english > korean);
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /모바일에서는 검색이 필요할 때만 펼쳐져 상단이 더 간결해요/,
+    /갤러리 편집에서 이미지를 여러 장 골라 한 번에 추가할 수 있어요/,
   );
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /On mobile, search expands only when needed, keeping the header simpler/,
+    /Select several images at once in gallery edit mode/,
   );
 });
 

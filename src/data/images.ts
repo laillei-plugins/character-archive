@@ -1,4 +1,4 @@
-import { App, TFile, TFolder, normalizePath } from "obsidian";
+import { App, TFile, TFolder, normalizePath, getFrontMatterInfo, parseYaml } from "obsidian";
 import type { CharacterRecord } from "./CharacterStore";
 import { rewriteImageWikiLibraryPrefix } from "./libraryFolderRename";
 import {
@@ -9,10 +9,26 @@ import {
   isRemoteCoverUrl,
   listEmbedIdentities,
   planEmbedInsert,
+  planEmbedAppendMany,
   planEmbedReorder,
+  planEmbedRemove,
+  planEmbedRestore,
+  type ImageRemoval,
+  selectCoverCandidateKey,
   type EmbedSyntax,
   type VaultImageResolver,
 } from "./imageEmbeds";
+
+/** Serialize image mutations across views; a failed write never poisons the lane. */
+const noteImageWrites = new WeakMap<TFile, Promise<unknown>>();
+function withNoteImageWrite<T>(file: TFile, write: () => Promise<T>): Promise<T> {
+  const previous = noteImageWrites.get(file) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(write);
+  noteImageWrites.set(file, next);
+  const release = () => { if (noteImageWrites.get(file) === next) noteImageWrites.delete(file); };
+  void next.then(release, release);
+  return next;
+}
 
 /** Obsidian resize can write `![[img|0]]` — image vanishes at 0px width. */
 const COLLAPSED_WIKI_SIZE =
@@ -59,10 +75,14 @@ export async function healCollapsedImageEmbeds(
   file: TFile,
 ): Promise<boolean> {
   const markdown = await app.vault.read(file);
-  const { text, changed } = sanitizeCollapsedImageEmbeds(markdown);
-  if (!changed) return false;
-  await app.vault.modify(file, text);
-  return true;
+  if (!sanitizeCollapsedImageEmbeds(markdown).changed) return false;
+  let changed = false;
+  await app.vault.process(file, (latest) => {
+    const result = sanitizeCollapsedImageEmbeds(latest);
+    changed = result.changed;
+    return result.text;
+  });
+  return changed;
 }
 
 /**
@@ -112,10 +132,14 @@ export async function healNaiPromptEmphasis(
   file: TFile,
 ): Promise<boolean> {
   const markdown = await app.vault.read(file);
-  const { text, changed } = restoreNaiEmphasisInPromptFences(markdown);
-  if (!changed) return false;
-  await app.vault.modify(file, text);
-  return true;
+  if (!restoreNaiEmphasisInPromptFences(markdown).changed) return false;
+  let changed = false;
+  await app.vault.process(file, (latest) => {
+    const result = restoreNaiEmphasisInPromptFences(latest);
+    changed = result.changed;
+    return result.text;
+  });
+  return changed;
 }
 
 /**
@@ -193,6 +217,32 @@ export function listNoteCoverCandidates(
   return found;
 }
 
+/** Append imported images in one note write, preserving every cover setting. */
+export async function appendNoteImages(
+  app: App,
+  file: TFile,
+  images: CoverRef[],
+): Promise<number> {
+  return withNoteImageWrite(file, async () => {
+    if (images.length === 0) return 0;
+    const embeds = images.map((image) =>
+      image.kind === "vault"
+        ? { syntax: "wiki" as const, target: wikiPathForEmbed(file, image.file) }
+        : { syntax: "md" as const, target: image.url },
+    );
+    const resolve = vaultImageResolver(app, file.path);
+    const before = await app.vault.read(file);
+    if (!planEmbedAppendMany(before, embeds, resolve).changed) return 0;
+    let added = 0;
+    await app.vault.process(file, (markdown) => {
+      const plan = planEmbedAppendMany(markdown, embeds, resolve);
+      added = plan.added;
+      return plan.text;
+    });
+    return added;
+  });
+}
+
 /** Vault image embeds in note body order (first = default cover). */
 export function listEmbedImages(app: App, file: TFile, markdown: string): TFile[] {
   return listNoteCoverCandidates(app, file, markdown).flatMap((cover) =>
@@ -265,11 +315,28 @@ export function coverDisplaySrc(app: App, cover: CoverRef): string {
 }
 
 /**
+ * Canonical key for a pinned `cover` value, or null when it does not resolve.
+ * Vault pins use the same link resolution as note embeds, so `b.png` and
+ * `Archive/Rin/b.png` share one key. Remote pins drop the fragment.
+ */
+export function pinnedCoverKey(
+  app: App,
+  notePath: string,
+  raw: string,
+): string | null {
+  if (isRemoteCoverUrl(raw)) return canonicalRemoteUrl(raw);
+  return resolveLink(app, raw, notePath)?.path ?? null;
+}
+
+/**
  * Cover resolution:
  * 1) `cover: __none__` → no cover (images stay in the note)
- * 2) explicit `cover` frontmatter (vault wiki/path or https URL)
- * 3) first image embed in the note, in document order (vault wiki or https markdown)
- * 4) legacy fallback for un-migrated notes: first image next to the note
+ * 2) When note markdown is supplied: candidates are body embeds in document
+ *    order. A pinned cover is used only when its canonical candidate key is
+ *    among them; otherwise the first candidate, or no cover. A same-folder
+ *    image is not a fallback on this path, and the note is not read again.
+ * 3) Without markdown (legacy): explicit `cover` frontmatter, then the first
+ *    cached embed or `autoCover`, then the first image next to the note.
  */
 export function resolveCover(
   app: App,
@@ -278,6 +345,17 @@ export function resolveCover(
 ): CoverRef | null {
   if (isCoverNone(record.cover)) return null;
 
+  if (markdown != null) {
+    const candidates = listNoteCoverCandidates(app, record.file, markdown);
+    const raw = record.cover.trim();
+    const pinKey = raw ? pinnedCoverKey(app, record.path, raw) : null;
+    const chosenKey = selectCoverCandidateKey(
+      candidates.map(coverRefKey),
+      pinKey,
+    );
+    return candidates.find((candidate) => coverRefKey(candidate) === chosenKey) ?? null;
+  }
+
   if (record.cover) {
     const raw = record.cover.trim();
     if (isRemoteCoverUrl(raw)) return { kind: "remote", url: raw };
@@ -285,27 +363,20 @@ export function resolveCover(
     if (fromCover) return { kind: "vault", file: fromCover };
   }
 
-  const text = markdown;
-  if (text != null) {
-    // First candidate in real document order — vault or remote, whichever the
-    // note embeds first.
-    const first = listNoteCoverCandidates(app, record.file, text)[0];
-    if (first) return first;
-  } else if (record.autoCover) {
-    return record.autoCover;
-  } else {
-    const cache = app.metadataCache.getFileCache(record.file);
-    const embeds = cache?.embeds ?? [];
-    for (const embed of embeds) {
-      const link = (embed.link ?? "").trim();
-      if (!link) continue;
-      if (isRemoteCoverUrl(link)) {
-        return { kind: "remote", url: link };
-      }
-      if (!isImagePath(link)) continue;
-      const f = resolveLink(app, link, record.path);
-      if (f) return { kind: "vault", file: f };
+  if (record.autoCover) return record.autoCover;
+  if (record.noteImagesKnown) return null;
+
+  const cache = app.metadataCache.getFileCache(record.file);
+  const embeds = cache?.embeds ?? [];
+  for (const embed of embeds) {
+    const link = (embed.link ?? "").trim();
+    if (!link) continue;
+    if (isRemoteCoverUrl(link)) {
+      return { kind: "remote", url: link };
     }
+    if (!isImagePath(link)) continue;
+    const f = resolveLink(app, link, record.path);
+    if (f) return { kind: "vault", file: f };
   }
 
   const folder = listFolderImages(app, record)[0];
@@ -327,24 +398,26 @@ export async function setCharacterCover(
   file: TFile,
   image: TFile | null,
 ): Promise<void> {
-  // Embed first, pin second: the note owns the inventory, so a cover must exist
-  // in the body before frontmatter points at it.
-  if (image) {
-    await ensureCoverEmbed(app, file, {
-      syntax: "wiki",
-      target: wikiPathForEmbed(file, image),
-    });
-  }
-
-  await app.fileManager.processFrontMatter(file, (fm) => {
+  return withNoteImageWrite(file, async () => {
+    // Embed first, pin second: the note owns the inventory, so a cover must exist
+    // in the body before frontmatter points at it.
     if (image) {
-      fm.cover = `[[${wikiPathForEmbed(file, image)}]]`;
-      fm.coverPosition = "50% 50%";
-    } else {
-      // Automatic default — first note embed via resolveCover.
-      delete fm.cover;
-      fm.cover = "";
+      await ensureCoverEmbed(app, file, {
+        syntax: "wiki",
+        target: wikiPathForEmbed(file, image),
+      });
     }
+
+    await app.fileManager.processFrontMatter(file, (fm) => {
+      if (image) {
+        fm.cover = `[[${wikiPathForEmbed(file, image)}]]`;
+        fm.coverPosition = "50% 50%";
+      } else {
+        // Automatic default — first note embed via resolveCover.
+        delete fm.cover;
+        fm.cover = "";
+      }
+    });
   });
 }
 
@@ -353,8 +426,10 @@ export async function setCharacterCoverNone(
   app: App,
   file: TFile,
 ): Promise<void> {
-  await app.fileManager.processFrontMatter(file, (fm) => {
-    fm.cover = COVER_NONE;
+  return withNoteImageWrite(file, async () => {
+    await app.fileManager.processFrontMatter(file, (fm) => {
+      fm.cover = COVER_NONE;
+    });
   });
 }
 
@@ -364,15 +439,17 @@ export async function setCharacterCoverUrl(
   file: TFile,
   url: string,
 ): Promise<void> {
-  const cleaned = url.trim();
-  if (!isRemoteCoverUrl(cleaned)) {
-    throw new Error("커버 URL은 https:// 로 시작해야 해요.");
-  }
-  // Same rule as a vault cover: embed first, then pin.
-  await ensureCoverEmbed(app, file, { syntax: "md", target: cleaned });
-  await app.fileManager.processFrontMatter(file, (fm) => {
-    fm.cover = cleaned;
-    fm.coverPosition = "50% 50%";
+  return withNoteImageWrite(file, async () => {
+    const cleaned = url.trim();
+    if (!isRemoteCoverUrl(cleaned)) {
+      throw new Error("커버 URL은 https:// 로 시작해야 해요.");
+    }
+    // Same rule as a vault cover: embed first, then pin.
+    await ensureCoverEmbed(app, file, { syntax: "md", target: cleaned });
+    await app.fileManager.processFrontMatter(file, (fm) => {
+      fm.cover = cleaned;
+      fm.coverPosition = "50% 50%";
+    });
   });
 }
 
@@ -523,12 +600,64 @@ export async function reorderNoteImages(
   file: TFile,
   orderedKeys: string[],
 ): Promise<void> {
-  if (orderedKeys.length < 2) return;
-  const resolve = vaultImageResolver(app, file.path);
-  const markdown = await app.vault.read(file);
-  if (!planEmbedReorder(markdown, orderedKeys, resolve).changed) return;
-  await app.vault.process(
-    file,
-    (data) => planEmbedReorder(data, orderedKeys, resolve).text,
+  return withNoteImageWrite(file, async () => {
+    if (orderedKeys.length < 2) return;
+    const resolve = vaultImageResolver(app, file.path);
+    const markdown = await app.vault.read(file);
+    if (!planEmbedReorder(markdown, orderedKeys, resolve).changed) return;
+    await app.vault.process(
+      file,
+      (data) => planEmbedReorder(data, orderedKeys, resolve).text,
+    );
+  });
+}
+
+/** Read the actual transaction's frontmatter, not an asynchronously updated cache. */
+export function noteImageState(app: App, file: TFile, markdown: string) {
+  const info = getFrontMatterInfo(markdown);
+  const fm = info.exists ? parseYaml(info.frontmatter) : null;
+  const raw = String(fm?.cover ?? "").trim();
+  const cover = raw.replace(/^\[\[([^\]]+)\]\]$/, "$1").split("|")[0]?.trim() ?? "";
+  const images = listNoteCoverCandidates(app, file, markdown);
+  const key = isCoverNone(cover) ? null : selectCoverCandidateKey(
+    images.map(coverRefKey), pinnedCoverKey(app, file.path, cover),
   );
+  return { cover, images, key };
+}
+
+/** Cover protection is checked inside the atomic write, even after a note edit. */
+export async function removeNoteImage(app: App, file: TFile, key: string): Promise<ImageRemoval | null> {
+  return withNoteImageWrite(file, async () => {
+    let removal: ImageRemoval | null = null;
+    await app.vault.process(file, (markdown) => {
+      const state = noteImageState(app, file, markdown);
+      if (state.key === key) throw new Error("현재 커버예요. 먼저 다른 이미지를 커버로 골라 주세요.");
+      const plan = planEmbedRemove(markdown, key, vaultImageResolver(app, file.path), state.key);
+      removal = plan.removed.length ? plan : null;
+      return plan.text;
+    });
+    return removal;
+  });
+}
+
+export async function restoreNoteImage(app: App, file: TFile, removal: ImageRemoval): Promise<boolean> {
+  return withNoteImageWrite(file, async () => {
+    let appended = false;
+    await app.vault.process(file, (markdown) => {
+      const before = noteImageState(app, file, markdown);
+      const plan = planEmbedRestore(markdown, removal, vaultImageResolver(app, file.path));
+      const after = noteImageState(app, file, plan.text);
+      if (!after.images.some((image) => coverRefKey(image) === removal.key)) {
+        throw new Error("이미지 파일을 찾을 수 없어 복원하지 못했어요.");
+      }
+      // Restoring an old, currently missing pin must not unexpectedly replace
+      // the user's present fallback cover after intervening frontmatter edits.
+      if (before.key !== null && before.key !== after.key) {
+        throw new Error("커버가 바뀌어 되돌리지 못했어요. 노트에서 이미지를 다시 넣어 주세요.");
+      }
+      appended = plan.appended;
+      return plan.text;
+    });
+    return appended;
+  });
 }

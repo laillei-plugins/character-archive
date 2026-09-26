@@ -88,7 +88,20 @@ export function rewriteImageWikiLibraryPrefix(
   const from = normalizeFolderPath(fromPrefix);
   const to = normalizeFolderPath(toPrefix);
   if (!from || !to || from === to) return markdown;
-  return markdown.split(`![[${from}/`).join(`![[${to}/`);
+  // Fenced code blocks hold literal text (e.g. NAI prompts), not real embeds.
+  const lines = markdown.split("\n");
+  let inFence = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (!inFence) {
+      lines[i] = line.split(`![[${from}/`).join(`![[${to}/`);
+    }
+  }
+  return lines.join("\n");
 }
 
 export function planMirroredFolderNoteRename(input: {
@@ -114,7 +127,13 @@ function remapKeyedRecord<T>(
 ): Record<string, T> {
   const next: Record<string, T> = {};
   for (const [key, value] of Object.entries(record)) {
-    next[remapPrefixedStoragePath(key, oldFolder, newFolder)] = value;
+    let target = remapPrefixedStoragePath(key, oldFolder, newFolder);
+    // A record already stored at the target (e.g. a retained web-share
+    // credential) must never be discarded — keep the old key on collision.
+    if (target !== key && Object.prototype.hasOwnProperty.call(record, target)) {
+      target = key;
+    }
+    next[target] = value;
   }
   return next;
 }

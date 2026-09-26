@@ -1,4 +1,4 @@
-export const UPDATE_NOTES_VERSION = "0.1.24";
+export const UPDATE_NOTES_VERSION = "0.1.25";
 
 export function normalizeSeenUpdateNotesVersion(raw: unknown): string {
   return typeof raw === "string" ? raw.trim() : "";
@@ -43,15 +43,21 @@ kind: "character-archive-update"
 
 ## 업데이트 내용
 
-- 모바일에서는 검색이 필요할 때만 펼쳐져 상단이 더 간결해요.
-- 좁은 화면의 공유, 속성 관리, 여러 선택, 새로고침을 보기 메뉴에서 쉽게 찾을 수 있어요.
-- 화면 너비가 바뀌거나 검색과 여러 선택을 끝내도 키보드 초점이 보이는 버튼에 남아요.
+- 갤러리 편집에서 이미지를 여러 장 골라 한 번에 추가할 수 있어요. 추가한 이미지는 노트에도 들어가요.
+- 선택한 커버는 유지돼요. 커버 이미지가 없어지면 남은 이미지 중 첫 번째가 커버가 돼요.
+- 갤러리에서 이미지 순서를 바꾸면 노트에도 같은 순서로 반영돼요.
+- 커버가 아닌 이미지는 휴지통 버튼으로 제거할 수 있어요. 노트에서도 함께 제거되며, 실수했다면 ‘되돌리기’를 누르세요.
+- 웹 공유에서 ‘추가한 이미지도 웹에 표시’를 켜면 여러 이미지를 함께 볼 수 있어요. 이미지를 크게 열어 넘겨볼 수도 있어요.
+- 앱을 다시 열 때 변경되지 않은 노트를 반복해서 확인하는 작업을 줄였어요.
 
 ---
 
 ## What's new
 
-- On mobile, search expands only when needed, keeping the header simpler.
-- On narrow screens, Share, Manage attributes, Multi-select, and Refresh are easy to find in the View menu.
-- Keyboard focus stays on a visible control after resizing or leaving search and multi-select.
+- Select several images at once in gallery edit mode. Added images also appear in the note.
+- Your selected cover stays in place. If it is removed, the first remaining image becomes the cover.
+- Reorder images in the gallery, and the note uses the same order.
+- Remove a non-cover image with the trash button. It is also removed from the note; choose Undo if you change your mind.
+- Turn on “Show added images on the web” when sharing to include multiple images. Open an image for a larger view and browse through the others.
+- Reopening the app now avoids repeating checks on unchanged notes.
 `;
