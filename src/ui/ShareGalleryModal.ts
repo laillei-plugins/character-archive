@@ -37,6 +37,7 @@ import {
   slugifyLinkName,
 } from "../share/githubPages";
 import {
+  checkShareSize,
   deleteHostedShare,
   hostedShareBaseFromUrl,
   isHostedShareConfigured,
@@ -1117,9 +1118,7 @@ export class ShareGalleryModal extends Modal {
       pagePath: this.pageFile?.path ?? "",
     });
     const html = renderShareHtml(payload);
-    if (new Blob([html]).size > 11_000_000) {
-      throw new Error("이미지가 많아 공유 용량을 넘었어요. 이미지를 줄인 뒤 다시 시도하세요.");
-    }
+    checkShareSize(html);
     return html;
   }
 

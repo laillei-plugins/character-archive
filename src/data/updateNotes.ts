@@ -1,4 +1,4 @@
-export const UPDATE_NOTES_VERSION = "0.1.26";
+export const UPDATE_NOTES_VERSION = "0.1.27";
 
 export function normalizeSeenUpdateNotesVersion(raw: unknown): string {
   return typeof raw === "string" ? raw.trim() : "";
@@ -43,19 +43,27 @@ kind: "character-archive-update"
 
 ## 업데이트 내용
 
-- 커버 창에서도 이미지를 제거하고 순서를 바꿀 수 있어요. 변경한 내용은 노트와 갤러리에 함께 반영돼요.
-- 선택한 커버는 순서를 바꿔도 유지돼요. 다른 이미지가 있을 때 커버를 제거하려면 먼저 새 커버를 골라 주세요.
-- 이미지를 제거한 뒤에는 이미지 목록 아래의 ‘되돌리기’를 눌러 복원할 수 있어요.
-- 이미지가 많으면 컴퓨터에서는 한 페이지에 6장, 모바일에서는 4장씩 보여요. 한 페이지에 모두 보이면 ‘이전’과 ‘다음’ 버튼은 나타나지 않아요.
-- ‘링크’ 버튼의 아이콘이 잘리지 않도록 수정했어요.
+- 커버 창에서 이미지를 드래그해 순서를 바꿀 수 있어요. 모바일에서는 이미지를 길게 누른 뒤 옮겨 주세요. 선택한 커버는 유지돼요.
+- 커버를 편집할 때는 이미지를 눌러도 확대 화면이 열리지 않아요.
+- 갤러리 패널의 경계를 드래그해 너비를 조절할 수 있어요. 화면이 좁으면 상세 내용이 전체 너비로 열려요.
+- 공유 페이지는 한 줄에 최대 6개의 카드를 보여줘요. 화면에 맞춰 카드 수와 이미지 크기가 조절돼요.
+- 이미지 아래 화살표로 다른 이미지를 볼 수 있어요. 이미지를 누르면 확대되고, 바깥의 어두운 영역을 누르면 닫혀요.
+- 한 이미지당 최대 25MB, 공유 페이지 전체는 최대 20MB까지 올릴 수 있어요. 공유용 이미지만 줄이고 원본은 유지해요.
+- 프롬프트는 복사 버튼으로 그대로 복사할 수 있어요.
+
+기존 공유 링크에 새 화면을 적용하려면 공유 창에서 링크를 업데이트해 주세요.
 
 ---
 
 ## What's new
 
-- Remove and reorder images directly in the cover window. Changes are reflected in both the note and gallery.
-- Reordering keeps your selected cover. To remove the cover when other images remain, choose a new cover first.
-- After removing an image, restore it with Undo (되돌리기) below the image list.
-- Browse six images per page on desktop and four on mobile. Previous and Next stay hidden when all images fit on one page.
-- Fixed the clipped icon on the Link (링크) button.
+- Drag images to reorder them in the cover window. On mobile, hold an image before dragging. Your selected cover stays the same.
+- Clicking an image while editing the cover no longer opens the enlarged view.
+- Drag the gallery panel divider to adjust its width. On smaller screens, details use the full width.
+- Shared galleries show up to six cards per row, with card counts and image sizes adapting to the available space.
+- Use the arrows below an image to browse. Click the image to enlarge it, and click the dark background to close it.
+- Add images up to 25MB each and share pages up to 20MB total. Only shared copies are compressed; originals stay unchanged.
+- Prompt copy buttons preserve the exact text.
+
+Update an existing link from the sharing window to apply the new layout.
 `;

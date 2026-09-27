@@ -1,3 +1,4 @@
+import { galleryDetailLayout } from "../data/galleryLayout";
 import {
   FileView,
   Menu,
@@ -201,13 +202,6 @@ const CARD_TAG_LIMIT = 3;
 /** Peek placeholder for an unset field — a muted em dash, not “비어 있음”. */
 const EMPTY_FIELD_MARK = "—";
 /** Narrow bottom-sheet snap heights, as a fraction of the viewport. */
-const SHEET_SNAPS = { low: 0.4, mid: 0.55, tall: 0.88 } as const;
-type SheetSnap = keyof typeof SHEET_SNAPS;
-const SHEET_SNAP_VH: Record<SheetSnap, string> = {
-  low: "40vh",
-  mid: "55vh",
-  tall: "88vh",
-};
 /**
  * Batch Notice lifetime. The narrow batch bar is raised for exactly this long
  * so it never sits under the native Notice (see `.is-batch-notice`).
@@ -303,13 +297,10 @@ export class GalleryView extends FileView {
   private peekOpen = false;
   /** Last file body, for `library` when metadata cache is still empty. */
   private scopeBody = "";
-  /** Narrow sheet height — remembered for this view session only. */
-  private sheetSnap: SheetSnap = "mid";
-  private sheetDrag: {
-    pointerId: number;
-    startY: number;
-    startH: number;
-  } | null = null;
+  private detailFull = false;
+  private detailPreferred: number | null = null;
+  private bodyResizeObserver: ResizeObserver | null = null;
+  private imagePreviewUpdate?: (key: string) => void;
   private tipTimer: number | null = null;
   /**
    * 여러 캐릭터 그룹 이동 — one explicit mode with a **captured** scope.
@@ -1078,7 +1069,7 @@ export class GalleryView extends FileView {
           event.preventDefault();
           return;
         }
-        if (this.isNarrow && this.peekOpen) {
+        if (this.detailFull && this.peekOpen) {
           event.preventDefault();
           this.closePeek();
           return;
@@ -1158,6 +1149,8 @@ export class GalleryView extends FileView {
     this.teardownBatchMode();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    this.bodyResizeObserver?.disconnect();
+    this.bodyResizeObserver = null;
     this.viewMenu?.close();
     this.viewMenu = null;
     this.closeTagMenu();
@@ -1170,12 +1163,14 @@ export class GalleryView extends FileView {
    * Only the affordances differ, so re-point them instead of rebuilding.
    */
   private syncPeekChrome(): void {
-    this.applySheetSnap();
+    this.syncDetailLayout();
     this.syncGalleryInert();
     const back = this.contentEl.querySelector(".charinfo-detail__back");
     if (!(back instanceof HTMLElement)) return;
     back.empty();
-    setIcon(back, this.isNarrow ? "chevron-left" : "x");
+    setIcon(back, this.detailFull ? "chevron-left" : "x");
+    back.setAttribute("aria-label", this.detailFull ? "갤러리로 돌아가기" : "닫기");
+    if (this.detailFull) back.createSpan({ text: "갤러리" });
   }
 
   /**
@@ -1186,7 +1181,7 @@ export class GalleryView extends FileView {
     // The destination dialog is modal on every width, so it freezes the same
     // regions the narrow sheet does — plus the batch bar that opened it.
     const on = batchInertActive({
-      isNarrow: this.isNarrow,
+      isNarrow: this.detailFull,
       peekOpen: this.peekOpen,
       dialogOpen:
         (this.batchDialog?.isOpen ?? false) ||
@@ -1200,78 +1195,58 @@ export class GalleryView extends FileView {
     }
   }
 
-  /** Viewport basis for the `vh` snaps, so drag math matches what CSS paints. */
-  private sheetBasis(): number {
-    return window.innerHeight || this.contentEl.clientHeight || 640;
-  }
-
-  private applySheetSnap(): void {
-    this.contentEl.style.setProperty(
-      "--charinfo-sheet-h",
-      SHEET_SNAP_VH[this.sheetSnap],
-    );
-  }
-
-  private nearestSnap(px: number): SheetSnap {
-    const basis = this.sheetBasis();
-    let best: SheetSnap = "mid";
-    let bestGap = Number.POSITIVE_INFINITY;
-    for (const snap of Object.keys(SHEET_SNAPS) as SheetSnap[]) {
-      const gap = Math.abs(SHEET_SNAPS[snap] * basis - px);
-      if (gap < bestGap) {
-        bestGap = gap;
-        best = snap;
+  private syncDetailLayout(): void {
+    const body = this.contentEl.querySelector<HTMLElement>(".charinfo-gallery__body");
+    if (!body) return;
+    const layout = galleryDetailLayout(body.clientWidth, this.detailPreferred);
+    const full = layout.mode === "full", changed = full !== this.detailFull;
+    const divider = body.querySelector<HTMLElement>(".charinfo-detail-resize");
+    const dividerFocused = divider === body.ownerDocument.activeElement;
+    this.detailFull = full;
+    this.contentEl.toggleClass("is-detail-full", full);
+    if (layout.width != null) this.contentEl.style.setProperty("--charinfo-peek-width", `${layout.width}px`);
+    this.contentEl.style.setProperty("--charinfo-preview-height", `${Math.max(80, body.clientHeight - 180)}px`);
+    if (divider && layout.width != null) {
+      divider.setAttribute("aria-valuemin", String(layout.min)); divider.setAttribute("aria-valuemax", String(layout.max)); divider.setAttribute("aria-valuenow", String(layout.width));
+    }
+    if (changed) {
+      this.syncGalleryInert();
+      const back = body.querySelector<HTMLElement>(".charinfo-detail__back");
+      if (back) {
+        back.empty(); setIcon(back, full ? "chevron-left" : "x");
+        back.setAttribute("aria-label", full ? "갤러리로 돌아가기" : "닫기");
+        if (full) back.createSpan({ text: "갤러리" });
+        if (full && this.peekOpen && (dividerFocused || body.querySelector(".charinfo-gallery__main")?.contains(body.ownerDocument.activeElement))) back.focus({ preventScroll: true });
       }
     }
-    return best;
   }
 
-  /**
-   * Height drag starts on the grip handle only — head buttons and the image
-   * strip keep their own gestures (freeze: handle-only drag start).
-   */
-  private attachSheetDrag(handle: HTMLElement, sheet: HTMLElement): void {
-    const endDrag = (event: PointerEvent) => {
-      const drag = this.sheetDrag;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      this.sheetDrag = null;
-      handle.releasePointerCapture?.(event.pointerId);
-      this.contentEl.removeClass("is-sheet-dragging");
-      this.sheetSnap = this.nearestSnap(sheet.getBoundingClientRect().height);
-      this.applySheetSnap();
+  private attachDetailResize(body: HTMLElement): void {
+    this.bodyResizeObserver?.disconnect();
+    const divider = body.createDiv({ cls: "charinfo-detail-resize", attr: { role: "separator", tabindex: "0", "aria-label": "패널 너비", "aria-orientation": "vertical" } });
+    let drag: { id: number; x: number; width: number } | null = null;
+    const setWidth = (value: number): void => {
+      const bounds = galleryDetailLayout(body.clientWidth, this.detailPreferred);
+      if (bounds.mode !== "split") return;
+      this.detailPreferred = Math.max(bounds.min!, Math.min(bounds.max!, value)); this.syncDetailLayout();
     };
-    handle.addEventListener("pointerdown", (event) => {
-      if (!this.isNarrow || !this.peekOpen) return;
-      if (event.pointerType === "mouse" && event.button !== 0) return;
-      this.sheetDrag = {
-        pointerId: event.pointerId,
-        startY: event.clientY,
-        startH: sheet.getBoundingClientRect().height,
-      };
-      handle.setPointerCapture?.(event.pointerId);
-      this.contentEl.addClass("is-sheet-dragging");
-    });
-    handle.addEventListener("pointermove", (event) => {
-      const drag = this.sheetDrag;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      const basis = this.sheetBasis();
-      const min = SHEET_SNAPS.low * basis;
-      const max = Math.min(
-        SHEET_SNAPS.tall * basis,
-        this.contentEl.clientHeight,
-      );
-      const next = Math.min(
-        Math.max(min, drag.startH + (drag.startY - event.clientY)),
-        Math.max(min, max),
-      );
-      this.contentEl.style.setProperty(
-        "--charinfo-sheet-h",
-        `${Math.round(next)}px`,
-      );
-    });
-    handle.addEventListener("pointerup", endDrag);
-    handle.addEventListener("pointercancel", endDrag);
+    divider.onpointerdown = (e) => {
+      if (e.button !== 0 || this.detailFull) return;
+      drag = { id: e.pointerId, x: e.clientX, width: galleryDetailLayout(body.clientWidth, this.detailPreferred).width! };
+      divider.setPointerCapture(e.pointerId); e.preventDefault();
+    };
+    divider.onpointermove = (e) => { if (drag && drag.id === e.pointerId) setWidth(drag.width + drag.x - e.clientX); };
+    divider.onpointerup = divider.onpointercancel = () => { drag = null; };
+    divider.ondblclick = () => { this.detailPreferred = null; this.syncDetailLayout(); };
+    divider.onkeydown = (e) => {
+      const bounds = galleryDetailLayout(body.clientWidth, this.detailPreferred); if (bounds.width == null) return;
+      let value = bounds.width;
+      if (e.key === "ArrowLeft") value += 16; else if (e.key === "ArrowRight") value -= 16;
+      else if (e.key === "Home") value = bounds.min!; else if (e.key === "End") value = bounds.max!; else return;
+      e.preventDefault(); e.stopPropagation(); setWidth(value);
+    };
+    this.bodyResizeObserver = new ResizeObserver(() => this.syncDetailLayout());
+    this.bodyResizeObserver.observe(body); this.syncDetailLayout();
   }
 
   private unloadPeekBody(): void {
@@ -1282,15 +1257,15 @@ export class GalleryView extends FileView {
   }
 
   private closePeek(): void {
+    const returnCard = this.selected ? this.contentEl.querySelector<HTMLElement>(`.charinfo-card[data-path="${CSS.escape(this.selected.path)}"]`) : null;
     this.closeImageFocus({ restoreFocus: false });
     this.closeTagMenu();
-    this.sheetDrag = null;
-    this.contentEl.removeClass("is-sheet-dragging");
-    this.applySheetSnap();
+    this.syncDetailLayout();
     this.selected = null;
     this.peekOpen = false;
     this.contentEl.toggleClass("is-peek-open", false);
     this.syncGalleryInert();
+    returnCard?.focus({ preventScroll: true });
     this.contentEl.querySelectorAll(".charinfo-card.is-selected").forEach((el) => {
       el.classList.remove("is-selected");
     });
@@ -3051,7 +3026,7 @@ export class GalleryView extends FileView {
     root.toggleClass("is-search-open", this.searchExpanded);
     root.toggleClass("is-peek-open", this.peekOpen);
     root.tabIndex = 0;
-    this.applySheetSnap();
+    this.syncDetailLayout();
 
     this.renderHeader(root);
     this.applySearchDisclosureTransition({
@@ -3094,6 +3069,7 @@ export class GalleryView extends FileView {
       if (this.peekOpen) this.closePeek();
     });
     const detail = body.createDiv({ cls: "charinfo-gallery__detail" });
+    this.attachDetailResize(body);
 
     // Tap gallery chrome (not a card) → dismiss side panel.
     main.addEventListener("click", (event) => {
@@ -5216,7 +5192,7 @@ export class GalleryView extends FileView {
     if (this.batchMode) return;
     this.selected = record;
     this.peekOpen = true;
-    this.applySheetSnap();
+    this.syncDetailLayout();
     this.contentEl.toggleClass("is-peek-open", true);
     this.syncGalleryInert();
     this.contentEl.querySelectorAll(".charinfo-card.is-selected").forEach((el) => {
@@ -5584,6 +5560,12 @@ export class GalleryView extends FileView {
         remove: (key) => this.removeGalleryImage(record, key),
         move: async (key, direction) => {
           await moveNoteImage(this.app, record.file, key, { direction });
+          await this.refreshAfterImageRemoval(record).catch(() => {
+            new Notice("순서는 바뀌었어요. 화면을 다시 열어 확인해 주세요.");
+          });
+        },
+        reorder: async (key, anchor, place) => {
+          await moveNoteImage(this.app, record.file, key, { anchor, place });
           await this.refreshAfterImageRemoval(record).catch(() => {
             new Notice("순서는 바뀌었어요. 화면을 다시 열어 확인해 주세요.");
           });
@@ -6089,8 +6071,6 @@ export class GalleryView extends FileView {
   private async renderDetail(detail: HTMLElement): Promise<void> {
     const requestId = ++this.detailRequestId;
     // The head owns the drag pointer capture and is about to be replaced.
-    this.sheetDrag = null;
-    this.contentEl.removeClass("is-sheet-dragging");
     this.unloadPeekBody();
     detail.empty();
     if (!this.selected) {
@@ -6102,17 +6082,13 @@ export class GalleryView extends FileView {
     const record = this.selected;
 
     const head = detail.createDiv({ cls: "charinfo-detail__head" });
-    const grip = head.createDiv({
-      cls: "charinfo-detail__grip",
-      attr: { "aria-hidden": "true" },
-    });
-    grip.createDiv({ cls: "charinfo-detail__grip-bar" });
-    this.attachSheetDrag(grip, detail);
     const back = head.createEl("button", {
       cls: "charinfo-detail__back",
       attr: { type: "button", "aria-label": "닫기" },
     });
-    setIcon(back, this.isNarrow ? "chevron-left" : "x");
+    setIcon(back, this.detailFull ? "chevron-left" : "x");
+    back.setAttribute("aria-label", this.detailFull ? "갤러리로 돌아가기" : "닫기");
+    if (this.detailFull) back.createSpan({ text: "갤러리" });
     back.addEventListener("click", () => this.closePeek());
 
     const titleWrap = head.createDiv({ cls: "charinfo-detail__title-wrap" });
@@ -6224,6 +6200,8 @@ export class GalleryView extends FileView {
     if (requestId !== this.detailRequestId || this.selected?.path !== record.path) {
       return;
     }
+    const mediaStrip = detail.querySelector(".charinfo-image-strip");
+    if (mediaStrip && props.parentElement === detail) detail.insertBefore(mediaStrip, props);
     this.peekStripFingerprint = this.imageFingerprint(record, markdown);
 
     const body = detail.createDiv({ cls: "charinfo-detail__body" });
@@ -6296,6 +6274,7 @@ export class GalleryView extends FileView {
       recordPath,
     };
     this.imageFocusImages = images;
+    this.imagePreviewUpdate?.(startKey);
     this.attachImageFocusKeys();
     this.paintImageFocus(images);
   }
@@ -6326,6 +6305,7 @@ export class GalleryView extends FileView {
       returnKey: state.returnKey,
       recordPath: state.recordPath,
     };
+    this.imagePreviewUpdate?.(key);
     this.paintImageFocus(
       this.imageFocusImages,
       focusControl
@@ -6379,9 +6359,13 @@ export class GalleryView extends FileView {
     });
     this.imageFocusEl = overlay;
     const dim = overlay.createDiv({ cls: "charinfo-focus__dim" });
-    dim.addEventListener("click", () => {
-      this.closeImageFocus({ restoreFocus: true });
-    });
+    let down: { x: number; y: number } | null = null;
+    dim.addEventListener("pointerdown", e => { down = { x: e.clientX, y: e.clientY }; });
+    dim.addEventListener("pointercancel", () => { down = null; });
+    dim.addEventListener("click", e => { if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= 8) this.closeImageFocus({ restoreFocus: true }); down = null; });
+    let swipe: { x: number; y: number } | null = null;
+    overlay.addEventListener("touchstart", e => { const t = e.touches[0]; swipe = t ? { x: t.clientX, y: t.clientY } : null; }, { passive: true });
+    overlay.addEventListener("touchend", e => { const t = e.changedTouches[0]; if (swipe && t && Math.abs(t.clientX - swipe.x) > 45 && Math.abs(t.clientX - swipe.x) > Math.abs(t.clientY - swipe.y)) this.stepImageFocus(t.clientX < swipe.x ? 1 : -1); swipe = null; }, { passive: true });
     const stage = overlay.createDiv({ cls: "charinfo-focus__stage" });
     const picture = stage.createEl("img", {
       cls: "charinfo-focus__img",
@@ -6552,7 +6536,33 @@ export class GalleryView extends FileView {
       ? null
       : resolveCover(this.app, record, markdown);
     const resolvedCoverKey = resolvedCover ? coverRefKey(resolvedCover) : null;
+    let previewIndex = Math.max(0, images.findIndex(image => coverRefKey(image) === resolvedCoverKey));
+    let showPreview: (() => void) | undefined;
+    this.imagePreviewUpdate = undefined;
+    if (!editable) {
+      const media = strip.createDiv({ cls: "charinfo-detail-media" });
+      const open = media.createEl("button", { cls: "charinfo-detail-media__open", attr: { type: "button", "aria-label": "이미지 크게 보기" } });
+      const picture = open.createEl("img", { attr: { alt: record.title, draggable: "false" } });
+      open.onclick = (event) => { event.preventDefault(); event.stopPropagation(); if (shouldOpenImageFocus({ editMode: this.editMode, batchMode: this.batchMode })) this.openImageFocus(record.path, images, coverRefKey(images[previewIndex]!)); };
+      let previous: HTMLButtonElement | undefined, next: HTMLButtonElement | undefined, count: HTMLElement | undefined;
+      if (images.length > 1) {
+        const nav = media.createDiv({ cls: "charinfo-detail-media__nav" });
+        previous = nav.createEl("button", { attr: { type: "button", "aria-label": "이전 이미지" } }); setIcon(previous, "chevron-left");
+        count = nav.createSpan({ attr: { "aria-live": "polite" } });
+        next = nav.createEl("button", { attr: { type: "button", "aria-label": "다음 이미지" } }); setIcon(next, "chevron-right");
+        previous.onclick = () => { if (previewIndex > 0) { previewIndex--; showPreview?.(); } };
+        next.onclick = () => { if (previewIndex < images.length - 1) { previewIndex++; showPreview?.(); } };
+      }
+      showPreview = () => {
+        picture.src = coverDisplaySrc(this.app, images[previewIndex]!);
+        if (previous && next && count) { previous.disabled = previewIndex === 0; next.disabled = previewIndex === images.length - 1; count.setText(`${previewIndex + 1} / ${images.length}`); }
+        strip.querySelectorAll<HTMLElement>(".charinfo-thumb").forEach(el => el.setAttribute("aria-pressed", String(el.dataset.id === coverRefKey(images[previewIndex]!))));
+      };
+      this.imagePreviewUpdate = (key) => { const index = images.findIndex(image => coverRefKey(image) === key); if(index >= 0) { previewIndex = index; showPreview?.(); } };
+      showPreview();
+    }
     const row = strip.createDiv({ cls: "charinfo-image-strip__row" });
+    if (!editable && images.length < 2) row.hidden = true;
 
     for (const [index, image] of images.entries()) {
       const imageKey = coverRefKey(image);
@@ -6597,7 +6607,7 @@ export class GalleryView extends FileView {
         ) {
           return;
         }
-        this.openImageFocus(record.path, images, imageKey);
+        previewIndex = index; showPreview?.();
       });
       thumb.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" && event.key !== " ") return;

@@ -6,12 +6,12 @@ export interface Env {
 
 export type TtlKind = "7d" | "30d" | "permanent";
 
-const DEFAULT_MAX_BYTES = 12_000_000;
+const DEFAULT_MAX_BYTES = 20_000_000;
 
 export function maxBytes(env: Env): number {
   const configured = Number(env.MAX_BYTES);
   return Number.isFinite(configured) && configured > 0
-    ? configured
+    ? Math.min(configured, DEFAULT_MAX_BYTES)
     : DEFAULT_MAX_BYTES;
 }
 

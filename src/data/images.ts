@@ -1,3 +1,4 @@
+import { moveImageKey } from "./imageOrder";
 import { App, TFile, TFolder, normalizePath, getFrontMatterInfo, parseYaml } from "obsidian";
 import type { CharacterRecord } from "./CharacterStore";
 import { rewriteImageWikiLibraryPrefix } from "./libraryFolderRename";
@@ -634,9 +635,8 @@ function movedCandidateKeys(
     to = from + movement.direction;
     if (to < 0 || to > rest.length) return null;
   } else {
-    const at = rest.indexOf(normalizeEmbedKey(movement.anchor));
-    if (at < 0) return null;
-    to = movement.place === "before" ? at : at + 1;
+    const order = moveImageKey(keys, source, normalizeEmbedKey(movement.anchor), movement.place);
+    return order.some((item, index) => item !== keys[index]) ? order : null;
   }
   if (to === from) return null;
   rest.splice(to, 0, source);

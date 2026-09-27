@@ -18,6 +18,13 @@ export interface HostedShareResult {
   updated?: boolean;
 }
 
+export const MAX_SHARE_HTML_BYTES = 20_000_000;
+export function checkShareSize(html: string): void {
+  if (new TextEncoder().encode(html).byteLength > MAX_SHARE_HTML_BYTES) {
+    throw new Error("공유 페이지는 최대 20MB까지 올릴 수 있어요. 이미지나 카드 수를 줄여 주세요.");
+  }
+}
+
 function normalizeBase(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, "");
 }
@@ -117,6 +124,7 @@ export async function uploadToHostedShare(
     throw new Error("공유 서버 주소가 없어요. 설정에서 공유 주소를 확인하세요.");
   }
 
+  checkShareSize(html);
   const res = await requestUrl({
     url: `${base}/api/v1/share`,
     method: "POST",
@@ -148,6 +156,7 @@ export async function updateHostedShare(
     throw new Error("이 링크를 수정할 열쇠가 없어요. 새 링크를 만들어 주세요.");
   }
 
+  checkShareSize(html);
   const res = await requestUrl({
     url: `${base}/api/v1/share/${encodeURIComponent(id)}`,
     method: "PUT",

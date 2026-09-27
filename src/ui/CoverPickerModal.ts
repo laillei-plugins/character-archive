@@ -6,6 +6,7 @@ import {
   normalizePath,
   setIcon,
 } from "obsidian";
+import { attachCoverImageDrag } from "./coverImageDrag";
 import type CharinfoPlugin from "../main";
 import type { CharacterRecord } from "../data/CharacterStore";
 import { safeImageEmbedFilename } from "../data/imageEmbeds";
@@ -40,10 +41,11 @@ export type CoverPickerOperations = {
   read: () => Promise<CoverPickerState>;
   remove: (key: string) => Promise<(() => Promise<void>) | undefined>;
   move: (key: string, direction: -1 | 1) => Promise<void>;
+  reorder: (key: string, anchor: string, place: "before" | "after") => Promise<void>;
   subscribe: (refresh: () => void) => () => void;
 };
 
-const MAX_REMOTE_BYTES = 8_000_000;
+const MAX_REMOTE_BYTES = 25_000_000;
 
 /**
  * Cover set-now modal — pick / add / reset.
@@ -65,21 +67,13 @@ export class CoverPickerModal extends Modal {
   private linkPanel: HTMLElement | null = null;
   private opToken = 0;
   private opened = false;
-  private page = 0;
-  private pageSize = 6;
+  private disposeDrag?: () => void;
   private currentEl!: HTMLElement;
   private pickEl!: HTMLElement;
   private unsubscribe?: () => void;
-  private media?: MediaQueryList;
   private refreshVersion = 0;
   private movePending = 0;
   private pendingFocus?: { key: string; action?: string };
-  private onResize = (): void => {
-    const anchor = this.page * this.pageSize;
-    this.pageSize = this.media?.matches ? 4 : 6;
-    this.page = Math.floor(anchor / this.pageSize);
-    this.renderImages();
-  };
 
   constructor(
     app: App,
@@ -109,9 +103,11 @@ export class CoverPickerModal extends Modal {
     contentEl.addClass("charinfo-cover-picker");
 
     this.opened = true;
-    this.media = window.matchMedia("(max-width: 600px), (pointer: coarse)");
-    this.pageSize = this.media.matches ? 4 : 6;
-    this.media.addEventListener("change", this.onResize);
+    contentEl.addEventListener("click", (event) => {
+      if ((event.target as Element).closest(".charinfo-cover-picker__current")) {
+        event.preventDefault(); event.stopImmediatePropagation();
+      }
+    }, true);
     this.unsubscribe = this.operations.subscribe(() => { void this.refresh(); });
     this.currentEl = contentEl.createDiv({ cls: "charinfo-cover-picker__current" });
     this.statusEl = contentEl.createDiv({
@@ -240,10 +236,8 @@ export class CoverPickerModal extends Modal {
     const focusAction = action ?? active?.dataset.action;
     if (active === this.linkInput) this.pendingFocus = undefined;
     else if (focusKey) this.pendingFocus = { key: focusKey, action: focusAction };
-    const index = followKey ? this.images.findIndex((image) => coverRefKey(image) === followKey) : -1;
-    if (index >= 0) this.page = Math.floor(index / this.pageSize);
-    const pages = Math.max(1, Math.ceil(this.images.length / this.pageSize));
-    this.page = Math.max(0, Math.min(this.page, pages - 1));
+    const scroll = this.pickEl.querySelector(".charinfo-cover-picker__grid")?.scrollTop ?? 0;
+    this.disposeDrag?.();
     this.currentEl.empty();
     if (this.currentCover) {
       const frame = this.currentEl.createDiv({ cls: "charinfo-cover-picker__current-frame" });
@@ -260,9 +254,8 @@ export class CoverPickerModal extends Modal {
     const grid = this.pickEl.createDiv({ cls: "charinfo-cover-picker__grid" });
     if (!this.images.length) grid.createDiv({ cls: "charinfo-cover-picker__empty", text: "이미지를 추가해 주세요." });
     const currentKey = this.currentCover ? coverRefKey(this.currentCover) : null;
-    const start = this.page * this.pageSize;
-    for (const [offset, image] of this.images.slice(start, start + this.pageSize).entries()) {
-      const key = coverRefKey(image), position = start + offset;
+    for (const [position, image] of this.images.entries()) {
+      const key = coverRefKey(image);
       const label = this.coverLabel(image), isCurrent = key === currentKey;
       const tile = grid.createDiv({ cls: "charinfo-cover-picker__tile", attr: { "data-image-key": key } });
       const pick = tile.createEl("button", { cls: "charinfo-cover-picker__cell" + (isCurrent ? " is-current" : ""), attr: {
@@ -271,18 +264,18 @@ export class CoverPickerModal extends Modal {
       pick.createEl("img", { attr: { src: coverDisplaySrc(this.app, image), alt: "", loading: "lazy", draggable: "false" } });
       pick.createSpan({ cls: "charinfo-cover-picker__number", text: String(position + 1) });
       if (isCurrent) pick.createSpan({ cls: "charinfo-cover-picker__badge", text: "현재" });
-      pick.addEventListener("click", () => { void this.commit(image); });
+      pick.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void this.commit(image);
+      });
       const actions = tile.createDiv({ cls: "charinfo-cover-picker__image-actions" });
-      const moves = actions.createDiv({ cls: "charinfo-cover-picker__moves" });
-      for (const direction of [-1, 1] as const) {
-        const text = direction < 0 ? "앞으로 이동" : "뒤로 이동";
-        const button = moves.createEl("button", { cls: "clickable-icon charinfo-icon-btn", attr: {
-          type: "button", title: text, "aria-label": `${position + 1}번 이미지 ${text}`, "data-action": String(direction), "data-move": "",
-        } });
-        setIcon(button, direction < 0 ? "chevron-left" : "chevron-right");
-        button.disabled = direction < 0 ? position === 0 : position === this.images.length - 1;
-        button.addEventListener("click", () => { void this.moveImage(key, direction); });
-      }
+      pick.title = `${label} · Alt + 방향키로 순서 변경`;
+      pick.addEventListener("keydown", (event) => {
+        if (!event.altKey || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+        event.preventDefault(); event.stopPropagation();
+        void this.moveImage(key, ["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1);
+      });
       const protectedCover = isCurrent && this.images.length > 1;
       const remove = actions.createEl("button", { cls: "clickable-icon charinfo-icon-btn charinfo-cover-picker__remove", attr: {
         type: "button", "aria-label": `${position + 1}번 이미지 제거`, "data-action": "remove",
@@ -290,24 +283,18 @@ export class CoverPickerModal extends Modal {
       } });
       setIcon(remove, "trash-2");
       remove.disabled = protectedCover;
+      remove.hidden = protectedCover;
       remove.addEventListener("click", () => { void this.removeImage(key); });
     }
-    if (pages > 1) {
-      const nav = this.pickEl.createDiv({ cls: "charinfo-cover-picker__pagination", attr: { role: "navigation", "aria-label": "이미지 페이지" } });
-      const previous = nav.createEl("button", { text: "이전", attr: { type: "button", "aria-label": "이전 이미지 페이지", "data-page": "previous" } });
-      previous.disabled = this.page === 0;
-      nav.createSpan({ text: `${this.page + 1} / ${pages}`, attr: { role: "status", "aria-live": "polite" } });
-      const next = nav.createEl("button", { text: "다음", attr: { type: "button", "aria-label": "다음 이미지 페이지", "data-page": "next" } });
-      next.disabled = this.page === pages - 1;
-      const turnPage = (delta: number, selector: string): void => {
-        if (this.busy) return;
-        this.page += delta;
-        this.renderImages();
-        (this.pickEl.querySelector<HTMLButtonElement>(`${selector}:not(:disabled)`) ?? this.pickEl.querySelector<HTMLButtonElement>(".charinfo-cover-picker__cell"))?.focus({ preventScroll: true });
-      };
-      previous.onclick = () => turnPage(-1, '[data-page="previous"]');
-      next.onclick = () => turnPage(1, '[data-page="next"]');
-    }
+    grid.scrollTop = scroll;
+    this.disposeDrag = attachCoverImageDrag(grid, (key, anchor, place) => {
+      if (this.busy) return;
+      this.setBusy(true);
+      void this.operations.reorder(key, anchor, place).then(() => this.refresh(key, "pick")).catch((error) => {
+        this.setStatus(error instanceof Error ? error.message : "순서를 바꾸지 못했어요.", true);
+        return this.refresh();
+      }).finally(() => { if (this.opened) { this.setBusy(false); this.renderImages(key, "pick"); } });
+    }, () => this.opened && !this.busy && this.images.length > 1);
     this.setBusy(this.busy);
     if (focusKey) {
       const tile = Array.from(grid.children).find((el) => (el as HTMLElement).dataset.imageKey === focusKey);
@@ -409,7 +396,7 @@ export class CoverPickerModal extends Modal {
     this.opToken += 1;
     this.refreshVersion += 1;
     this.unsubscribe?.();
-    this.media?.removeEventListener("change", this.onResize);
+    this.disposeDrag?.();
     this.fileDialogOpen = false;
     this.contentEl.empty();
   }
@@ -501,7 +488,7 @@ export class CoverPickerModal extends Modal {
           continue;
         }
         if (file.size > MAX_REMOTE_BYTES) {
-          failed.push(`${file.name}: 최대 8MB`);
+          failed.push(`${file.name}: 최대 25MB`);
           continue;
         }
         try {

@@ -44,7 +44,7 @@ import {
   type TagDef,
 } from "../settings";
 
-const MAX_COVER_INPUT_BYTES = 12_000_000; // read up to 12MB, then compress
+const MAX_COVER_INPUT_BYTES = 25_000_000; // read up to 25MB, then compress
 const MAX_COVER_DATA_URL_CHARS = 280_000; // ~210KB binary after base64
 const SHARE_COVER_MAX_EDGE = 720;
 
@@ -615,7 +615,7 @@ function escapeHtml(text: string): string {
  * 12: current card and panel presentation.
  * 13: default inspector cover and explicitly opted-in note image payload.
  */
-export const SHARE_HTML_VERSION = 13;
+export const SHARE_HTML_VERSION = 14;
 
 /** Self-contained read-only gallery HTML.
  * Visual language: Apple HIG (clarity / deference / depth) + Obsidian DESIGN.md tokens
@@ -1233,6 +1233,44 @@ button {
   .card, .copy, .inspector__back { transition: none; }
   .card:active, .copy:active, .inspector__back:active { transform: none; }
 }
+
+/* Responsive shared gallery: a stable left edge and at most six columns. */
+:root { --pad: 24px; --peek: 380px; }
+.app { height: 100dvh; overflow: hidden; }
+.topbar__title, .inspector__title, .notes__item, .prop__v { overflow-wrap: anywhere; }
+.stage { position: relative; min-width: 0; }
+.gallery { min-width: 0; container-type: inline-size; padding-top: 24px; }
+.grid { grid-template-columns: repeat(6,minmax(0,1fr)); gap: 16px; }
+@container (max-width: 1135px) { .grid { grid-template-columns: repeat(5,minmax(0,1fr)); } }
+@container (max-width: 943px) { .grid { grid-template-columns: repeat(4,minmax(0,1fr)); } }
+@container (max-width: 751px) { .grid { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+@container (max-width: 559px) { .grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; } }
+@container (max-width: 299px) { .grid { grid-template-columns: minmax(0,1fr); } }
+.inspector { min-width: 0; overflow-x: hidden; }
+.inspector__bar { padding: 12px 16px; gap: 8px; min-height: 68px; }
+.inspector__back { display: inline-flex; order: 2; width: 44px; height: 44px; }
+.inspector__body { padding: 16px; }
+.inspector__media { text-align: center; }
+.inspector__image { width: fit-content; max-width: 100%; margin: 0 auto; border: 0; border-radius: 0; background: transparent; overflow: visible; }
+.inspector__image img { width: auto; height: auto; min-height: 0; max-width: 100%; max-height: min(640px, var(--preview-height,60dvh)); border-radius: 8px; object-fit: contain; }
+.inspector__image-nav { display:flex; align-items:center; justify-content:center; gap:16px; padding-top: 8px; }
+.inspector__image-nav button { width:44px; height:44px; border:1px solid var(--hairline); border-radius:8px; background:var(--surface-2); cursor:pointer; font-size:24px; }
+.inspector__image-nav button:disabled { opacity:.3; cursor:default; }
+.inspector__image-nav span { min-width:4rem; font-size:13px; color:var(--ink-muted); }
+.inspector-resize { display:none; position:absolute; top:0; bottom:0; right:calc(var(--peek) - 6px); width:12px; z-index:5; cursor:col-resize; touch-action:none; }
+.app.is-open:not(.is-full) .inspector-resize { display:block; }
+.inspector-resize:hover, .inspector-resize:focus-visible { background:var(--accent-soft); outline:1px solid var(--accent); }
+.app.is-full.is-open .stage { grid-template-columns:minmax(0,1fr); }
+.app.is-full.is-open .gallery { display:none; }
+.app.is-full .inspector { background:var(--canvas); box-shadow:none; }
+.app.is-full .inspector__back { order:0; width:auto; gap:4px; padding-right:8px; }
+.image-focus__image { width:auto; height:auto; grid-row:1; border-radius:8px; }
+.image-focus__nav[hidden], .image-focus__count[hidden] { display:none; }
+.prompt pre { overflow-wrap:anywhere; white-space:pre-wrap; user-select:text; }
+.copy { width:44px; height:44px; }
+.prompt pre { padding-right:3.5rem; }
+@media(max-width:600px) { :root { --pad:16px; } .gallery { padding-top:16px; } }
+
 </style>
 </head>
 <body>
@@ -1240,6 +1278,7 @@ button {
   <header class="topbar"><h1 class="topbar__title">${title}</h1></header>
   <div class="stage">
     <main class="gallery" id="main"></main>
+    <div class="inspector-resize" id="resize" role="separator" aria-label="패널 너비" aria-orientation="vertical" tabindex="0"></div>
     <aside class="inspector" id="detail" aria-live="polite"></aside>
   </div>
 </div>
@@ -1251,6 +1290,33 @@ const detail = document.getElementById("detail");
 const ICON_COPY = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
 const ICON_CHECK = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 const ICON_BACK = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>';
+const ICON_CLOSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="m6 6 12 12M6 18 18 6"/></svg>';
+const divider = document.getElementById("resize");
+let preferredWidth = null, panelDrag = null, lastCard = null;
+function panelBounds() { return { min:320, max:Math.min(560,Math.floor(innerWidth*.45)) }; }
+function syncLayout() {
+  const wasFull = root.classList.contains("is-full"), full = innerWidth < 960;
+  const dividerFocused = document.activeElement === divider;
+  root.classList.toggle("is-full",full);
+  const bounds = panelBounds(), width = Math.min(bounds.max,Math.max(bounds.min,preferredWidth == null ? 380 : preferredWidth));
+  root.style.setProperty("--peek",width+"px");
+  root.style.setProperty("--preview-height",Math.max(80,detail.clientHeight-180)+"px");
+  divider.setAttribute("aria-valuemin",String(bounds.min)); divider.setAttribute("aria-valuemax",String(bounds.max)); divider.setAttribute("aria-valuenow",String(width));
+  const back = detail.querySelector(".inspector__back");
+  if(back) { back.innerHTML=full ? ICON_BACK+'<span>갤러리</span>' : ICON_CLOSE; back.setAttribute("aria-label",full ? "갤러리로 돌아가기" : "닫기"); }
+  if(full && dividerFocused && back) back.focus({preventScroll:true});
+  if(wasFull !== full && full && root.classList.contains("is-open") && main.contains(document.activeElement) && back) back.focus({preventScroll:true});
+}
+divider.addEventListener("pointerdown", function(e) { if(e.button!==0)return; panelDrag={x:e.clientX,width:detail.getBoundingClientRect().width,id:e.pointerId}; divider.setPointerCapture(e.pointerId); e.preventDefault(); });
+divider.addEventListener("pointermove",function(e) { if(!panelDrag||e.pointerId!==panelDrag.id)return;const b=panelBounds();preferredWidth=Math.max(b.min,Math.min(b.max,panelDrag.width+panelDrag.x-e.clientX));syncLayout(); });
+function endPanelDrag(){panelDrag=null;}
+divider.addEventListener("pointerup",endPanelDrag);divider.addEventListener("pointercancel",endPanelDrag);
+divider.addEventListener("dblclick",function(){preferredWidth=null;syncLayout();});
+divider.addEventListener("keydown",function(e){const b=panelBounds();let v=detail.getBoundingClientRect().width;if(e.key==="ArrowLeft")v+=16;else if(e.key==="ArrowRight")v-=16;else if(e.key==="Home")v=b.min;else if(e.key==="End")v=b.max;else return;e.preventDefault();preferredWidth=Math.max(b.min,Math.min(b.max,v));syncLayout();});
+window.addEventListener("resize",syncLayout);
+new ResizeObserver(syncLayout).observe(root);
+new ResizeObserver(syncLayout).observe(detail);
+
 
 function esc(s) {
   return String(s == null ? "" : s)
@@ -1479,7 +1545,7 @@ function closeImageFocus() {
   document.removeEventListener("keydown", state.onKey);
   state.overlay.remove();
   root.inert = false;
-  if (state.returnTo && state.returnTo.isConnected) state.returnTo.focus();
+  if (state.returnTo && state.returnTo.isConnected) state.returnTo.focus({preventScroll:true});
 }
 
 function openImageFocus(images, initial, returnTo, onChange) {
@@ -1524,7 +1590,11 @@ function openImageFocus(images, initial, returnTo, onChange) {
   prev.addEventListener("click", function () { if (index > 0) { index--; show(); } });
   next.addEventListener("click", function () { if (index < images.length - 1) { index++; show(); } });
   close.addEventListener("click", closeImageFocus);
-  overlay.addEventListener("click", function (event) { if (event.target === overlay) closeImageFocus(); });
+  let backdropStart = null;
+  overlay.addEventListener("pointerdown",function(event){backdropStart=event.target===overlay ? {x:event.clientX,y:event.clientY} : null;});
+  overlay.addEventListener("pointercancel",function(){backdropStart=null;});
+  overlay.addEventListener("click",function(event){if(event.target===overlay && backdropStart && Math.hypot(event.clientX-backdropStart.x,event.clientY-backdropStart.y)<=8)closeImageFocus();backdropStart=null;});
+  prev.hidden = next.hidden = count.hidden = images.length < 2;
   let touchX = null;
   overlay.addEventListener("touchstart", function (event) { touchX = event.touches[0] ? event.touches[0].clientX : null; }, { passive: true });
   overlay.addEventListener("touchend", function (event) {
@@ -1537,11 +1607,11 @@ function openImageFocus(images, initial, returnTo, onChange) {
     show();
   }, { passive: true });
   const onKey = function (event) {
-    if (event.key === "Escape") { event.preventDefault(); closeImageFocus(); }
+    if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); closeImageFocus(); }
     if (event.key === "ArrowLeft" && index > 0) { event.preventDefault(); index--; show(); }
     if (event.key === "ArrowRight" && index < images.length - 1) { event.preventDefault(); index++; show(); }
     if (event.key === "Tab") {
-      const controls = [close, prev, next].filter(function (button) { return !button.disabled; });
+      const controls = [close, prev, next].filter(function (button) { return !button.disabled && !button.hidden; });
       const current = controls.indexOf(document.activeElement);
       if (event.shiftKey && current <= 0) { event.preventDefault(); controls[controls.length - 1].focus(); }
       if (!event.shiftKey && current === controls.length - 1) { event.preventDefault(); controls[0].focus(); }
@@ -1560,7 +1630,7 @@ function renderInspectorMedia(card, body) {
     ? card.noteImagesDataUrls
     : (card.coverDataUrl ? [card.coverDataUrl] : []);
   if (!images.length) return;
-  let index = card.coverImageIndex >= 0 ? card.coverImageIndex : 0;
+  let index = Math.max(0,Math.min(images.length-1,card.coverImageIndex || 0));
   const media = document.createElement("div");
   media.className = "inspector__media";
   const hero = document.createElement("button");
@@ -1575,6 +1645,15 @@ function renderInspectorMedia(card, body) {
   });
   media.appendChild(hero);
   const thumbs = [];
+  let previous = null, next = null, count = null;
+  if(images.length>1) {
+    const nav=document.createElement("div");nav.className="inspector__image-nav";
+    previous=document.createElement("button");previous.type="button";previous.textContent="‹";previous.setAttribute("aria-label","이전 이미지");
+    next=document.createElement("button");next.type="button";next.textContent="›";next.setAttribute("aria-label","다음 이미지");
+    count=document.createElement("span");count.setAttribute("aria-live","polite");
+    previous.onclick=function(){if(index>0){index--;sync();}};next.onclick=function(){if(index<images.length-1){index++;sync();}};
+    nav.append(previous,count,next);media.appendChild(nav);
+  }
   if (images.length > 1) {
     const rail = document.createElement("div");
     rail.className = "inspector__thumbnails";
@@ -1595,6 +1674,7 @@ function renderInspectorMedia(card, body) {
   }
   const sync = function () {
     image.src = images[index];
+    if(previous) { previous.disabled=index===0;next.disabled=index===images.length-1;count.textContent=(index+1)+" / "+images.length; }
     thumbs.forEach(function (button, i) { button.setAttribute("aria-pressed", i === index ? "true" : "false"); });
   };
   sync();
@@ -1605,6 +1685,7 @@ function closePeek() {
   closeImageFocus();
   root.classList.remove("is-open");
   detail.replaceChildren();
+  if(lastCard && lastCard.isConnected) lastCard.focus({preventScroll:true});
   document.querySelectorAll(".card.is-selected").forEach(function (el) {
     el.classList.remove("is-selected");
     el.setAttribute("aria-pressed", "false");
@@ -1623,7 +1704,9 @@ function select(id) {
     el.classList.remove("is-selected");
     el.setAttribute("aria-pressed", "false");
   });
+  closeImageFocus();
   var selected = document.querySelector('.card[data-id="' + CSS.escape(id) + '"]');
+  lastCard = selected;
   if (selected) {
     selected.classList.add("is-selected");
     selected.setAttribute("aria-pressed", "true");
@@ -1799,9 +1882,13 @@ function select(id) {
   }
 
   detail.appendChild(body);
+  detail.scrollTop=0; syncLayout();
+  if(root.classList.contains("is-full"))back.focus({preventScroll:true});
 }
 
 render();
+syncLayout();
+document.addEventListener("keydown",function(e){if(e.key==="Escape"&&!imageFocus&&root.classList.contains("is-open")){e.preventDefault();closePeek();}});
 </script>
 </body>
 </html>`;
