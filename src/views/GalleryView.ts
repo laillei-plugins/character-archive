@@ -16,7 +16,7 @@ import {
   type CoverRef,
   appendNoteImages,
   listNoteCoverCandidates,
-  reorderNoteImages,
+  moveNoteImage,
   removeNoteImage,
   restoreNoteImage,
   noteImageState,
@@ -372,6 +372,7 @@ export class GalleryView extends FileView {
   /** Serialize cover writes per character so rapid strip taps don't race. */
   private coverWriteChain = new Map<TFile, Promise<void>>();
   private imageRemovalBusy = new Set<TFile>();
+  private imageObservers = new Map<TFile, Set<() => void>>();
   /** Latest cover intent per path (coalesce while a write is in flight). */
   private coverLatest = new Map<
     TFile,
@@ -5525,30 +5526,10 @@ export class GalleryView extends FileView {
       images,
       currentCover,
       async (pick) => {
-        if (pick.kind === "none") {
-          await this.applyCoverIntent(record, { kind: "none" }, { quiet: false });
-        } else if (pick.kind === "default") {
-          await this.applyCoverIntent(record, { kind: "default" }, { quiet: false });
-        } else if (pick.kind === "remote") {
-          await this.applyCoverIntent(
-            record,
-            { kind: "remote", url: pick.url },
-            { quiet: false },
-          );
-        } else {
-          await this.applyCoverIntent(
-            record,
-            { kind: "vault", file: pick.file },
-            { quiet: false },
-          );
-        }
-        // Peek strip only — avoid full gallery re-render while peek stays open.
-        window.setTimeout(() => {
-          const detail = this.contentEl.querySelector(".charinfo-gallery__detail");
-          if (detail instanceof HTMLElement && this.selected?.path === record.path) {
-            void this.renderDetail(detail);
-          }
-        }, 0);
+        await this.applyCoverIntent(record, pick, { quiet: true, propagateFailure: true });
+        await this.refreshAfterImageRemoval(record).catch(() => {
+          new Notice("커버는 바뀌었어요. 화면을 다시 열어 확인해 주세요.");
+        });
       },
       async (newImages) => {
         if (this.imageRemovalBusy.has(record.file)) throw new Error("이미지 변경 중이에요. 잠시 후 다시 시도해 주세요.");
@@ -5569,15 +5550,10 @@ export class GalleryView extends FileView {
           console.error("Batch note image refresh failed", error);
           throw new Error("이미지는 추가됐지만 화면 갱신에 실패했어요. 갤러리를 다시 열어 확인하세요.");
         }
-        const nextImages = listNoteCoverCandidates(this.app, record.file, nextMarkdown);
-        if (!isCoverNone(record.cover) && record.cover.trim()) {
-          const pinKey = pinnedCoverKey(this.app, record.path, record.cover);
-          if (!pinKey || !nextImages.some((image) => coverRefKey(image) === pinKey)) {
-            // Keep the stored pin untouched; the live record follows the same
-            // missing-pin fallback CharacterStore applies on its next read.
-            record.cover = "";
-          }
-        }
+        const state = noteImageState(this.app, record.file, nextMarkdown);
+        const nextImages = state.images;
+        const pinKey = state.cover ? pinnedCoverKey(this.app, record.file.path, state.cover) : null;
+        record.cover = isCoverNone(state.cover) || (pinKey != null && pinKey === state.key) ? state.cover : "";
         record.autoCover = nextImages[0];
         record.noteImagesKnown = true;
         this.syncCoverPreview(record, nextImages);
@@ -5591,12 +5567,38 @@ export class GalleryView extends FileView {
             refreshFailed = true;
           }
         }
+        for (const refresh of this.imageObservers.get(record.file) ?? []) refresh();
         return {
           images: nextImages,
           currentCover: resolveCover(this.app, record, nextMarkdown),
           added,
           refreshFailed,
         };
+      },
+      {
+        read: async () => {
+          const current = await this.app.vault.read(record.file);
+          const state = noteImageState(this.app, record.file, current);
+          return { images: state.images, currentCover: state.images.find((image) => coverRefKey(image) === state.key) ?? null };
+        },
+        remove: (key) => this.removeGalleryImage(record, key),
+        move: async (key, direction) => {
+          await moveNoteImage(this.app, record.file, key, { direction });
+          await this.refreshAfterImageRemoval(record).catch(() => {
+            new Notice("순서는 바뀌었어요. 화면을 다시 열어 확인해 주세요.");
+          });
+        },
+        subscribe: (refresh) => {
+          const listeners = this.imageObservers.get(record.file) ?? new Set<() => void>();
+          listeners.add(refresh);
+          this.imageObservers.set(record.file, listeners);
+          const event = this.app.vault.on("modify", (file) => { if (file === record.file) refresh(); });
+          return () => {
+            listeners.delete(refresh);
+            if (!listeners.size) this.imageObservers.delete(record.file);
+            this.app.vault.offref(event);
+          };
+        },
       },
     ).open();
   }
@@ -5612,10 +5614,13 @@ export class GalleryView extends FileView {
       | { kind: "remote"; url: string }
       | { kind: "default" }
       | { kind: "none" },
-    opts?: { quiet?: boolean },
+    opts?: { quiet?: boolean; propagateFailure?: boolean },
   ): Promise<void> {
     const quiet = opts?.quiet === true;
-    if (this.imageRemovalBusy.has(record.file)) return;
+    if (this.imageRemovalBusy.has(record.file)) {
+      if (opts?.propagateFailure) throw new Error("이미지 변경 중이에요. 잠시 후 다시 시도해 주세요.");
+      return;
+    }
     // TFile identity survives a rename; path strings do not. Keeping cover
     // writes on the file prevents a name edit from opening a second lane.
     const key = record.file;
@@ -5638,18 +5643,7 @@ export class GalleryView extends FileView {
     }
     this.syncCoverPreview(record);
 
-    if (!quiet) {
-      if (intent.kind === "vault") {
-        new Notice(`커버를 「${intent.file.basename}」으로 바꿨어요`);
-      } else if (intent.kind === "remote") {
-        new Notice("원격 이미지로 커버를 바꿨어요");
-      } else if (intent.kind === "none") {
-        new Notice("카드 커버를 숨겼어요");
-      } else {
-        new Notice("노트 첫 이미지를 커버로 쓸게요");
-      }
-    }
-
+    let failed = false;
     const prev = this.coverWriteChain.get(key) ?? Promise.resolve();
     const chain = prev.catch(() => undefined).then(async () => {
       // Drain until the latest intent is persisted (coalesce rapid taps).
@@ -5668,15 +5662,17 @@ export class GalleryView extends FileView {
             await setCharacterCover(this.app, record.file, null);
           }
         } catch (error) {
+          failed = true;
           console.error("Cover write failed", error);
           // Rollback only if this failed intent is still the latest.
           if (this.coverLatest.get(key) === latest) {
             record.cover = snapshot.cover;
             record.coverPosition = snapshot.coverPosition;
             this.syncCoverPreview(record);
-            new Notice("커버 변경에 실패했어요");
+            if (!opts?.propagateFailure) new Notice("커버 변경에 실패했어요");
             this.coverLatest.delete(key);
           }
+          if (opts?.propagateFailure) throw error;
           return;
         } finally {
           this.plugin.suppressGalleryRefresh = false;
@@ -5689,10 +5685,24 @@ export class GalleryView extends FileView {
       }
     });
     this.coverWriteChain.set(key, chain);
-    await chain;
-    if (this.coverWriteChain.get(key) === chain) {
-      this.coverWriteChain.delete(key);
+    try {
+      await chain;
+    } finally {
+      if (this.coverWriteChain.get(key) === chain) this.coverWriteChain.delete(key);
     }
+    if (!quiet && !failed) {
+      if (intent.kind === "vault") {
+        new Notice(`커버를 「${intent.file.basename}」으로 바꿨어요`);
+      } else if (intent.kind === "remote") {
+        new Notice("원격 이미지로 커버를 바꿨어요");
+      } else if (intent.kind === "none") {
+        new Notice("카드 커버를 숨겼어요");
+      } else {
+        new Notice("노트 첫 이미지를 커버로 쓸게요");
+      }
+    }
+
+
   }
 
   private async changeCover(
@@ -5736,56 +5746,24 @@ export class GalleryView extends FileView {
     toPath: string,
     place: "before" | "after",
   ): Promise<void> {
-    if (this.imageRemovalBusy.has(record.file)) return;
-    const markdown = await this.app.vault.read(record.file);
-    const candidates = listNoteCoverCandidates(this.app, record.file, markdown);
-    const images = candidates.map(coverRefKey);
-    if (images.length < 2) {
-      new Notice("순서를 바꿀 이미지가 아직 없어요")
-      return;
-    }
-
-    const fromIndex = images.indexOf(fromPath);
-    const toIndex = images.indexOf(toPath);
-    if (fromIndex < 0 || toIndex < 0) return;
-
-    const [moved] = images.splice(fromIndex, 1);
-    if (!moved) return;
-    let insertAt = images.indexOf(toPath);
-    if (insertAt < 0) return;
-    if (place === "after") insertAt += 1;
-    images.splice(insertAt, 0, moved);
-
-    this.plugin.suppressGalleryRefresh = true;
     try {
-      await reorderNoteImages(this.app, record.file, images);
-    } finally {
-      this.plugin.suppressGalleryRefresh = false;
+      await moveNoteImage(this.app, record.file, fromPath, { anchor: toPath, place });
+      await this.refreshAfterImageRemoval(record);
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : "순서를 바꾸지 못했어요.");
     }
+  }
 
-    // Move thumbs in-place — no full gallery refresh.
-    this.moveDomItem(
-      `.charinfo-image-tile[data-id="${CSS.escape(fromPath)}"]`,
-      `.charinfo-image-tile[data-id="${CSS.escape(toPath)}"]`,
-      place,
-    );
-    const row = this.contentEl.querySelector(".charinfo-image-strip__row");
-    if (row instanceof HTMLElement) {
-      const tiles = Array.from(row.querySelectorAll<HTMLElement>(".charinfo-image-tile"));
-      tiles.forEach((tile, index) => {
-        const previous = tile.querySelector(".charinfo-image-tile__move-prev") as HTMLButtonElement | null;
-        const next = tile.querySelector(".charinfo-image-tile__move-next") as HTMLButtonElement | null;
-        if (previous) previous.disabled = index === 0;
-        if (next) next.disabled = index === tiles.length - 1;
-      });
+  private async moveGalleryImage(record: CharacterRecord, key: string, direction: -1 | 1): Promise<void> {
+    try {
+      await moveNoteImage(this.app, record.file, key, { direction });
+      await this.refreshAfterImageRemoval(record);
+      const tile = this.contentEl.querySelector<HTMLElement>(`.charinfo-image-tile[data-id="${CSS.escape(key)}"]`);
+      const selector = direction < 0 ? ".charinfo-image-tile__move-prev" : ".charinfo-image-tile__move-next";
+      (tile?.querySelector<HTMLElement>(`${selector}:not(:disabled)`) ?? tile?.querySelector<HTMLElement>(".charinfo-thumb"))?.focus({ preventScroll: true });
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : "순서를 바꾸지 못했어요.");
     }
-    const byKey = new Map(candidates.map((cover) => [coverRefKey(cover), cover]));
-    const orderedCovers = images.flatMap((key) => {
-      const cover = byKey.get(key);
-      return cover ? [cover] : [];
-    });
-    if (!record.cover.trim()) record.autoCover = orderedCovers[0];
-    this.syncCoverPreview(record, orderedCovers);
   }
 
   /** Refresh the note-backed panel without rebuilding the gallery or its chrome. */
@@ -5800,6 +5778,7 @@ export class GalleryView extends FileView {
       item.autoCover = state.images[0];
       item.noteImagesKnown = true;
     }
+    for (const refresh of this.imageObservers.get(record.file) ?? []) refresh();
     // Do not repaint another card's strip if the user switched cards mid-write.
     if (this.selected?.file !== record.file) {
       this.repaintCard(live);
@@ -5815,7 +5794,7 @@ export class GalleryView extends FileView {
     if (detail?.isConnected) detail.scrollTop = scrollTop;
     const nextRow = detail?.querySelector<HTMLElement>(".charinfo-image-strip__row");
     if (nextRow) nextRow.scrollLeft = scrollLeft;
-    if (focusKey) {
+    if (focusKey && !this.imageObservers.get(record.file)?.size) {
       const tile = nextRow?.querySelector<HTMLElement>(`[data-id="${CSS.escape(focusKey)}"]`);
       const target = tile?.querySelector<HTMLElement>(".charinfo-image-tile__remove:not(:disabled)") ??
         tile?.querySelector<HTMLElement>(".charinfo-thumb") ??
@@ -5824,14 +5803,16 @@ export class GalleryView extends FileView {
     }
   }
 
-  private async removeGalleryImage(record: CharacterRecord, key: string, button: HTMLButtonElement): Promise<void> {
-    if (!this.cardEditActive || this.imageRemovalBusy.has(record.file)) return;
+  private async removeGalleryImage(record: CharacterRecord, key: string, button?: HTMLButtonElement): Promise<(() => Promise<void>) | undefined> {
+    if (button && !this.cardEditActive) return;
+    if (this.imageRemovalBusy.has(record.file)) throw new Error("이미지 변경 중이에요. 잠시 후 다시 시도해 주세요.");
     this.imageRemovalBusy.add(record.file);
-    button.disabled = true;
-    const tile = button.closest<HTMLElement>(".charinfo-image-tile");
+    if (button) button.disabled = true;
+    const tile = button?.closest<HTMLElement>(".charinfo-image-tile");
     const nextKey = (tile?.nextElementSibling as HTMLElement | null)?.dataset.id ??
       (tile?.previousElementSibling as HTMLElement | null)?.dataset.id ?? key;
     tile?.classList.add("is-removing");
+    let undoRemoval: (() => Promise<void>) | undefined;
     try {
       await this.coverWriteChain.get(record.file);
       const removal = await removeNoteImage(this.app, record.file, key);
@@ -5843,42 +5824,48 @@ export class GalleryView extends FileView {
         undo.className = "charinfo-image-undo";
         message.append(undo);
         const notice = new Notice(message, 10000);
-        undo.addEventListener("click", (event) => {
-          event.stopPropagation();
-          if (this.imageRemovalBusy.has(record.file)) return;
+        let restored = false;
+        undoRemoval = async () => {
+          if (restored) return;
+          if (this.imageRemovalBusy.has(record.file)) throw new Error("이미지 변경 중이에요. 잠시 후 다시 시도해 주세요.");
           this.imageRemovalBusy.add(record.file);
           undo.disabled = true;
-          void (async () => {
-            try {
-              await this.coverWriteChain.get(record.file);
-              const appended = await restoreNoteImage(this.app, record.file, removal);
-              notice.hide();
-              new Notice(appended ? "노트가 바뀌어 끝에 다시 넣었어요" : "다시 넣었어요");
-              await this.refreshAfterImageRemoval(record, key).catch(() => {
-                new Notice("이미지는 복원됐어요. 화면을 다시 열어 확인해 주세요.");
-              });
-            } catch (error) {
-              undo.disabled = false;
-              new Notice(error instanceof Error ? error.message : "되돌리지 못했어요. 다시 시도해 주세요.");
-            } finally {
-              this.imageRemovalBusy.delete(record.file);
-            }
-          })();
+          try {
+            await this.coverWriteChain.get(record.file);
+            const appended = await restoreNoteImage(this.app, record.file, removal);
+            restored = true;
+            notice.hide();
+            new Notice(appended ? "노트가 바뀌어 끝에 다시 넣었어요" : "다시 넣었어요");
+            await this.refreshAfterImageRemoval(record, key).catch(() => {
+              new Notice("이미지는 복원됐어요. 화면을 다시 열어 확인해 주세요.");
+            });
+          } finally {
+            if (!restored) undo.disabled = false;
+            this.imageRemovalBusy.delete(record.file);
+          }
+        };
+        undo.addEventListener("click", (event) => {
+          event.stopPropagation();
+          void undoRemoval?.().catch((error) => {
+            new Notice(error instanceof Error ? error.message : "되돌리지 못했어요. 다시 시도해 주세요.");
+          });
         });
       }
       await this.refreshAfterImageRemoval(record, nextKey).catch(() => {
         new Notice("노트에 반영됐어요. 화면을 다시 열어 확인해 주세요.");
       });
     } catch (error) {
-      new Notice(error instanceof Error ? error.message : "제거하지 못했어요. 다시 시도해 주세요.");
-      button.disabled = false;
+      if (button) new Notice(error instanceof Error ? error.message : "제거하지 못했어요. 다시 시도해 주세요.");
+      if (button) button.disabled = false;
       // A direct note edit may have made this image the cover. Reconcile the
       // protected state even though removal correctly refused the stale click.
       await this.refreshAfterImageRemoval(record, key).catch(() => undefined);
+      if (!button) throw error;
     } finally {
       tile?.classList.remove("is-removing");
       this.imageRemovalBusy.delete(record.file);
     }
+    return undoRemoval;
   }
 
   /**
@@ -5912,8 +5899,9 @@ export class GalleryView extends FileView {
         thumb.classList.toggle("is-cover", isCover);
         const remove = thumb.parentElement?.querySelector<HTMLButtonElement>(".charinfo-image-tile__remove");
         if (remove) {
-          remove.disabled = isCover;
-          remove.title = isCover ? "현재 커버예요 · 먼저 다른 이미지를 커버로 골라 주세요" : "노트에서 제거";
+          const protectedCover = isCover && strip.querySelectorAll(".charinfo-thumb").length > 1;
+          remove.disabled = protectedCover;
+          remove.title = protectedCover ? "현재 커버예요 · 먼저 다른 이미지를 커버로 골라 주세요" : "노트에서 제거";
         }
         thumb.querySelector(".charinfo-thumb__badge")?.remove();
         if (isCover) {
@@ -6634,19 +6622,7 @@ export class GalleryView extends FileView {
           button.disabled = direction < 0 ? index === 0 : index === images.length - 1;
           button.addEventListener("click", (event) => {
             event.stopPropagation();
-            const neighbor = direction < 0 ? tile.previousElementSibling : tile.nextElementSibling;
-            if (!(neighbor instanceof HTMLElement) || !neighbor.dataset.id) return;
-            void this.handleImageReorder(
-              record,
-              imageKey,
-              neighbor.dataset.id,
-              direction < 0 ? "before" : "after",
-            ).then(() => {
-              const focusTarget = button.disabled
-                ? moves.querySelector<HTMLButtonElement>("button:not(:disabled)") ?? thumb
-                : button;
-              focusTarget.focus();
-            });
+            void this.moveGalleryImage(record, imageKey, direction);
           });
         };
         move(-1);
@@ -6670,15 +6646,17 @@ export class GalleryView extends FileView {
           attr: {
             type: "button",
             "aria-label": `${imageLabel} 노트에서 제거`,
-            title: isCover ? "현재 커버예요 · 먼저 다른 이미지를 커버로 골라 주세요" : "노트에서 제거",
+            title: isCover && images.length > 1 ? "현재 커버예요 · 먼저 다른 이미지를 커버로 골라 주세요" : "노트에서 제거",
           },
         });
         setIcon(remove.createSpan({ attr: { "aria-hidden": "true" } }), "trash");
         remove.createSpan({ text: "제거" });
-        remove.disabled = isCover;
+        remove.disabled = isCover && images.length > 1;
         remove.addEventListener("click", (event) => {
           event.stopPropagation();
-          void this.removeGalleryImage(record, imageKey, remove);
+          void this.removeGalleryImage(record, imageKey, remove).catch((error) => {
+            new Notice(error instanceof Error ? error.message : "이미지를 제거하지 못했어요.");
+          });
         });
       }
     }

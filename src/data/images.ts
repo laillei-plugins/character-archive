@@ -8,6 +8,7 @@ import {
   isImagePath,
   isRemoteCoverUrl,
   listEmbedIdentities,
+  normalizeEmbedKey,
   planEmbedInsert,
   planEmbedAppendMany,
   planEmbedReorder,
@@ -612,6 +613,67 @@ export async function reorderNoteImages(
   });
 }
 
+/** One step earlier/later (buttons), or beside another image (drag). */
+export type NoteImageMovement =
+  | { direction: -1 | 1 }
+  | { anchor: string; place: "before" | "after" };
+
+/** Candidate order after the movement, or null when it moves nothing. */
+function movedCandidateKeys(
+  keys: string[],
+  key: string,
+  movement: NoteImageMovement,
+): string[] | null {
+  const source = normalizeEmbedKey(key);
+  const from = keys.indexOf(source);
+  if (from < 0) return null;
+  const rest = keys.filter((candidate) => candidate !== source);
+  let to: number;
+  if ("direction" in movement) {
+    if (movement.direction !== -1 && movement.direction !== 1) return null;
+    to = from + movement.direction;
+    if (to < 0 || to > rest.length) return null;
+  } else {
+    const at = rest.indexOf(normalizeEmbedKey(movement.anchor));
+    if (at < 0) return null;
+    to = movement.place === "before" ? at : at + 1;
+  }
+  if (to === from) return null;
+  rest.splice(to, 0, source);
+  return rest;
+}
+
+/**
+ * Move one image relative to the note's latest order and return the candidate
+ * keys as persisted. The order is computed inside the queued write, so rapid
+ * repeated moves compose instead of replaying one stale snapshot. A missing
+ * source or anchor, or an endpoint, leaves the note untouched. Frontmatter is
+ * never written: a pin stays pinned, automatic mode follows the first image.
+ */
+export async function moveNoteImage(
+  app: App,
+  file: TFile,
+  key: string,
+  movement: NoteImageMovement,
+): Promise<string[]> {
+  return withNoteImageWrite(file, async () => {
+    const resolve = vaultImageResolver(app, file.path);
+    const keysOf = (markdown: string) =>
+      listNoteCoverCandidates(app, file, markdown).map(coverRefKey);
+    let latest: string[] = [];
+    await app.vault.process(file, (markdown) => {
+      latest = keysOf(markdown);
+      const order = movedCandidateKeys(latest, key, movement);
+      if (!order) return markdown;
+      const plan = planEmbedReorder(markdown, order, resolve);
+      if (!plan.changed) return markdown;
+      latest = keysOf(plan.text);
+      return plan.text;
+    });
+    return latest;
+  });
+}
+
 /** Read the actual transaction's frontmatter, not an asynchronously updated cache. */
 export function noteImageState(app: App, file: TFile, markdown: string) {
   const info = getFrontMatterInfo(markdown);
@@ -625,14 +687,21 @@ export function noteImageState(app: App, file: TFile, markdown: string) {
   return { cover, images, key };
 }
 
-/** Cover protection is checked inside the atomic write, even after a note edit. */
+/**
+ * Cover protection is checked inside the atomic write, even after a note edit.
+ * The current cover is protected only while another image could be chosen
+ * instead; the sole image can always go. Frontmatter is left as written, so a
+ * pin to the removed image simply stops matching until it is embedded again.
+ */
 export async function removeNoteImage(app: App, file: TFile, key: string): Promise<ImageRemoval | null> {
   return withNoteImageWrite(file, async () => {
+    const target = normalizeEmbedKey(key);
     let removal: ImageRemoval | null = null;
     await app.vault.process(file, (markdown) => {
       const state = noteImageState(app, file, markdown);
-      if (state.key === key) throw new Error("현재 커버예요. 먼저 다른 이미지를 커버로 골라 주세요.");
-      const plan = planEmbedRemove(markdown, key, vaultImageResolver(app, file.path), state.key);
+      const protectedKey = state.images.length > 1 ? state.key : null;
+      if (protectedKey === target) throw new Error("현재 커버예요. 먼저 다른 이미지를 커버로 골라 주세요.");
+      const plan = planEmbedRemove(markdown, target, vaultImageResolver(app, file.path), protectedKey);
       removal = plan.removed.length ? plan : null;
       return plan.text;
     });

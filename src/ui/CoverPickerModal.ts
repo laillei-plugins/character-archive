@@ -35,6 +35,14 @@ export type CoverBatchResult = {
   refreshFailed?: boolean;
 };
 
+export type CoverPickerState = Pick<CoverBatchResult, "images" | "currentCover">;
+export type CoverPickerOperations = {
+  read: () => Promise<CoverPickerState>;
+  remove: (key: string) => Promise<(() => Promise<void>) | undefined>;
+  move: (key: string, direction: -1 | 1) => Promise<void>;
+  subscribe: (refresh: () => void) => () => void;
+};
+
 const MAX_REMOTE_BYTES = 8_000_000;
 
 /**
@@ -51,9 +59,27 @@ export class CoverPickerModal extends Modal {
   private busy = false;
   private fileDialogOpen = false;
   private statusEl: HTMLElement | null = null;
+  private undoEl: HTMLElement | null = null;
+  private undoKey?: string;
   private linkInput: HTMLInputElement | null = null;
   private linkPanel: HTMLElement | null = null;
   private opToken = 0;
+  private opened = false;
+  private page = 0;
+  private pageSize = 6;
+  private currentEl!: HTMLElement;
+  private pickEl!: HTMLElement;
+  private unsubscribe?: () => void;
+  private media?: MediaQueryList;
+  private refreshVersion = 0;
+  private movePending = 0;
+  private pendingFocus?: { key: string; action?: string };
+  private onResize = (): void => {
+    const anchor = this.page * this.pageSize;
+    this.pageSize = this.media?.matches ? 4 : 6;
+    this.page = Math.floor(anchor / this.pageSize);
+    this.renderImages();
+  };
 
   constructor(
     app: App,
@@ -63,6 +89,7 @@ export class CoverPickerModal extends Modal {
     currentCover: CoverRef | null,
     onPick: (result: CoverPickResult) => void | Promise<void>,
     onAddFiles: (images: CoverRef[]) => Promise<CoverBatchResult>,
+    private operations: CoverPickerOperations,
   ) {
     super(app);
     this.plugin = plugin;
@@ -81,88 +108,21 @@ export class CoverPickerModal extends Modal {
     contentEl.empty();
     contentEl.addClass("charinfo-cover-picker");
 
-    // —— 1. Current (read-only preview; pan on the card) ——
-    const current = contentEl.createDiv({ cls: "charinfo-cover-picker__current" });
-    const coverRef = this.currentCover;
-    if (coverRef) {
-      const frame = current.createDiv({
-        cls: "charinfo-cover-picker__current-frame",
-      });
-      const img = frame.createEl("img", {
-        cls: "charinfo-cover-picker__current-img",
-        attr: {
-          src: coverDisplaySrc(this.app, coverRef),
-          alt: "현재 커버",
-          draggable: "false",
-        },
-      });
-      img.style.objectPosition = this.record.coverPosition || "50% 50%";
-      current.createDiv({
-        cls: "charinfo-cover-picker__current-cap",
-        text: "현재 · 위치는 카드에서 드래그",
-      });
-    } else {
-      current.createDiv({
-        cls: "charinfo-cover-picker__current-empty",
-        text: "커버 없음",
-      });
-    }
-
-    this.statusEl = contentEl.createDiv({ cls: "charinfo-cover-picker__status" });
-    // Destination (vault / Imgur) lives in Settings — keep picker chrome quiet.
-
-    // —— 2. Pick existing (primary) ——
-    const pick = contentEl.createDiv({ cls: "charinfo-cover-picker__block" });
-    pick.createDiv({
-      cls: "charinfo-cover-picker__block-title",
-      text: "고르기",
+    this.opened = true;
+    this.media = window.matchMedia("(max-width: 600px), (pointer: coarse)");
+    this.pageSize = this.media.matches ? 4 : 6;
+    this.media.addEventListener("change", this.onResize);
+    this.unsubscribe = this.operations.subscribe(() => { void this.refresh(); });
+    this.currentEl = contentEl.createDiv({ cls: "charinfo-cover-picker__current" });
+    this.statusEl = contentEl.createDiv({
+      cls: "charinfo-cover-picker__status",
+      attr: { role: "status", "aria-live": "polite" },
     });
-    if (this.images.length === 0) {
-      pick.createDiv({
-        cls: "charinfo-cover-picker__empty",
-        text: "이 캐릭터 이미지가 없어요. 아래에서 추가하세요.",
-      });
-    } else {
-      const grid = pick.createDiv({ cls: "charinfo-cover-picker__grid" });
-      for (const image of this.images) {
-        const label = this.coverLabel(image);
-        const isCurrent =
-          coverRef != null && coverRefKey(coverRef) === coverRefKey(image);
-        const cell = grid.createEl("button", {
-          cls:
-            "charinfo-cover-picker__cell" + (isCurrent ? " is-current" : ""),
-          attr: {
-            type: "button",
-            title: label,
-            "aria-label": isCurrent
-              ? `${label} (현재)`
-              : label,
-          },
-        });
-        cell.createEl("img", {
-          attr: {
-            src: coverDisplaySrc(this.app, image),
-            alt: label,
-            loading: "lazy",
-          },
-        });
-        if (isCurrent) {
-          cell.createSpan({
-            cls: "charinfo-cover-picker__badge",
-            text: "현재",
-          });
-        }
-        cell.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          void this.commit(
-            image.kind === "vault"
-              ? { kind: "vault", file: image.file }
-              : { kind: "remote", url: image.url },
-          );
-        });
-      }
-    }
+    const collection = contentEl.createDiv({ cls: "charinfo-cover-picker__block charinfo-cover-picker__collection" });
+    this.pickEl = collection.createDiv();
+    // Keep Undo outside the rebuilt grid so refreshes preserve its handler.
+    this.undoEl = collection.createDiv({ cls: "charinfo-cover-picker__undo", attr: { role: "status", "aria-live": "polite" } });
+    this.renderImages();
 
     // —— 3. Add (secondary, equal file | link) ——
     const add = contentEl.createDiv({ cls: "charinfo-cover-picker__block" });
@@ -202,7 +162,7 @@ export class CoverPickerModal extends Modal {
     const linkIcon = linkBtn.createSpan({
       cls: "charinfo-cover-picker__action-icon",
     });
-    setIcon(linkIcon, "link");
+    setIcon(linkIcon, "link-2");
     const linkText = linkBtn.createDiv({
       cls: "charinfo-cover-picker__action-text",
     });
@@ -273,6 +233,165 @@ export class CoverPickerModal extends Modal {
     });
   }
 
+  private renderImages(followKey?: string, action?: string): void {
+    if (!this.opened) return;
+    const active = this.contentEl.ownerDocument.activeElement as HTMLElement | null;
+    const focusKey = followKey ?? active?.closest<HTMLElement>("[data-image-key]")?.dataset.imageKey;
+    const focusAction = action ?? active?.dataset.action;
+    if (active === this.linkInput) this.pendingFocus = undefined;
+    else if (focusKey) this.pendingFocus = { key: focusKey, action: focusAction };
+    const index = followKey ? this.images.findIndex((image) => coverRefKey(image) === followKey) : -1;
+    if (index >= 0) this.page = Math.floor(index / this.pageSize);
+    const pages = Math.max(1, Math.ceil(this.images.length / this.pageSize));
+    this.page = Math.max(0, Math.min(this.page, pages - 1));
+    this.currentEl.empty();
+    if (this.currentCover) {
+      const frame = this.currentEl.createDiv({ cls: "charinfo-cover-picker__current-frame" });
+      const image = frame.createEl("img", { cls: "charinfo-cover-picker__current-img", attr: {
+        src: coverDisplaySrc(this.app, this.currentCover), alt: "현재 커버", draggable: "false",
+      } });
+      image.style.objectPosition = this.record.coverPosition || "50% 50%";
+    }
+    this.currentEl.createDiv({ cls: "charinfo-cover-picker__current-cap", text: this.currentCover ? "현재 커버" : "커버 없음" });
+    this.pickEl.empty();
+    const heading = this.pickEl.createDiv({ cls: "charinfo-cover-picker__block-title" });
+    heading.createSpan({ text: "고르기" });
+    heading.createSpan({ text: `총 ${this.images.length}장` });
+    const grid = this.pickEl.createDiv({ cls: "charinfo-cover-picker__grid" });
+    if (!this.images.length) grid.createDiv({ cls: "charinfo-cover-picker__empty", text: "이미지를 추가해 주세요." });
+    const currentKey = this.currentCover ? coverRefKey(this.currentCover) : null;
+    const start = this.page * this.pageSize;
+    for (const [offset, image] of this.images.slice(start, start + this.pageSize).entries()) {
+      const key = coverRefKey(image), position = start + offset;
+      const label = this.coverLabel(image), isCurrent = key === currentKey;
+      const tile = grid.createDiv({ cls: "charinfo-cover-picker__tile", attr: { "data-image-key": key } });
+      const pick = tile.createEl("button", { cls: "charinfo-cover-picker__cell" + (isCurrent ? " is-current" : ""), attr: {
+        type: "button", title: label, "aria-label": `${position + 1}번 ${label} 커버로 선택`, "aria-pressed": String(isCurrent), "data-action": "pick",
+      } });
+      pick.createEl("img", { attr: { src: coverDisplaySrc(this.app, image), alt: "", loading: "lazy", draggable: "false" } });
+      pick.createSpan({ cls: "charinfo-cover-picker__number", text: String(position + 1) });
+      if (isCurrent) pick.createSpan({ cls: "charinfo-cover-picker__badge", text: "현재" });
+      pick.addEventListener("click", () => { void this.commit(image); });
+      const actions = tile.createDiv({ cls: "charinfo-cover-picker__image-actions" });
+      const moves = actions.createDiv({ cls: "charinfo-cover-picker__moves" });
+      for (const direction of [-1, 1] as const) {
+        const text = direction < 0 ? "앞으로 이동" : "뒤로 이동";
+        const button = moves.createEl("button", { cls: "clickable-icon charinfo-icon-btn", attr: {
+          type: "button", title: text, "aria-label": `${position + 1}번 이미지 ${text}`, "data-action": String(direction), "data-move": "",
+        } });
+        setIcon(button, direction < 0 ? "chevron-left" : "chevron-right");
+        button.disabled = direction < 0 ? position === 0 : position === this.images.length - 1;
+        button.addEventListener("click", () => { void this.moveImage(key, direction); });
+      }
+      const protectedCover = isCurrent && this.images.length > 1;
+      const remove = actions.createEl("button", { cls: "clickable-icon charinfo-icon-btn charinfo-cover-picker__remove", attr: {
+        type: "button", "aria-label": `${position + 1}번 이미지 제거`, "data-action": "remove",
+        title: protectedCover ? "다른 이미지를 커버로 선택한 뒤 제거할 수 있어요" : "이미지 제거",
+      } });
+      setIcon(remove, "trash-2");
+      remove.disabled = protectedCover;
+      remove.addEventListener("click", () => { void this.removeImage(key); });
+    }
+    if (pages > 1) {
+      const nav = this.pickEl.createDiv({ cls: "charinfo-cover-picker__pagination", attr: { role: "navigation", "aria-label": "이미지 페이지" } });
+      const previous = nav.createEl("button", { text: "이전", attr: { type: "button", "aria-label": "이전 이미지 페이지", "data-page": "previous" } });
+      previous.disabled = this.page === 0;
+      nav.createSpan({ text: `${this.page + 1} / ${pages}`, attr: { role: "status", "aria-live": "polite" } });
+      const next = nav.createEl("button", { text: "다음", attr: { type: "button", "aria-label": "다음 이미지 페이지", "data-page": "next" } });
+      next.disabled = this.page === pages - 1;
+      const turnPage = (delta: number, selector: string): void => {
+        if (this.busy) return;
+        this.page += delta;
+        this.renderImages();
+        (this.pickEl.querySelector<HTMLButtonElement>(`${selector}:not(:disabled)`) ?? this.pickEl.querySelector<HTMLButtonElement>(".charinfo-cover-picker__cell"))?.focus({ preventScroll: true });
+      };
+      previous.onclick = () => turnPage(-1, '[data-page="previous"]');
+      next.onclick = () => turnPage(1, '[data-page="next"]');
+    }
+    this.setBusy(this.busy);
+    if (focusKey) {
+      const tile = Array.from(grid.children).find((el) => (el as HTMLElement).dataset.imageKey === focusKey);
+      const target = tile?.querySelector<HTMLButtonElement>(`[data-action="${focusAction}"]:not(:disabled)`) ?? tile?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+      if (!this.busy && active !== this.linkInput) { target?.focus({ preventScroll: true }); this.pendingFocus = undefined; }
+    }
+  }
+
+  private async refresh(followKey?: string, action?: string): Promise<boolean> {
+    const version = ++this.refreshVersion;
+    try {
+      const state = await this.operations.read();
+      if (!this.opened || version !== this.refreshVersion) return false;
+      this.images = state.images;
+      if (this.undoKey && this.images.some((image) => coverRefKey(image) === this.undoKey)) {
+        this.undoEl?.empty();
+        this.undoKey = undefined;
+      }
+      this.currentCover = state.currentCover;
+      this.renderImages(followKey, action);
+      return true;
+    } catch (error) {
+      if (this.opened && version === this.refreshVersion) this.setStatus("화면을 새로 불러오지 못했어요. 다시 시도해 주세요.", true);
+      return false;
+    }
+  }
+
+  private async moveImage(key: string, direction: -1 | 1): Promise<void> {
+    if (!this.opened || (this.busy && this.movePending === 0)) return;
+    this.movePending += 1;
+    this.setBusy(true);
+    try {
+      await this.operations.move(key, direction);
+      await this.refresh(key, String(direction));
+    } catch (error) {
+      if (this.opened) this.setStatus(error instanceof Error ? error.message : "순서를 바꾸지 못했어요.", true);
+    } finally {
+      this.movePending -= 1;
+      if (this.opened && this.movePending === 0) { this.setBusy(false); this.renderImages(key, String(direction)); }
+    }
+  }
+
+  private async removeImage(key: string): Promise<void> {
+    if (this.busy || !this.opened) return;
+    const index = this.images.findIndex((image) => coverRefKey(image) === key);
+    const neighbor = this.images[index + 1] ?? this.images[index - 1];
+    this.setBusy(true);
+    try {
+      const undo = await this.operations.remove(key);
+      if (undo && this.opened && this.undoEl) {
+        this.setStatus("");
+        this.undoKey = key;
+        this.undoEl.setText("이미지를 제거했어요. ");
+        const button = this.undoEl.createEl("button", { cls: "charinfo-image-undo", text: "되돌리기", attr: { type: "button", "aria-label": "이미지 제거 되돌리기" } });
+        button.onclick = () => {
+          if (this.busy) return;
+          this.setBusy(true);
+          void undo().then(async () => {
+            if (this.opened) { this.setStatus(""); this.undoEl?.empty(); this.undoKey = undefined; }
+            await this.refresh(key, "pick");
+          }).catch((error) => {
+            if (this.opened) this.setStatus(error instanceof Error ? error.message : "되돌리지 못했어요.", true);
+          }).finally(() => { if (this.opened) this.setBusy(false); });
+        };
+      }
+      await this.refresh(neighbor ? coverRefKey(neighbor) : undefined, "remove");
+    } catch (error) {
+      if (this.opened) this.setStatus(error instanceof Error ? error.message : "이미지를 제거하지 못했어요.", true);
+      await this.refresh();
+    } finally {
+      if (this.opened) { this.setBusy(false); this.renderImages(neighbor ? coverRefKey(neighbor) : undefined, "remove"); }
+    }
+  }
+
+  private async appendLink(image: CoverRef, token: number): Promise<void> {
+    const result = await this.onAddFiles([image]);
+    if (!this.opened || token !== this.opToken) return;
+    this.images = result.images;
+    this.currentCover = result.currentCover;
+    if (this.linkInput) this.linkInput.value = "";
+    this.renderImages(coverRefKey(image));
+    this.setStatus(result.added ? "이미지를 추가했어요." : "이미 추가한 이미지예요.");
+  }
+
   private coverLabel(cover: CoverRef): string {
     if (cover.kind === "vault") return cover.file.basename;
     try {
@@ -286,7 +405,11 @@ export class CoverPickerModal extends Modal {
   }
 
   onClose(): void {
+    this.opened = false;
     this.opToken += 1;
+    this.refreshVersion += 1;
+    this.unsubscribe?.();
+    this.media?.removeEventListener("change", this.onResize);
     this.fileDialogOpen = false;
     this.contentEl.empty();
   }
@@ -313,6 +436,23 @@ export class CoverPickerModal extends Modal {
   private setBusy(busy: boolean): void {
     this.busy = busy;
     this.contentEl.toggleClass("is-busy", busy);
+    this.contentEl.setAttribute("aria-busy", String(busy));
+    this.contentEl.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input").forEach((control) => {
+      if (busy) {
+        if (!control.hasAttribute("data-before-busy")) control.dataset.beforeBusy = String(control.disabled);
+        control.disabled = control.dataset.beforeBusy === "true" || !(this.movePending > 0 && (control.hasAttribute("data-move") || control === this.linkInput));
+      } else if (control.hasAttribute("data-before-busy")) {
+        control.disabled = control.dataset.beforeBusy === "true";
+        delete control.dataset.beforeBusy;
+      }
+    });
+    if (this.contentEl.ownerDocument.activeElement === this.linkInput) this.pendingFocus = undefined;
+    if (!busy && this.pendingFocus) {
+      const { key, action } = this.pendingFocus;
+      const tile = Array.from(this.pickEl.querySelectorAll<HTMLElement>("[data-image-key]")).find((el) => el.dataset.imageKey === key);
+      (tile?.querySelector<HTMLButtonElement>(`[data-action="${action}"]:not(:disabled)`) ?? tile?.querySelector<HTMLButtonElement>("button:not(:disabled)"))?.focus({ preventScroll: true });
+      this.pendingFocus = undefined;
+    }
   }
 
   private pickLocalFile(): void {
@@ -345,7 +485,7 @@ export class CoverPickerModal extends Modal {
   }
 
   private async uploadLocalFiles(files: File[]): Promise<void> {
-    if (this.busy) return;
+    if (this.busy || !this.opened) return;
     const token = ++this.opToken;
     const hadImages = this.images.length > 0;
     const coverWasHidden = isCoverNone(this.record.cover);
@@ -395,7 +535,8 @@ export class CoverPickerModal extends Modal {
         this.currentCover = result.currentCover;
       }
       if (token !== this.opToken) return;
-      this.onOpen();
+      const firstAdded = uploaded.find((image) => this.images.some((candidate) => coverRefKey(candidate) === coverRefKey(image)));
+      this.renderImages(firstAdded ? coverRefKey(firstAdded) : undefined);
       const coverMessage = coverWasHidden
         ? " · 커버 숨김 유지"
         : !hadImages && added > 0 && this.currentCover
@@ -436,7 +577,7 @@ export class CoverPickerModal extends Modal {
       const pathLike = wiki?.[1]?.split("|")[0]?.trim() || link;
 
       if (isRemoteCoverUrl(pathLike) || /^https:\/\//i.test(pathLike)) {
-        await this.commit({ kind: "remote", url: pathLike });
+        await this.appendLink({ kind: "remote", url: pathLike }, token);
         return;
       }
       if (/^http:\/\//i.test(pathLike)) {
@@ -449,7 +590,7 @@ export class CoverPickerModal extends Modal {
         this.app.vault.getAbstractFileByPath(cleaned) ??
         this.app.metadataCache.getFirstLinkpathDest(cleaned, this.record.path);
       if (existing instanceof TFile && isImagePath(existing.path)) {
-        await this.commit({ kind: "vault", file: existing });
+        await this.appendLink({ kind: "vault", file: existing }, token);
         return;
       }
       this.setStatus("이미지를 찾지 못했어요.", true);
@@ -512,15 +653,13 @@ export class CoverPickerModal extends Modal {
   }
 
   private async commit(result: CoverPickResult): Promise<void> {
-    if (this.busy && result.kind !== "default") {
-      /* allow commit while uploading finishes via same busy path */
-    }
+    if (this.busy || !this.opened) return;
     const token = this.opToken;
     this.setBusy(true);
     try {
       await this.onPick(result);
       if (token !== this.opToken) return;
-      this.close();
+      if (await this.refresh()) this.setStatus("");
     } catch (error) {
       if (token !== this.opToken) return;
       console.error(error);

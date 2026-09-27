@@ -1,4 +1,4 @@
-export const UPDATE_NOTES_VERSION = "0.1.25";
+export const UPDATE_NOTES_VERSION = "0.1.26";
 
 export function normalizeSeenUpdateNotesVersion(raw: unknown): string {
   return typeof raw === "string" ? raw.trim() : "";
@@ -43,21 +43,19 @@ kind: "character-archive-update"
 
 ## 업데이트 내용
 
-- 갤러리 편집에서 이미지를 여러 장 골라 한 번에 추가할 수 있어요. 추가한 이미지는 노트에도 들어가요.
-- 선택한 커버는 유지돼요. 커버 이미지가 없어지면 남은 이미지 중 첫 번째가 커버가 돼요.
-- 갤러리에서 이미지 순서를 바꾸면 노트에도 같은 순서로 반영돼요.
-- 커버가 아닌 이미지는 휴지통 버튼으로 제거할 수 있어요. 노트에서도 함께 제거되며, 실수했다면 ‘되돌리기’를 누르세요.
-- 웹 공유에서 ‘추가한 이미지도 웹에 표시’를 켜면 여러 이미지를 함께 볼 수 있어요. 이미지를 크게 열어 넘겨볼 수도 있어요.
-- 앱을 다시 열 때 변경되지 않은 노트를 반복해서 확인하는 작업을 줄였어요.
+- 커버 창에서도 이미지를 제거하고 순서를 바꿀 수 있어요. 변경한 내용은 노트와 갤러리에 함께 반영돼요.
+- 선택한 커버는 순서를 바꿔도 유지돼요. 다른 이미지가 있을 때 커버를 제거하려면 먼저 새 커버를 골라 주세요.
+- 이미지를 제거한 뒤에는 이미지 목록 아래의 ‘되돌리기’를 눌러 복원할 수 있어요.
+- 이미지가 많으면 컴퓨터에서는 한 페이지에 6장, 모바일에서는 4장씩 보여요. 한 페이지에 모두 보이면 ‘이전’과 ‘다음’ 버튼은 나타나지 않아요.
+- ‘링크’ 버튼의 아이콘이 잘리지 않도록 수정했어요.
 
 ---
 
 ## What's new
 
-- Select several images at once in gallery edit mode. Added images also appear in the note.
-- Your selected cover stays in place. If it is removed, the first remaining image becomes the cover.
-- Reorder images in the gallery, and the note uses the same order.
-- Remove a non-cover image with the trash button. It is also removed from the note; choose Undo (되돌리기) if you change your mind.
-- Turn on “Show added images on the web” (추가한 이미지도 웹에 표시) when sharing to include multiple images. Open an image for a larger view and browse through the others.
-- Reopening the app now avoids repeating checks on unchanged notes.
+- Remove and reorder images directly in the cover window. Changes are reflected in both the note and gallery.
+- Reordering keeps your selected cover. To remove the cover when other images remain, choose a new cover first.
+- After removing an image, restore it with Undo (되돌리기) below the image list.
+- Browse six images per page on desktop and four on mobile. Previous and Next stay hidden when all images fit on one page.
+- Fixed the clipped icon on the Link (링크) button.
 `;
