@@ -12,6 +12,10 @@ export interface CharacterNameModalOptions {
   initialName?: string;
   submitText: string;
   savingText: string;
+  /** Input hint. Defaults to the character wording. */
+  placeholder?: string;
+  /** Extra check before saving starts. Return an error to show it inline. */
+  validate?: (name: string) => string | null;
   /** Return an error to keep the modal open; `null` closes it. */
   onSubmit: (name: string) => Promise<string | null>;
   onClose?: () => void;
@@ -53,7 +57,7 @@ export class CharacterNameModal extends Modal {
       attr: {
         id: inputId,
         value: this.opts.initialName ?? "",
-        placeholder: "캐릭터 이름",
+        placeholder: this.opts.placeholder ?? "캐릭터 이름",
         spellcheck: "false",
         "aria-describedby": errorId,
       },
@@ -125,7 +129,13 @@ export class CharacterNameModal extends Modal {
       this.showProblem(characterNameProblemMessage(problem));
       return;
     }
+    const invalid = this.opts.validate?.(name) ?? null;
+    if (invalid) {
+      this.showProblem(invalid);
+      return;
+    }
 
+    const submittedInput = this.input;
     this.saving = true;
     this.input.disabled = true;
     if (this.submitBtn) {
@@ -138,6 +148,8 @@ export class CharacterNameModal extends Modal {
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     }
+    // Closing (or reopening) the dialog ends this submission's UI lifetime.
+    if (this.input !== submittedInput) return;
     if (!error) {
       this.close();
       return;

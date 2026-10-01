@@ -1,4 +1,4 @@
-export const UPDATE_NOTES_VERSION = "0.1.27";
+export const UPDATE_NOTES_VERSION = "0.1.28";
 
 export function normalizeSeenUpdateNotesVersion(raw: unknown): string {
   return typeof raw === "string" ? raw.trim() : "";
@@ -43,27 +43,21 @@ kind: "character-archive-update"
 
 ## 업데이트 내용
 
-- 커버 창에서 이미지를 드래그해 순서를 바꿀 수 있어요. 모바일에서는 이미지를 길게 누른 뒤 옮겨 주세요. 선택한 커버는 유지돼요.
-- 커버를 편집할 때는 이미지를 눌러도 확대 화면이 열리지 않아요.
-- 갤러리 패널의 경계를 드래그해 너비를 조절할 수 있어요. 화면이 좁으면 상세 내용이 전체 너비로 열려요.
-- 공유 페이지는 한 줄에 최대 6개의 카드를 보여줘요. 화면에 맞춰 카드 수와 이미지 크기가 조절돼요.
-- 이미지 아래 화살표로 다른 이미지를 볼 수 있어요. 이미지를 누르면 확대되고, 바깥의 어두운 영역을 누르면 닫혀요.
-- 한 이미지당 최대 25MB, 공유 페이지 전체는 최대 20MB까지 올릴 수 있어요. 공유용 이미지만 줄이고 원본은 유지해요.
-- 프롬프트는 복사 버튼으로 그대로 복사할 수 있어요.
+- 편집 모드에서 왼쪽 위 아카이브 이름을 누르고 **새 아카이브 만들기**를 선택하면 대분류를 추가할 수 있어요.
+- 카드가 없는 아카이브도 저장돼요. 다시 열어도 목록에 남고, **캐릭터 추가**로 첫 카드를 만들 수 있어요.
+- 같은 이름의 아카이브가 있으면 입력창에서 알려줘요.
+- 명령 팔레트는 **갤러리 열기**, **갤러리 편집 켜기 / 끄기** 두 개로 정리했어요. 편집 명령은 지금 보고 있는 갤러리에만 적용돼요.
 
-기존 공유 링크에 새 화면을 적용하려면 공유 창에서 링크를 업데이트해 주세요.
+카드 추가와 속성 설정은 갤러리의 편집 모드에서 이용해 주세요.
 
 ---
 
 ## What's new
 
-- Drag images to reorder them in the cover window. On mobile, hold an image before dragging. Your selected cover stays the same.
-- Clicking an image while editing the cover no longer opens the enlarged view.
-- Drag the gallery panel divider to adjust its width. On smaller screens, details use the full width.
-- Shared galleries show up to six cards per row, with card counts and image sizes adapting to the available space.
-- Use the arrows below an image to browse. Click the image to enlarge it, and click the dark background to close it.
-- Add images up to 25MB each and share pages up to 20MB total. Only shared copies are compressed; originals stay unchanged.
-- Prompt copy buttons preserve the exact text.
+- In edit mode, click the archive name at the top left and choose **새 아카이브 만들기** (Create archive) to add a top-level archive.
+- Empty archives are saved and stay in the list when you reopen the gallery. Use **캐릭터 추가** (Add character) to create the first card.
+- If an archive with the same name already exists, the name dialog explains it.
+- The command palette now has just **갤러리 열기** (Open gallery) and **갤러리 편집 켜기 / 끄기** (Turn gallery editing on / off). The editing command only affects the gallery you are viewing.
 
-Update an existing link from the sharing window to apply the new layout.
+Use the gallery's edit mode to add cards and manage properties.
 `;

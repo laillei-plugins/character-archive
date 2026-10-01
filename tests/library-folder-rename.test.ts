@@ -21,6 +21,7 @@ function emptySettings(): LibraryFolderSettings {
     characterTemplateByGenre: {},
     lastOpenedGalleryPath: "",
     groupOrderByLibrary: {},
+    declaredArchives: [],
     galleryPageState: {},
     webShareByPage: {},
     groupSchemas: [],
@@ -187,4 +188,55 @@ test("settings remap follows the library and leaves sibling keys", () => {
   assert.equal(settings.groupSchemas[0]?.library, "Story Vault");
   remapLibraryFolderSettings(settings, "Character Archive", "Story Vault");
   assert.equal(settings.libraryFolder, "Story Vault");
+});
+
+test("declared archives follow their library; nested ones too, siblings never", () => {
+  const settings = emptySettings();
+  settings.declaredArchives = [
+    { library: "Character Archive", archive: "만안" },
+    { library: "Second Library", archive: "만안" },
+    { library: "Character Archive/Nested", archive: "달" },
+    { library: "Character ArchiveExtra", archive: "별" },
+  ];
+  const changed = remapLibraryFolderSettings(
+    settings,
+    "Character Archive",
+    "Story Vault",
+  );
+  assert.equal(changed, true);
+  const expected = [
+    { library: "Story Vault", archive: "만안" },
+    { library: "Second Library", archive: "만안" },
+    { library: "Story Vault/Nested", archive: "달" },
+    { library: "Character ArchiveExtra", archive: "별" },
+  ];
+  assert.deepEqual(settings.declaredArchives, expected);
+  // Idempotent: replaying the same rename changes nothing.
+  assert.equal(
+    remapLibraryFolderSettings(settings, "Character Archive", "Story Vault"),
+    false,
+  );
+  assert.deepEqual(settings.declaredArchives, expected);
+});
+
+test("a declared archive remapped onto its twin stays one archive", () => {
+  const settings = emptySettings();
+  settings.libraryFolder = "Elsewhere";
+  settings.vaultMediaFolder = "Elsewhere";
+  settings.declaredArchives = [
+    { library: "Character Archive\\", archive: "Night" },
+    { library: "Story Vault", archive: "night" },
+    { library: "Story Vault", archive: "Dawn" },
+  ];
+  const changed = remapLibraryFolderSettings(
+    settings,
+    "Character Archive",
+    "Story Vault",
+  );
+  assert.equal(changed, true);
+  assert.deepEqual(settings.declaredArchives, [
+    { library: "Story Vault", archive: "Night" },
+    { library: "Story Vault", archive: "Dawn" },
+  ]);
+  assert.equal(settings.libraryFolder, "Elsewhere");
 });

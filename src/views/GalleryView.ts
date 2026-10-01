@@ -4,6 +4,7 @@ import {
   Menu,
   Notice,
   TFile,
+  TFolder,
   WorkspaceLeaf,
   setIcon,
   Component,
@@ -46,6 +47,16 @@ import {
   writeOrderValues,
 } from "../data/order";
 import { EXAMPLE_ARCHIVE } from "../data/bundledTemplate";
+import {
+  ArchiveNameError,
+  archiveNameProblem,
+  archiveRenameNotice,
+  listArchives,
+  normalizeArchiveName,
+  renameDeclaredArchive,
+  resolveArchiveSpelling,
+  topLevelFolderOf,
+} from "../data/archiveRegistry";
 import type { CardPropertyId } from "../data/cardProperties";
 import {
   applyGroupDeletion,
@@ -131,6 +142,7 @@ import {
   FILTER_AXIS_IDS,
   axisFor,
   axisLabel,
+  createArchiveForPage,
   getGalleryPageState,
   getGroupOrderFor,
   getGroupRouteOrderFor,
@@ -762,12 +774,16 @@ export class GalleryView extends FileView {
   }
 
   openWebShare(): void {
-    const title =
-      this.activeArchive().trim() ||
-      this.file?.basename ||
-      "Character Archive";
+    const archive = this.activeArchive().trim();
+    // The share dialog starts from another archive when this one has no card,
+    // and would publish cards the user is not looking at.
+    if (!this.records.some((record) => !archive || record.장르 === archive)) {
+      new Notice("이 아카이브에는 공유할 카드가 아직 없어요.");
+      return;
+    }
+    const title = archive || this.file?.basename || "Character Archive";
     new ShareGalleryModal(this.plugin, this.records, title, {
-      defaultArchive: this.activeArchive().trim(),
+      defaultArchive: archive,
       pageFile: this.file,
     }).open();
   }
@@ -789,14 +805,69 @@ export class GalleryView extends FileView {
     new Notice(ok ? "노트 링크를 복사했어요" : "복사에 실패했어요");
   }
 
+  /** Archive names the scanned cards carry, unsorted. */
+  private observedArchives(): string[] {
+    const names = new Set<string>();
+    for (const record of this.records) {
+      if (record.장르) names.add(record.장르);
+    }
+    return [...names];
+  }
+
+  /** This library's archives: what its cards carry plus what was declared. */
   private genres(): string[] {
-    return this.store.listGenres(this.records);
+    return listArchives(
+      this.observedArchives(),
+      this.plugin.settings.declaredArchives,
+      this.pageLibrary(),
+    );
+  }
+
+  /**
+   * Observed archives as of this instant. `records` is the last scan; the
+   * metadata cache may already know a card that arrived since, and a name
+   * check that is about to be committed has to see it.
+   */
+  private observedArchivesNow(library: string): string[] {
+    const names = new Set(this.observedArchives());
+    const root = normalizeLibraryKey(library);
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (root && !file.path.startsWith(`${root}/`)) continue;
+      const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      if (!fm || String(fm.kind ?? "") !== "character") continue;
+      names.add(normalizeArchiveKey(fm.장르));
+    }
+    return [...names];
+  }
+
+  /** Names of the folders directly under the library. */
+  private libraryFolderNames(library: string): string[] {
+    const root = this.app.vault.getAbstractFileByPath(
+      normalizeLibraryKey(library),
+    );
+    if (!(root instanceof TFolder)) return [];
+    return root.children
+      .filter((child) => child instanceof TFolder)
+      .map((child) => child.name);
+  }
+
+  /** Top-level library folders that already hold this archive's cards. */
+  private archiveFolderNames(library: string, archive: string): string[] {
+    const names = new Set<string>();
+    for (const record of this.records) {
+      if (record.장르 !== archive) continue;
+      const folder = topLevelFolderOf(library, record.path);
+      if (folder) names.add(folder);
+    }
+    return [...names];
   }
 
   /** Active archive for this page (pinned FM or page/global state). */
   activeArchive(): string {
     const scope = this.resolvePageScope();
     if (scope.pinned) return scope.pinnedArchive;
+    // A global selection cannot supply an archive to an empty library.
+    if (this.genres().length === 0) return "";
     const page = getGalleryPageState(this.plugin.settings, this.pageKey());
     if (page.activeGenre?.trim()) return page.activeGenre.trim();
     return this.plugin.settings.activeGenre.trim();
@@ -819,10 +890,14 @@ export class GalleryView extends FileView {
       "";
     if (pagePick && genres.includes(pagePick)) return;
     const global = this.plugin.settings.activeGenre.trim();
+    // A declared name gives way to the spelling its cards carry — still the
+    // same archive, so the page stays on it.
+    const respelled = resolveArchiveSpelling(genres, pagePick);
     const next =
-      !pagePick && global && genres.includes(global) && global !== EXAMPLE_ARCHIVE
+      respelled ||
+      (!pagePick && global && genres.includes(global) && global !== EXAMPLE_ARCHIVE
         ? global
-        : this.preferredArchive(genres);
+        : this.preferredArchive(genres));
     if (!next || next === this.activeArchive()) return;
     patchGalleryPageState(this.plugin.settings, this.pageKey(), {
       activeGenre: next,
@@ -851,6 +926,11 @@ export class GalleryView extends FileView {
       activeGenre: genre,
     });
     await this.plugin.saveSettings();
+    this.showActiveArchive();
+  }
+
+  /** Paint the archive that was just selected; its selection is already saved. */
+  private showActiveArchive(): void {
     this.selected = null;
     const search = transitionSearchDisclosure(
       this.searchDisclosureState(),
@@ -861,6 +941,100 @@ export class GalleryView extends FileView {
     this.searchExpanded = search.expanded;
     this.render();
     this.leaf.setEphemeralState({ ...this.leaf.getEphemeralState() });
+  }
+
+  /** Other open galleries read the same settings; a settings-only change reaches them here. */
+  private refreshSiblingGalleries(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(
+      VIEW_TYPE_CHARINFO_GALLERY,
+    )) {
+      const view = leaf.view;
+      if (view instanceof GalleryView && view !== this) void view.refresh();
+    }
+  }
+
+  private focusArchiveSelector(): void {
+    // Deferred: the dialog hands focus back on its own close first.
+    window.setTimeout(() => {
+      this.contentEl
+        .querySelector<HTMLElement>(".charinfo-gallery__genre")
+        ?.focus();
+    }, 0);
+  }
+
+  /** Name check for a new archive, against what this gallery knows right now. */
+  private newArchiveProblem(name: string): string | null {
+    const library = this.pageLibrary();
+    return archiveNameProblem({
+      name,
+      existing: listArchives(
+        this.observedArchivesNow(library),
+        this.plugin.settings.declaredArchives,
+        library,
+      ),
+      folders: this.libraryFolderNames(library),
+    });
+  }
+
+  private openCreateArchive(): void {
+    if (this.isArchivePinned() || !this.cardEditActive) return;
+    this.characterNameModal?.close();
+    const generation = this.uiGeneration;
+    const modal = new CharacterNameModal(this.app, {
+      title: "새 아카이브",
+      placeholder: "아카이브 이름",
+      submitText: "만들기",
+      savingText: "만드는 중…",
+      validate: (name) => this.newArchiveProblem(name),
+      onSubmit: (name) => this.createArchive(name, generation),
+      onClose: () => {
+        if (this.characterNameModal === modal) this.characterNameModal = null;
+        if (this.uiAlive(generation)) this.focusArchiveSelector();
+      },
+    });
+    this.characterNameModal = modal;
+    modal.open();
+  }
+
+  /**
+   * Create an empty archive and move this page onto it. Returns the message to
+   * show inline, or `null` once the archive exists.
+   *
+   * The name is checked again **inside** the serialized commit — another
+   * gallery may have declared it, or a card may have arrived, while the dialog
+   * was open — and the declaration and this page's selection are one mutation,
+   * so a failed save leaves neither behind.
+   */
+  private async createArchive(
+    raw: string,
+    generation: number,
+  ): Promise<string | null> {
+    const library = this.pageLibrary();
+    const pagePath = this.pageKey();
+    let created = "";
+    try {
+      await this.plugin.commitSettings((settings) => {
+        created = createArchiveForPage(settings, {
+          library,
+          name: raw,
+          pagePath,
+          observed: this.observedArchivesNow(library),
+          folders: this.libraryFolderNames(library),
+        });
+      });
+    } catch (error) {
+      if (error instanceof ArchiveNameError) return error.message;
+      console.error("[charinfo] 아카이브 만들기 실패", error);
+      return `아카이브를 저장하지 못했어요 · ${error instanceof Error ? error.message : String(error)}`;
+    }
+
+    this.refreshSiblingGalleries();
+    new Notice(`「${created}」 아카이브를 만들었어요.`);
+    if (!this.uiAlive(generation)) return null;
+    // The captured batch scope belongs to the archive we are leaving.
+    this.teardownBatchMode();
+    this.showActiveArchive();
+    return null;
   }
 
   /**
@@ -910,16 +1084,21 @@ export class GalleryView extends FileView {
   private async renameActiveGenre(from: string, to: string): Promise<void> {
     const library = this.pageLibrary();
     const prev = normalizeArchiveKey(from);
-    const next = normalizeArchiveKey(to);
+    const next = normalizeArchiveName(to);
     if (prev === next) return;
 
     const pagePaths = this.libraryPagePaths(library);
-    if (
-      this.genres().some((genre) => normalizeArchiveKey(genre) === next)
-    ) {
-      new Notice(
-        `아카이브 「${next}」가 이미 있어요. 다른 이름을 정해 주세요.`,
-      );
+    // Same rules as a new archive; the source itself and the folders its cards
+    // already live in are not collisions.
+    const problem = archiveNameProblem({
+      name: next,
+      existing: this.genres(),
+      folders: this.libraryFolderNames(library),
+      source: prev,
+      sourceFolders: this.archiveFolderNames(library, prev),
+    });
+    if (problem) {
+      new Notice(problem);
       return;
     }
     try {
@@ -966,9 +1145,14 @@ export class GalleryView extends FileView {
       this.plugin.suppressGalleryRefresh = false;
     }
 
+    let saved = false;
+    let saveError = "";
     try {
       await this.plugin.commitSettings((settings) => {
         renameArchiveScope(settings, library, prev, next, pagePaths);
+        // A declared archive keeps its declaration under the new name; with no
+        // card to rewrite, this row is the whole rename.
+        renameDeclaredArchive(settings, library, prev, next);
         const order = getGroupOrderFor(settings, library, prev);
         if (order.length) {
           setGroupOrderFor(settings, library, next, order);
@@ -1004,18 +1188,16 @@ export class GalleryView extends FileView {
           };
         }
       });
+      saved = true;
     } catch (error) {
+      // The commit restored its own snapshot: a declared archive is still
+      // declared under the old name.
       console.error("[charinfo] 아카이브 설정 저장 실패", error);
-      new Notice(
-        `노트는 「${next}」로 바꿨지만 설정 저장에 실패했어요 · ${error instanceof Error ? error.message : String(error)}`,
-      );
+      saveError = error instanceof Error ? error.message : String(error);
     }
 
-    new Notice(
-      count
-        ? `아카이브 이름을 「${next}」로 바꿨어요 · 노트 ${count}개`
-        : "이름을 바꿀 노트가 없어요",
-    );
+    new Notice(archiveRenameNotice({ next, count, saved, error: saveError }));
+    this.refreshSiblingGalleries();
     await this.refresh();
     this.leaf.setEphemeralState({ ...this.leaf.getEphemeralState() });
   }
@@ -3217,10 +3399,15 @@ export class GalleryView extends FileView {
     const left = header.createDiv({ cls: "charinfo-gallery__header-left" });
 
     const genres = this.genres();
-    const active = this.activeArchive().trim();
     const pinned = this.isArchivePinned();
+    const emptyLibrary = genres.length === 0 && !pinned;
+    // An empty library has no archive of its own — the global fallback name
+    // belongs to another library and must not appear here.
+    const active = emptyLibrary ? "" : this.activeArchive().trim();
+    // Creating an archive is an edit action, like renaming one.
+    const canCreate = this.cardEditActive && !pinned;
 
-    if (genres.length === 0 && !pinned) {
+    if (emptyLibrary && !canCreate) {
       left.createEl("h2", {
         text: "아카이브 없음",
         cls: "charinfo-gallery__title",
@@ -3246,7 +3433,7 @@ export class GalleryView extends FileView {
       });
       genreBtn.createSpan({
         cls: "charinfo-gallery__genre-label",
-        text: current || "아카이브",
+        text: current || (emptyLibrary ? "아카이브 없음" : "아카이브"),
       });
       const chevron = genreBtn.createSpan({ cls: "charinfo-gallery__genre-chevron" });
       setIcon(chevron, "chevron-down");
@@ -3269,7 +3456,22 @@ export class GalleryView extends FileView {
               .onClick(() => void this.setActiveGenre(active)),
           );
         }
-        menu.showAtMouseEvent(event);
+        if (canCreate) {
+          if (current) menu.addSeparator();
+          menu.addItem((item) =>
+            item
+              .setTitle("새 아카이브 만들기")
+              .setIcon("plus")
+              .onClick(() => this.openCreateArchive()),
+          );
+        }
+        // A keyboard click carries no pointer position; open under the button.
+        if (event.clientX === 0 && event.clientY === 0) {
+          const rect = genreBtn.getBoundingClientRect();
+          menu.showAtPosition({ x: rect.left, y: rect.bottom });
+        } else {
+          menu.showAtMouseEvent(event);
+        }
       });
       }
 
@@ -3632,7 +3834,7 @@ export class GalleryView extends FileView {
     } else if (allCount === 0) {
       title = "이 아카이브에 카드가 없어요.";
       detail = genre
-        ? `아카이브 “${genre}”에 아직 노트가 없습니다.`
+        ? "아래 버튼으로 첫 카드를 만드세요."
         : "다른 아카이브를 고르거나 캐릭터를 추가하세요.";
     } else if (hasSearch && filterDef) {
       title = "검색 결과가 없어요.";
@@ -3670,6 +3872,11 @@ export class GalleryView extends FileView {
       void createCharacterNote(this.plugin, {
         genre: this.activeArchive().trim(),
         library: this.pageLibrary(),
+      }).catch((error) => {
+        console.error(error);
+        new Notice(
+          `추가 실패: ${error instanceof Error ? error.message : String(error)}`,
+        );
       });
     };
     // Adding a card is an edit action, and it reveals the new card in peek.

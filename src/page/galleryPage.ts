@@ -33,6 +33,10 @@ import {
   characterNameProblem,
   characterNameProblemMessage,
 } from "../data/characterName";
+import {
+  resolveCharacterParentFolder,
+  type RoutingSibling,
+} from "../data/characterFolderRouting";
 
 /** User-facing product name (plugin list, tabs, settings). */
 export const PLUGIN_DISPLAY_NAME = "Character Archive";
@@ -638,7 +642,8 @@ export async function ensureFolder(
  * Parent folder for a new character note, matching vault layout:
  * `library/{장르폴더}/{이름}/{이름}.md`
  *
- * Prefer the folder where same-group (and same-genre) siblings already live.
+ * Prefer the folder where siblings of the same archive already live — see
+ * `characterFolderRouting` for the scoring.
  */
 function resolveGroupParentFolder(
   plugin: CharinfoPlugin,
@@ -647,43 +652,20 @@ function resolveGroupParentFolder(
   group: string,
 ): string {
   const lib = normalizePath(library);
-  const files = plugin.app.vault.getMarkdownFiles();
-
-  const scoreSibling = (file: TFile): number => {
-    if (file.path === lib || !file.path.startsWith(`${lib}/`)) return -1;
+  const siblings: RoutingSibling[] = [];
+  for (const file of plugin.app.vault.getMarkdownFiles()) {
+    if (!file.path.startsWith(`${lib}/`)) continue;
     const fm = plugin.app.metadataCache.getFileCache(file)?.frontmatter;
-    if (!fm || String(fm.kind ?? "") !== "character") return -1;
-    const g = String(fm.그룹 ?? "").trim();
-    const j = String(fm.장르 ?? "").trim();
-    let score = 0;
-    if (group && g === group) score += 2;
-    if (genre && j === genre) score += 1;
-    if (!group && !g) score += 1;
-    return score;
-  };
-
-  let best: TFile | null = null;
-  let bestScore = 0;
-  for (const file of files) {
-    const score = scoreSibling(file);
-    if (score > bestScore) {
-      bestScore = score;
-      best = file;
-    }
+    if (!fm || String(fm.kind ?? "") !== "character") continue;
+    siblings.push({
+      path: file.path,
+      genre: String(fm.장르 ?? "").trim(),
+      group: String(fm.그룹 ?? "").trim(),
+    });
   }
-
-  if (best && bestScore > 0) {
-    const rel = best.path.slice(lib.length + 1);
-    const parts = rel.split("/").filter(Boolean);
-    if (parts.length >= 3) {
-      return normalizePath(`${lib}/${parts.slice(0, -2).join("/")}`);
-    }
-    return lib;
-  }
-
-  if (genre) return normalizePath(`${lib}/${genre}`);
-  if (group) return normalizePath(`${lib}/${group}`);
-  return lib;
+  return normalizePath(
+    resolveCharacterParentFolder(lib, siblings, genre, group),
+  );
 }
 
 export async function createCharacterNote(

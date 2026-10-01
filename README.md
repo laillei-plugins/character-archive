@@ -21,7 +21,7 @@ Each card shows a cover, status, relationships, body text, and prompts. Open the
 
 1. Enable the plugin.
 2. Open `Character Archive/Character Archive.md`. That note becomes the gallery.
-3. Or use the ribbon **grid** icon, or the command **마지막 갤러리 열기** (Open last-used gallery).
+3. Or use the ribbon **grid** icon, or the command **갤러리 열기** (Open last-used gallery).
 
 The first time, one sample card is created in the **Example** archive. You can delete it.
 
@@ -40,14 +40,14 @@ Embed the gallery on any note:
 
 ### Command palette names
 
-The plugin UI is currently Korean-labeled. Matching palette names:
+The plugin UI is currently Korean-labeled. The palette has two commands:
 
 | English (this README) | In Obsidian |
 | --- | --- |
-| Open last-used gallery | 마지막 갤러리 열기 |
-| New gallery | 새 갤러리 만들기 |
-| Create character note | 캐릭터 노트 만들기 |
-| Share gallery | 갤러리 공유 |
+| Open last-used gallery | 갤러리 열기 |
+| Toggle gallery edit mode | 갤러리 편집 켜기 / 끄기 |
+
+The edit toggle acts on the gallery you are in. Everything else lives in the gallery itself: add a card and create an archive in edit mode, share with the globe button, and make another gallery from the tab's **More options** menu (**새 갤러리 만들기**).
 
 Starter sample paths may use Korean names (`예시`, `첫 카드`). Section headings in the bundled template are also Korean.
 

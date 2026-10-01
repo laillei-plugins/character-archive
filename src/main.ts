@@ -46,13 +46,9 @@ import {
 } from "./data/groupSchema";
 import { MediaService } from "./media/MediaService";
 import {
-  createCharacterNote,
   createGalleryPage,
-  copyGalleryPageLink,
-  copyTextToClipboard,
   dedupeOverlappingRoots,
   galleryPagePath,
-  galleryWikiLink,
   ensureFolder,
   fileHasGalleryFrontmatter,
   isGalleryPage,
@@ -64,16 +60,11 @@ import {
   resolveOrCreateGalleryPageForLibrary,
   resolveOrMigrateGalleryPage,
 } from "./page/galleryPage";
-import {
-  sweepEmptyFolders,
-  sweepOrphanGalleryPages,
-} from "./page/orphanCleanup";
 import { CharinfoSettingTab } from "./ui/SettingTab";
-import { CreateGalleryModal } from "./ui/CreateGalleryModal";
 import {
   commandById,
-  hiddenCompatCheck,
   OPEN_GALLERY_NAME,
+  toggleActiveEditMode,
 } from "./ui/commandSurface";
 import { GalleryView, VIEW_TYPE_CHARINFO_GALLERY } from "./views/GalleryView";
 import {
@@ -249,160 +240,17 @@ export default class CharinfoPlugin extends Plugin {
       },
     });
 
-    const newGallery = commandById("new-gallery-page")!;
+    // The gallery the user is in, or nothing: an edit toggle that also flipped
+    // background galleries would change screens nobody is looking at.
+    const toggleEdit = commandById("toggle-edit-mode")!;
     this.addCommand({
-      id: newGallery.id,
-      name: newGallery.name,
-      callback: () => {
-        new CreateGalleryModal(this.app, this).open();
-      },
-    });
-
-    const defaultOpen = commandById("new-gallery-page-default")!;
-    this.addCommand({
-      id: defaultOpen.id,
-      name: defaultOpen.name,
-      checkCallback: (checking) => {
-        if (!hiddenCompatCheck(checking)) return false;
-        void createGalleryPage(this).catch((error) => {
-          console.error("[charinfo] 기본 갤러리 열기 실패", error);
-          new Notice("갤러리를 열지 못했어요.");
-        });
-        return true;
-      },
-    });
-
-    this.addCommand({
-      id: "sweep-empty-folders",
-      name: "남은 빈 폴더 치우기",
-      callback: () => {
-        void sweepEmptyFolders(this);
-      },
-    });
-
-    this.addCommand({
-      id: "sweep-orphan-gallery-pages",
-      name: "남은 갤러리 창 치우기",
-      callback: () => {
-        void sweepOrphanGalleryPages(this);
-      },
-    });
-
-    this.addCommand({
-      id: "new-character",
-      name: "캐릭터 노트 만들기",
-      callback: () => {
-        // Focused gallery decides where the card lands; no gallery open → globals.
-        const view = this.getFocusedGalleryView();
-        void createCharacterNote(
-          this,
-          view
-            ? { library: view.pageLibrary(), genre: view.activeArchive() }
-            : undefined,
-        );
-      },
-    });
-
-    this.addCommand({
-      id: "toggle-edit-mode",
-      name: "갤러리 편집 모드 전환",
-      callback: () => {
-        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY);
-        for (const leaf of leaves) {
-          const view = leaf.view;
-          if (view instanceof GalleryView) {
-            view.setEditMode(!view.editMode);
-          }
-        }
-      },
-    });
-
-    this.addCommand({
-      id: "refresh-gallery",
-      name: "갤러리 새로고침",
-      callback: () => {
-        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY);
-        for (const leaf of leaves) {
-          const view = leaf.view;
-          if (view instanceof GalleryView) {
-            void view.refresh();
-          }
-        }
-      },
-    });
-
-    const healImages = commandById("heal-library-image-links")!;
-    this.addCommand({
-      id: healImages.id,
-      name: healImages.name,
-      callback: () => {
-        void (async () => {
-          const { rewriteLibraryPathPrefix } = await import("./data/images");
-          const to = normalizePath(
-            this.settings.libraryFolder.trim() || "Character Archive",
-          );
-          // Common rename we already did + any leftover Korean path.
-          const n = await rewriteLibraryPathPrefix(
-            this.app,
-            to,
-            "캐릭터 프롬프트",
-            to,
-          );
-          new Notice(
-            n > 0
-              ? `이미지 다시 연결됨 · 노트 ${n}개\n(옛 폴더 경로 → ${to})`
-              : "고칠 깨진 경로가 없어요.\n이미 연결됐거나, 예전에 쓰던 폴더명이 남아 있지 않아요.",
-          );
-          if (n > 0) this.refreshOpenGalleries();
-        })().catch((error) => {
-          console.error("[charinfo] 예전 폴더 이미지 다시 연결 실패", error);
-          new Notice("이미지를 다시 연결하지 못했어요.");
-        });
-      },
-    });
-
-    this.addCommand({
-      id: "share-gallery-web",
-      name: "갤러리 공유",
-      callback: () => {
-        const view = this.getFocusedGalleryView();
-        if (!view) {
-          new Notice("갤러리를 먼저 여세요.");
-          return;
-        }
-        view.openWebShare();
-      },
-    });
-
-    this.addCommand({
-      id: "copy-gallery-page-link",
-      name: "갤러리 앱 링크 복사",
-      callback: () => {
-        void (async () => {
-          const file = await resolveGalleryPageFile(this);
-          if (!file) {
-            new Notice("갤러리 노트를 찾지 못했어요.");
-            return;
-          }
-          await copyGalleryPageLink(this.app, file);
-        })();
-      },
-    });
-
-    this.addCommand({
-      id: "copy-gallery-wikilink",
-      name: "갤러리 노트 링크 복사",
-      callback: () => {
-        void (async () => {
-          const file = await resolveGalleryPageFile(this);
-          if (!file) {
-            new Notice("갤러리 노트를 찾지 못했어요.");
-            return;
-          }
-          const ok = await copyTextToClipboard(galleryWikiLink(file));
-          new Notice(ok ? "노트 링크를 복사했어요" : "복사에 실패했어요");
-        })();
-      },
+      id: toggleEdit.id,
+      name: toggleEdit.name,
+      checkCallback: (checking) =>
+        toggleActiveEditMode(
+          checking,
+          this.app.workspace.getActiveViewOfType(GalleryView),
+        ),
     });
 
     this.addSettingTab(new CharinfoSettingTab(this.app, this));

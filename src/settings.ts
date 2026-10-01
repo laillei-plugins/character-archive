@@ -51,6 +51,11 @@ import {
   remapLastOpenedGalleryPath,
 } from "./ui/libraryFolderOpen";
 import { normalizeSchemaScanCache, type SchemaScanCache } from "./data/schemaScanCache";
+import {
+  declareArchive,
+  normalizeDeclaredArchives,
+  type DeclaredArchive,
+} from "./data/archiveRegistry";
 
 /** Vault-relative path normalize (no Obsidian import in settings). */
 function normalizePath(path: string): string {
@@ -73,6 +78,7 @@ export type {
   FieldKeyLedger,
   CardFieldVisibility,
   CardFieldOrder,
+  DeclaredArchive,
 };
 export {
   TAG_FRONTMATTER_KEY,
@@ -224,6 +230,11 @@ export interface CharinfoSettings {
    */
   groupOrderByLibrary: Record<string, Record<string, string[]>>;
   /**
+   * Archives the user created on purpose, per library. One of these exists
+   * with no card; every other archive is still inferred from its cards.
+   */
+  declaredArchives: DeclaredArchive[];
+  /**
    * Ephemeral UI per gallery note path (active archive when unpinned, status filter).
    */
   galleryPageState: Record<string, GalleryPageState>;
@@ -359,6 +370,7 @@ export const DEFAULT_SETTINGS: CharinfoSettings = {
     예시: ["예시"],
   },
   groupOrderByLibrary: {},
+  declaredArchives: [],
   galleryPageState: {},
   cardProperties: DEFAULT_CARD_PROPERTIES.map((p) => ({ ...p })),
   groupSchemas: [],
@@ -706,6 +718,10 @@ export function migrateSettings(
     vaultMediaFolder,
     groupOrderByGenre,
     groupOrderByLibrary,
+    // No backfill: an archive inferred from cards stays inferred.
+    declaredArchives: normalizeDeclaredArchives(
+      (src as { declaredArchives?: unknown }).declaredArchives,
+    ),
     galleryPageState,
     imageUploadDestination,
     characterTemplateByGenre: normalizeTemplateByGenre(
@@ -1104,6 +1120,29 @@ export function patchGalleryPageState(
       ...patch,
     },
   };
+}
+
+/**
+ * Create an archive and select it on one gallery page — one mutation, so a
+ * failed save leaves neither a declaration nobody chose nor a page pointing at
+ * an archive that does not exist. Throws `ArchiveNameError` for a name that
+ * collides with what the store holds at commit time.
+ */
+export function createArchiveForPage(
+  settings: CharinfoSettings,
+  input: {
+    library: string;
+    name: unknown;
+    pagePath: string;
+    /** Archive names the library's cards carry right now. */
+    observed: readonly string[];
+    /** Names of the folders directly under the library. */
+    folders: readonly string[];
+  },
+): string {
+  const archive = declareArchive(settings, input);
+  patchGalleryPageState(settings, input.pagePath, { activeGenre: archive });
+  return archive;
 }
 
 /** Drop remembered UI when a gallery note is removed. */

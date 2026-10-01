@@ -5,6 +5,7 @@ export type LibraryFolderSettings = {
   characterTemplateByGenre: Record<string, string>;
   lastOpenedGalleryPath: string;
   groupOrderByLibrary: Record<string, Record<string, string[]>>;
+  declaredArchives: Array<{ library: string; archive: string }>;
   galleryPageState: Record<string, unknown>;
   webShareByPage: Record<string, unknown>;
   groupSchemas: Array<{ library: string }>;
@@ -194,6 +195,26 @@ export function remapLibraryFolderSettings(
   const nextOrder = remapKeyedRecord(settings.groupOrderByLibrary, from, to);
   if (JSON.stringify(nextOrder) !== JSON.stringify(settings.groupOrderByLibrary)) {
     settings.groupOrderByLibrary = nextOrder;
+    changed = true;
+  }
+
+  // Declared archives follow their library. A row already declared at the
+  // destination under the same portable name is one archive, not two.
+  const seenDeclared = new Set<string>();
+  const nextDeclared: Array<{ library: string; archive: string }> = [];
+  for (const row of settings.declaredArchives) {
+    const library = normalizeFolderPath(
+      remapFolderPrefix(row.library, from, to),
+    );
+    const key = `${library}\n${row.archive.normalize("NFC").toLowerCase()}`;
+    if (seenDeclared.has(key)) continue;
+    seenDeclared.add(key);
+    nextDeclared.push({ library, archive: row.archive });
+  }
+  if (
+    JSON.stringify(nextDeclared) !== JSON.stringify(settings.declaredArchives)
+  ) {
+    settings.declaredArchives = nextDeclared;
     changed = true;
   }
 

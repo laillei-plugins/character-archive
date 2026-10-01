@@ -59,7 +59,7 @@ test("fresh installs and a different plugin version do not open this note", () =
 
 test("stored seen versions are normalized before comparison", () => {
   assert.equal(normalizeSeenUpdateNotesVersion(null), "");
-  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.27 "), "0.1.27");
+  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.28 "), "0.1.28");
   assert.equal(normalizeSeenUpdateNotesVersion(18), "");
 });
 
@@ -73,11 +73,11 @@ test("one update note keeps Korean before the equivalent English section", () =>
   assert.ok(korean >= 0 && english > korean);
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /커버 창에서 이미지를 드래그해 순서를 바꿀 수 있어요/,
+    /새 아카이브 만들기/,
   );
   assert.match(
     UPDATE_NOTES_MARKDOWN,
-    /Drag images to reorder them in the cover window/,
+    /Create archive/,
   );
 });
 
