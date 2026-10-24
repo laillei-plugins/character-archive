@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: native Node TS tests require explicit extensions.
+import { t } from "../i18n/index.ts";
 /**
  * 아카이브 등록 — an archive the user created on purpose.
  *
@@ -144,18 +146,18 @@ export function topLevelFolderOf(library: string, path: string): string {
 function reservedArchiveReason(name: string): string | null {
   const identity = archiveIdentity(name);
   if (identity === archiveIdentity(UNCLASSIFIED_ARCHIVE)) {
-    return `「${name}」는 아카이브가 없는 카드를 모아 두는 이름이라 쓸 수 없어요.`;
+    return t("valueIsReservedForCardsWithoutAnArchive", { arg1: name });
   }
   if (identity === GALLERY_PAGES_FOLDER) {
-    return `「${name}」는 갤러리 노트 폴더 이름이라 쓸 수 없어요.`;
+    return t("valueIsReservedForTheGalleryNotesFolder", { arg1: name });
   }
   if (identity === STARTER_FOLDER) {
-    return `「${name}」는 예시 카드 폴더 이름이라 쓸 수 없어요.`;
+    return t("valueIsReservedForTheExampleCardsFolder", { arg1: name });
   }
   // Archive names index plain objects (templates, group order). A name every
   // object already answers to would read a built-in instead of user data.
   if (Object.getOwnPropertyNames(Object.prototype).includes(name)) {
-    return `「${name}」는 플러그인 안에서 쓰는 이름이라 쓸 수 없어요.`;
+    return t("valueIsReservedForInternalPluginUse", { arg1: name });
   }
   return null;
 }
@@ -194,7 +196,7 @@ export function archiveNameProblem(check: ArchiveNameCheck): string | null {
     (other) => other !== check.source && archiveIdentity(other) === identity,
   );
   if (duplicate) {
-    return `「${name}」 아카이브가 이미 있어요. 다른 이름을 정해 주세요.`;
+    return t("anArchiveNamedValueAlreadyExistsChooseAnother", { arg1: name });
   }
 
   const own = new Set(
@@ -205,7 +207,7 @@ export function archiveNameProblem(check: ArchiveNameCheck): string | null {
     (other) => archiveIdentity(other) === identity,
   );
   if (folder !== undefined && !own.has(identity)) {
-    return `「${folder}」 폴더가 이미 있어요. 다른 이름을 정해 주세요.`;
+    return t("theFolderValueAlreadyExistsChooseAnotherName", { arg1: folder });
   }
   return null;
 }
@@ -285,11 +287,11 @@ export function archiveRenameNotice(result: {
   const { next, count } = result;
   if (result.saved) {
     return count
-      ? `아카이브 이름을 「${next}」로 바꿨어요 · 노트 ${count}개`
-      : `아카이브 이름을 「${next}」로 바꿨어요`;
+      ? t("renamedArchiveToValueValueNotes", { arg1: next, arg2: count })
+      : t("renamedArchiveToValue", { arg1: next });
   }
   const reason = result.error ? ` · ${result.error}` : "";
   return count
-    ? `노트는 「${next}」로 바꿨지만 설정 저장에 실패했어요${reason}`
-    : `아카이브 이름을 바꾸지 못했어요 · 설정 저장에 실패했어요${reason}`;
+    ? t("renamedNotesToValueButCouldNotSave", { arg1: next, arg2: reason })
+    : t("couldNotRenameArchiveCouldNotSaveSettings", { arg1: reason });
 }

@@ -8,7 +8,7 @@ const modal = readFileSync(join(root, "src/ui/AttrManageModal.ts"), "utf8");
 const css = readFileSync(join(root, "styles.css"), "utf8");
 
 test("the group drawer exposes one peer contract for every route", () => {
-  assert.match(modal, /const ROOT_TITLE = "그룹 · 속성 관리"/);
+  assert.match(modal, /const rootTitle = \(\) => t\("groupsManageProperties"\)/);
   assert.match(modal, /setIcon\(grip, "grip-vertical"\)/);
   assert.match(modal, /setIcon\(rename, "pencil"\)/);
   assert.match(modal, /setIcon\(remove, "trash-2"\)/);
@@ -60,8 +60,8 @@ test("the one picker line that moved reads the peer inventory, not the old flags
 
 test("group note mutations refuse stale paths and stale membership", () => {
   const view = readFileSync(join(root, "src/views/GalleryView.ts"), "utf8");
-  assert.match(view, /throw new Error\(`노트를 찾지 못했어요: \$\{path\}`\)/);
+  assert.match(view, /throw new Error\(t\("couldNotFindNoteValue", \{ arg1: path \}\)\)/);
   assert.match(view, /if \(current !== expected\)/);
   assert.match(view, /\[\.\.\.rewritten\]\.reverse\(\)/);
-  assert.match(view, /되돌리지 못한 노트/);
+  assert.match(view, /t\("couldNotRestoreValueNotes"/);
 });

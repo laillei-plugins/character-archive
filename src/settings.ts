@@ -1,3 +1,4 @@
+import { resolveLanguage, type Language } from "./i18n";
 import {
   DEFAULT_CARD_PROPERTIES,
   normalizeCardProperties,
@@ -183,6 +184,8 @@ export interface WebShareLastState {
 }
 
 export interface CharinfoSettings {
+  /** UI display only; resolved once on first load and persisted. */
+  language: Language;
   /** Successful per-note schema passes; lets routine app starts skip unchanged notes. */
   schemaScanCache: SchemaScanCache;
   /** Latest bundled update note successfully opened, or silently seeded on install. */
@@ -359,6 +362,7 @@ export interface CharinfoSettings {
 }
 
 export const DEFAULT_SETTINGS: CharinfoSettings = {
+  language: "en",
   schemaScanCache: { signature: "", files: {} },
   lastOpenedUpdateNotesVersion: "",
   lastOpenedGalleryPath: "",
@@ -597,6 +601,7 @@ function migrateShareContentFlags(raw: Record<string, unknown>): {
 /** Merge persisted settings + normalize card property prefs. */
 export function migrateSettings(
   raw?: Partial<CharinfoSettings> | null,
+  readDisplayLanguage: () => unknown = () => null,
 ): CharinfoSettings {
   const src = (raw ?? {}) as Partial<CharinfoSettings>;
   let activeGenre =
@@ -711,6 +716,7 @@ export function migrateSettings(
   const merged: CharinfoSettings = {
     ...DEFAULT_SETTINGS,
     ...src,
+    language: resolveLanguage(raw, readDisplayLanguage),
     schemaScanCache: normalizeSchemaScanCache(
       (src as { schemaScanCache?: unknown }).schemaScanCache,
     ),

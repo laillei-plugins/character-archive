@@ -1,3 +1,9 @@
+// @ts-expect-error TS5097: native Node TS tests.
+import { displayPropertyLabel } from "../i18n/display.ts";
+// @ts-expect-error TS5097: native Node TS tests.
+import { displayFieldLabel } from "../i18n/display.ts";
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 import { galleryDetailLayout } from "../data/galleryLayout";
 import {
   FileView,
@@ -64,7 +70,6 @@ import {
   ensureGroupSchema,
   GroupDeletionBlockedError,
   GroupOperationError,
-  fieldLabel,
   fieldOptionLabel,
   fieldValue,
   isBuiltinFieldId,
@@ -141,7 +146,7 @@ import {
 import {
   FILTER_AXIS_IDS,
   axisFor,
-  axisLabel,
+  axisLabel as rawAxisLabel,
   createArchiveForPage,
   getGalleryPageState,
   getGroupOrderFor,
@@ -170,7 +175,6 @@ import {
 import { normalizeChipFilter } from "../data/status";
 import { renderLivePeekBody } from "../ui/livePeekBody";
 import { CoverPickerModal } from "../ui/CoverPickerModal";
-import { CREATE_GALLERY_NAME } from "../ui/commandSurface";
 import { CreateGalleryModal } from "../ui/CreateGalleryModal";
 import {
   captureEditScrollAnchor,
@@ -520,7 +524,7 @@ export class GalleryView extends FileView {
     const descriptor = this.batchActionDescriptor();
     activateDescribedBatchAction(descriptor, () => {
       if (!this.editMode) {
-        new Notice("편집 모드(연필)를 켜면 여러 캐릭터를 고를 수 있어요.");
+        new Notice(t("turnOnEditModePencilToSelectMultiple"));
         this.contentEl
           .querySelector<HTMLElement>('[data-charinfo="edit"]')
           ?.focus();
@@ -544,7 +548,7 @@ export class GalleryView extends FileView {
   private requestManualRefresh(): Promise<void> {
     return this.refreshFlight.run(() => this.refresh(), (error) => {
       console.error("[charinfo] 새로고침 실패", error);
-      new Notice("새로고침에 실패했어요. 다시 시도해 주세요.");
+      new Notice(t("couldNotRefreshTryAgain"));
     });
   }
 
@@ -756,7 +760,7 @@ export class GalleryView extends FileView {
     super.onPaneMenu(menu, source);
     menu.addItem((item) => {
       item
-        .setTitle("갤러리 공유")
+        .setTitle(t("shareGallery"))
         .setIcon("globe")
         .onClick(() => {
           this.openWebShare();
@@ -764,7 +768,7 @@ export class GalleryView extends FileView {
     });
     menu.addItem((item) => {
       item
-        .setTitle(CREATE_GALLERY_NAME)
+        .setTitle(t("createNewGallery"))
         .setIcon("layout-grid")
         .onClick(() => {
           new CreateGalleryModal(this.app, this.plugin, {
@@ -780,7 +784,7 @@ export class GalleryView extends FileView {
     // The share dialog starts from another archive when this one has no card,
     // and would publish cards the user is not looking at.
     if (!this.records.some((record) => !archive || record.장르 === archive)) {
-      new Notice("이 아카이브에는 공유할 카드가 아직 없어요.");
+      new Notice(t("thisArchiveHasNoCardsToShareYet"));
       return;
     }
     const title = archive || this.file?.basename || "Character Archive";
@@ -792,7 +796,7 @@ export class GalleryView extends FileView {
 
   async copyPageLink(): Promise<void> {
     if (!this.file) {
-      new Notice("이 갤러리에 연결된 노트가 없어요.");
+      new Notice(t("thisGalleryHasNoLinkedNote"));
       return;
     }
     await copyGalleryPageLink(this.app, this.file);
@@ -800,11 +804,11 @@ export class GalleryView extends FileView {
 
   async copyWikiLink(): Promise<void> {
     if (!this.file) {
-      new Notice("이 갤러리에 연결된 노트가 없어요.");
+      new Notice(t("thisGalleryHasNoLinkedNote"));
       return;
     }
     const ok = await copyTextToClipboard(galleryWikiLink(this.file));
-    new Notice(ok ? "노트 링크를 복사했어요" : "복사에 실패했어요");
+    new Notice(ok ? t("noteLinkCopied") : t("couldNotCopy"));
   }
 
   /** Archive names the scanned cards carry, unsorted. */
@@ -983,10 +987,10 @@ export class GalleryView extends FileView {
     this.characterNameModal?.close();
     const generation = this.uiGeneration;
     const modal = new CharacterNameModal(this.app, {
-      title: "새 아카이브",
-      placeholder: "아카이브 이름",
-      submitText: "만들기",
-      savingText: "만드는 중…",
+      title: t("newArchive"),
+      placeholder: t("archiveName"),
+      submitText: t("create"),
+      savingText: t("creating"),
       validate: (name) => this.newArchiveProblem(name),
       onSubmit: (name) => this.createArchive(name, generation),
       onClose: () => {
@@ -1027,11 +1031,11 @@ export class GalleryView extends FileView {
     } catch (error) {
       if (error instanceof ArchiveNameError) return error.message;
       console.error("[charinfo] 아카이브 만들기 실패", error);
-      return `아카이브를 저장하지 못했어요 · ${error instanceof Error ? error.message : String(error)}`;
+      return t("couldNotSaveArchiveValue", { arg1: error instanceof Error ? error.message : String(error) });
     }
 
     this.refreshSiblingGalleries();
-    new Notice(`「${created}」 아카이브를 만들었어요.`);
+    new Notice(t("createdArchiveValue", { arg1: created }));
     if (!this.uiAlive(generation)) return null;
     // The captured batch scope belongs to the archive we are leaving.
     this.teardownBatchMode();
@@ -1107,7 +1111,7 @@ export class GalleryView extends FileView {
       renameArchiveScope(this.schemaSnapshot(), library, prev, next, pagePaths);
     } catch (error) {
       new Notice(
-        `${error instanceof Error ? error.message : String(error)} · 다른 이름을 정해 주세요.`,
+        t("valueChooseAnotherName", { arg1: error instanceof Error ? error.message : String(error) }),
       );
       return;
     }
@@ -1140,7 +1144,7 @@ export class GalleryView extends FileView {
       // does not exist.
       console.error("[charinfo] 아카이브 이름 바꾸기 실패", error);
       new Notice(
-        `아카이브 이름을 바꾸지 못했어요 · ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotRenameArchiveValue", { arg1: error instanceof Error ? error.message : String(error) }),
       );
       return;
     } finally {
@@ -1353,8 +1357,8 @@ export class GalleryView extends FileView {
     if (!(back instanceof HTMLElement)) return;
     back.empty();
     setIcon(back, this.detailFull ? "chevron-left" : "x");
-    back.setAttribute("aria-label", this.detailFull ? "갤러리로 돌아가기" : "닫기");
-    if (this.detailFull) back.createSpan({ text: "갤러리" });
+    back.setAttribute("aria-label", this.detailFull ? t("backToGallery") : t("close"));
+    if (this.detailFull) back.createSpan({ text: t("gallery") });
   }
 
   /**
@@ -1398,8 +1402,8 @@ export class GalleryView extends FileView {
       const back = body.querySelector<HTMLElement>(".charinfo-detail__back");
       if (back) {
         back.empty(); setIcon(back, full ? "chevron-left" : "x");
-        back.setAttribute("aria-label", full ? "갤러리로 돌아가기" : "닫기");
-        if (full) back.createSpan({ text: "갤러리" });
+        back.setAttribute("aria-label", full ? t("backToGallery") : t("close"));
+        if (full) back.createSpan({ text: t("gallery") });
         if (full && this.peekOpen && (dividerFocused || body.querySelector(".charinfo-gallery__main")?.contains(body.ownerDocument.activeElement))) back.focus({ preventScroll: true });
       }
     }
@@ -1407,7 +1411,7 @@ export class GalleryView extends FileView {
 
   private attachDetailResize(body: HTMLElement): void {
     this.bodyResizeObserver?.disconnect();
-    const divider = body.createDiv({ cls: "charinfo-detail-resize", attr: { role: "separator", tabindex: "0", "aria-label": "패널 너비", "aria-orientation": "vertical" } });
+    const divider = body.createDiv({ cls: "charinfo-detail-resize", attr: { role: "separator", tabindex: "0", "aria-label": t("panelWidth"), "aria-orientation": "vertical" } });
     let drag: { id: number; x: number; width: number } | null = null;
     const setWidth = (value: number): void => {
       const bounds = galleryDetailLayout(body.clientWidth, this.detailPreferred);
@@ -1714,7 +1718,7 @@ export class GalleryView extends FileView {
     to: string,
   ): Promise<void> {
     if (this.groupRenameSaving) {
-      throw new GroupOperationError("이름 바꾸기가 아직 진행 중이에요.");
+      throw new GroupOperationError(t("renamingIsStillInProgress"));
     }
     const source = normalizeGroupKey(from);
     const target = normalizeRenameInput(to);
@@ -1765,7 +1769,7 @@ export class GalleryView extends FileView {
       for (const record of members) {
         const file = this.app.vault.getAbstractFileByPath(record.path);
         if (!(file instanceof TFile)) {
-          throw new Error(`노트를 찾지 못했어요: ${record.path}`);
+          throw new Error(t("couldNotFindNoteValue", { arg1: record.path }));
         }
         await this.app.fileManager.trashFile(file);
         trashed.add(record.path);
@@ -1775,7 +1779,7 @@ export class GalleryView extends FileView {
       forget();
       this.plugin.markGalleriesDirty();
       throw new GroupOperationError(
-        `노트 ${total}개 중 ${trashed.size}개만 휴지통으로 보냈어요 · 그룹은 그대로 있어요`,
+        t("movedOnlyValueOfValueNotesToTrash", { arg1: total, arg2: trashed.size }),
       );
     } finally {
       this.plugin.suppressGalleryRefresh = false;
@@ -1793,7 +1797,7 @@ export class GalleryView extends FileView {
       forget();
       this.plugin.markGalleriesDirty();
       throw new GroupOperationError(
-        `노트 ${trashed.size}개는 휴지통으로 보냈지만 그룹 설정을 지우지 못했어요 · 다시 시도해 주세요`,
+        t("movedValueNotesToTrashButCouldNot", { arg1: trashed.size }),
       );
     }
     forget();
@@ -1834,8 +1838,8 @@ export class GalleryView extends FileView {
     if (plan.blocked) {
       throw new GroupDeletionBlockedError(
         plan.blocked === "same-scope"
-          ? "다른 위치를 골라 주세요."
-          : "옮길 위치를 찾지 못했어요.",
+          ? t("chooseAnotherDestination")
+          : t("couldNotFindTheDestination"),
       );
     }
 
@@ -1847,14 +1851,14 @@ export class GalleryView extends FileView {
     ): Promise<void> => {
       const file = this.app.vault.getAbstractFileByPath(path);
       if (!(file instanceof TFile)) {
-        throw new Error(`노트를 찾지 못했어요: ${path}`);
+        throw new Error(t("couldNotFindNoteValue", { arg1: path }));
       }
       await this.app.fileManager.processFrontMatter(file, (fm) => {
         const current = normalizeGroupKey(
           typeof fm.그룹 === "string" ? fm.그룹 : "",
         );
         if (current !== expected) {
-          throw new Error(`그룹이 다른 곳에서 바뀌었어요: ${file.basename}`);
+          throw new Error(t("theGroupChangedElsewhereValue", { arg1: file.basename }));
         }
         fm.그룹 = next;
       });
@@ -1873,7 +1877,7 @@ export class GalleryView extends FileView {
       return failed;
     };
     const stranded = (failed: number): string =>
-      failed ? ` · 되돌리지 못한 노트 ${failed}개` : "";
+      failed ? t("couldNotRestoreValueNotes", { arg1: failed }) : "";
 
     this.plugin.suppressGalleryRefresh = true;
     try {
@@ -1885,7 +1889,7 @@ export class GalleryView extends FileView {
       const failed = await rollback();
       this.plugin.markGalleriesDirty();
       throw new GroupOperationError(
-        `그룹을 지우지 못했어요${stranded(failed)} · ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotDeleteGroupValueValue", { arg1: stranded(failed), arg2: error instanceof Error ? error.message : String(error) }),
       );
     } finally {
       this.plugin.suppressGalleryRefresh = false;
@@ -1917,7 +1921,7 @@ export class GalleryView extends FileView {
       }
       this.plugin.markGalleriesDirty();
       throw new GroupOperationError(
-        `설정을 저장하지 못했어요${stranded(failed)} · ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotSaveSettingsValueValue", { arg1: stranded(failed), arg2: error instanceof Error ? error.message : String(error) }),
       );
     }
 
@@ -2062,13 +2066,13 @@ export class GalleryView extends FileView {
     const rewritten: string[] = [];
     const write = async (path: string, expected: string, next: string) => {
       const file = this.app.vault.getAbstractFileByPath(path);
-      if (!(file instanceof TFile)) throw new Error(`노트를 찾지 못했어요: ${path}`);
+      if (!(file instanceof TFile)) throw new Error(t("couldNotFindNoteValue", { arg1: path }));
       await this.app.fileManager.processFrontMatter(file, (fm) => {
         const current = normalizeGroupKey(
           typeof fm.그룹 === "string" ? fm.그룹 : "",
         );
         if (current !== expected) {
-          throw new Error(`그룹이 다른 곳에서 바뀌었어요: ${file.basename}`);
+          throw new Error(t("theGroupChangedElsewhereValue", { arg1: file.basename }));
         }
         fm.그룹 = next;
       });
@@ -2086,7 +2090,7 @@ export class GalleryView extends FileView {
       return failed;
     };
     const stranded = (failed: number): string =>
-      failed ? ` · 되돌리지 못한 노트 ${failed}개` : "";
+      failed ? t("couldNotRestoreValueNotes", { arg1: failed }) : "";
 
     this.plugin.suppressGalleryRefresh = true;
     try {
@@ -2098,7 +2102,7 @@ export class GalleryView extends FileView {
       const failed = await rollback();
       this.plugin.markGalleriesDirty();
       throw new GroupOperationError(
-        `그룹 이름을 바꾸지 못했어요${stranded(failed)} · ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotRenameGroupValueValue", { arg1: stranded(failed), arg2: error instanceof Error ? error.message : String(error) }),
       );
     } finally {
       this.plugin.suppressGalleryRefresh = false;
@@ -2117,7 +2121,7 @@ export class GalleryView extends FileView {
       this.plugin.suppressGalleryRefresh = false;
       this.plugin.markGalleriesDirty();
       throw new GroupOperationError(
-        `설정을 저장하지 못했어요${stranded(failed)} · ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotSaveSettingsValueValue", { arg1: stranded(failed), arg2: error instanceof Error ? error.message : String(error) }),
       );
     }
 
@@ -2251,24 +2255,24 @@ export class GalleryView extends FileView {
   private renderBatchBar(root: HTMLElement): void {
     const bar = root.createDiv({
       cls: "charinfo-batch-bar",
-      attr: { role: "group", "aria-label": "선택한 캐릭터" },
+      attr: { role: "group", "aria-label": t("selectedCharacters") },
     });
     bar.createDiv({
       cls: "charinfo-batch-bar__count",
-      text: `${this.batchSelection.size}명 선택`,
+      text: t("valueSelected", { arg1: this.batchSelection.size }),
       attr: { role: "status" },
     });
     const actions = bar.createDiv({ cls: "charinfo-batch-bar__actions" });
     const clear = actions.createEl("button", {
       cls: "charinfo-text-btn charinfo-batch-bar__clear",
-      text: "선택 해제",
+      text: t("clearSelection"),
       attr: { type: "button" },
     });
     clear.disabled = this.batchSelection.size === 0;
     clear.addEventListener("click", () => this.clearBatchSelection());
     const move = actions.createEl("button", {
       cls: "charinfo-text-btn mod-cta charinfo-batch-bar__move",
-      text: "그룹 이동",
+      text: t("moveToGroup"),
       attr: { type: "button" },
     });
     move.disabled = this.batchSelection.size === 0;
@@ -2281,7 +2285,7 @@ export class GalleryView extends FileView {
     if (!(bar instanceof HTMLElement)) return;
     const count = bar.querySelector(".charinfo-batch-bar__count");
     if (count instanceof HTMLElement) {
-      count.setText(`${this.batchSelection.size}명 선택`);
+      count.setText(t("valueSelected", { arg1: this.batchSelection.size }));
     }
     const empty = this.batchSelection.size === 0;
     for (const selector of [
@@ -2651,7 +2655,7 @@ export class GalleryView extends FileView {
     } else {
       console.error("[charinfo] 그룹 이동 실패", failure);
       notice = new Notice(
-        `그룹을 바꾸지 못했어요 · ${failure instanceof Error ? failure.message : String(failure)}`,
+        t("couldNotChangeGroupValue", { arg1: failure instanceof Error ? failure.message : String(failure) }),
         BATCH_NOTICE_MS,
       );
     }
@@ -2723,13 +2727,13 @@ export class GalleryView extends FileView {
     if (!(file instanceof TFile)) {
       throw new BatchMoveConflictError(
         entry.path,
-        `노트를 찾지 못했어요 · ${entry.path}`,
+        t("couldNotFindNoteValue2", { arg1: entry.path }),
       );
     }
     if (!this.withinBatchLibrary(entry.path, scope.library)) {
       throw new BatchMoveConflictError(
         entry.path,
-        `「${file.basename}」이(가) 이 서재 밖으로 옮겨졌어요.`,
+        t("valueWasMovedOutsideThisLibrary", { arg1: file.basename }),
       );
     }
     const written: string[] = [];
@@ -2742,7 +2746,7 @@ export class GalleryView extends FileView {
         conflicts.push(
           new BatchMoveConflictError(
             entry.path,
-            `「${file.basename}」의 아카이브가 그 사이에 바뀌었어요.`,
+            t("theArchiveForValueChangedInTheMeantime", { arg1: file.basename }),
           ),
         );
         return;
@@ -2754,7 +2758,7 @@ export class GalleryView extends FileView {
         conflicts.push(
           new BatchMoveConflictError(
             entry.path,
-            `「${file.basename}」의 그룹이 그 사이에 바뀌었어요.`,
+            t("theGroupForValueChangedInTheMeantime", { arg1: file.basename }),
           ),
         );
         return;
@@ -2782,7 +2786,7 @@ export class GalleryView extends FileView {
     if (!(file instanceof TFile)) {
       throw new BatchMoveConflictError(
         entry.path,
-        `노트를 찾지 못해 되돌리지 못했어요 · ${entry.path}`,
+        t("couldNotRestoreBecauseTheNoteWasNot", { arg1: entry.path }),
       );
     }
     const diverged: string[] = [];
@@ -2797,7 +2801,7 @@ export class GalleryView extends FileView {
     if (diverged.length > 0) {
       throw new BatchMoveConflictError(
         entry.path,
-        `되돌리기 전에 그룹이 또 바뀌었어요 · ${entry.path}`,
+        t("theGroupChangedAgainBeforeUndoValue", { arg1: entry.path }),
       );
     }
   }
@@ -2847,14 +2851,14 @@ export class GalleryView extends FileView {
     // command palette calls the same method. Saving can never be cancelled;
     // while merely selecting, the active selection icon remains the sole exit.
     if (this.groupRenameSaving) {
-      new Notice("그룹 이름 변경이 끝난 뒤 편집 모드를 바꿀 수 있어요.");
+      new Notice(t("waitForTheGroupRenameToFinishBefore"));
       return;
     }
     if (this.batchMode) {
       new Notice(
         this.batchSaving
-          ? "그룹 이동이 끝난 뒤 편집 모드를 바꿀 수 있어요."
-          : "여러 선택을 끝낸 뒤 편집 모드를 바꿀 수 있어요.",
+          ? t("waitForTheGroupMoveToFinishBefore")
+          : t("finishMultipleSelectionBeforeChangingEditMode"),
       );
       return;
     }
@@ -2869,7 +2873,7 @@ export class GalleryView extends FileView {
     this.render();
     if (turningOn) {
       this.showGalleryTip(
-        "위쪽 「표시 순서」에서 정렬을 고르고, 카드의 이미지 아이콘으로 커버를 바꿔 보세요.",
+        t("chooseASortOrderInDisplayOrderAnd"),
       );
     }
     this.restoreEditScroll(scrollAnchor);
@@ -3333,11 +3337,11 @@ export class GalleryView extends FileView {
   private fillChipFilters(tokens: HTMLElement): void {
     const axis = this.filterAxis();
     const active = this.chipFilter;
-    tokens.setAttribute("aria-label", `${axis.label} 필터`);
+    tokens.setAttribute("aria-label", t("valueFilter", { arg1: displayPropertyLabel(axis.propertyId, axis.label) }));
     if (axis.empty) {
       tokens.createSpan({
         cls: "charinfo-gallery__filters-empty",
-        text: "값을 먼저 추가하세요.",
+        text: t("addValuesFirst"),
       });
     }
     // Tags carry no color, so their chips drop the color dot.
@@ -3349,7 +3353,7 @@ export class GalleryView extends FileView {
       cls: string;
       color: StatusColorToken | null;
     }[] = [
-      { id: "all", label: "전체", cls: "is-all", color: null },
+      { id: "all", label: t("all"), cls: "is-all", color: null },
       ...this.visibleAxisOptions(axis).map((s) => ({
         id: s.id,
         label: s.label,
@@ -3411,7 +3415,7 @@ export class GalleryView extends FileView {
 
     if (emptyLibrary && !canCreate) {
       left.createEl("h2", {
-        text: "아카이브 없음",
+        text: t("noArchive"),
         cls: "charinfo-gallery__title",
       });
     } else {
@@ -3419,7 +3423,7 @@ export class GalleryView extends FileView {
       const current = active || genres[0] || "";
       if (pinned) {
         genreRow.createEl("h2", {
-          text: current || "아카이브",
+          text: current || t("archive"),
           cls: "charinfo-gallery__title",
         });
       } else {
@@ -3428,14 +3432,14 @@ export class GalleryView extends FileView {
         cls: "charinfo-gallery__genre",
         attr: {
           type: "button",
-          title: "아카이브 바꾸기",
-          "aria-label": "아카이브 선택",
+          title: t("switchArchive"),
+          "aria-label": t("selectArchives"),
           "aria-haspopup": "menu",
         },
       });
       genreBtn.createSpan({
         cls: "charinfo-gallery__genre-label",
-        text: current || (emptyLibrary ? "아카이브 없음" : "아카이브"),
+        text: current || (emptyLibrary ? t("noArchive") : t("archive")),
       });
       const chevron = genreBtn.createSpan({ cls: "charinfo-gallery__genre-chevron" });
       setIcon(chevron, "chevron-down");
@@ -3462,7 +3466,7 @@ export class GalleryView extends FileView {
           if (current) menu.addSeparator();
           menu.addItem((item) =>
             item
-              .setTitle("새 아카이브 만들기")
+              .setTitle(t("createNewArchive"))
               .setIcon("plus")
               .onClick(() => this.openCreateArchive()),
           );
@@ -3483,8 +3487,8 @@ export class GalleryView extends FileView {
           cls: "clickable-icon charinfo-icon-btn charinfo-gallery__genre-rename",
           attr: {
             type: "button",
-            title: "아카이브 이름 바꾸기",
-            "aria-label": "아카이브 이름 바꾸기",
+            title: t("renameArchive"),
+            "aria-label": t("renameArchive"),
           },
         });
         setIcon(renameBtn, "pencil");
@@ -3504,18 +3508,18 @@ export class GalleryView extends FileView {
     if (this.cardEditActive) {
       const sort = header.createDiv({
         cls: "charinfo-gallery__sort",
-        attr: { role: "group", "aria-label": "정렬" },
+        attr: { role: "group", "aria-label": t("sort") },
       });
       sort.createDiv({
         cls: "charinfo-gallery__sort-hint",
-        text: "표시 순서",
+        text: t("displayOrder"),
         attr: {
-          title: "왼쪽 핸들로 카드 순서를 바꿔 보세요",
+          title: t("useTheLeftHandleToReorderCards"),
         },
       });
       for (const option of [
-        { id: "manual" as const, label: "자유" },
-        { id: "name" as const, label: "이름순" },
+        { id: "manual" as const, label: t("manual") },
+        { id: "name" as const, label: t("name2") },
       ]) {
         const btn = sort.createEl("button", {
           text: option.label,
@@ -3538,8 +3542,8 @@ export class GalleryView extends FileView {
       type: "search",
       cls: "charinfo-gallery__search",
       attr: {
-        placeholder: "검색",
-        "aria-label": "검색",
+        placeholder: t("search"),
+        "aria-label": t("search"),
         spellcheck: "false",
       },
     });
@@ -3580,8 +3584,8 @@ export class GalleryView extends FileView {
       cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn charinfo-gallery__search-close",
       attr: {
         type: "button",
-        title: "검색 닫기",
-        "aria-label": "검색 닫기",
+        title: t("closeSearch"),
+        "aria-label": t("closeSearch"),
       },
     });
     setIcon(searchClose, "x");
@@ -3596,8 +3600,8 @@ export class GalleryView extends FileView {
       cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn charinfo-gallery__search-open",
       attr: {
         type: "button",
-        title: "검색",
-        "aria-label": "검색",
+        title: t("search"),
+        "aria-label": t("search"),
         "aria-expanded": this.searchExpanded ? "true" : "false",
         "aria-controls": this.searchWrapId,
       },
@@ -3618,15 +3622,15 @@ export class GalleryView extends FileView {
       attr: {
         type: "button",
         title: this.batchMode
-          ? "여러 선택을 끝내면 읽기 모드로 바꿀 수 있어요"
+          ? t("finishMultipleSelectionToSwitchToReadMode")
           : this.editMode
-            ? "읽기 모드로"
-            : "편집 모드 — 표시 순서를 바꿀 수 있어요",
+            ? t("switchToReadMode")
+            : t("editModeYouCanChangeTheDisplayOrder"),
         "aria-label": this.batchMode
-          ? "읽기 모드 — 여러 선택을 끝내면 바꿀 수 있어요"
+          ? t("readModeFinishMultipleSelectionToSwitch")
           : this.editMode
-            ? "읽기 모드"
-            : "편집 모드",
+            ? t("readMode")
+            : t("editMode"),
         "aria-disabled": this.batchMode ? "true" : "false",
         "data-charinfo": "edit",
       },
@@ -3646,10 +3650,10 @@ export class GalleryView extends FileView {
         type: "button",
         title: this.editMode
           ? batchDescriptor.label
-          : "여러 캐릭터 선택 — 편집 모드에서 열려요",
+          : t("selectMultipleCharactersAvailableInEditMode"),
         "aria-label": this.editMode
           ? batchDescriptor.label
-          : "여러 캐릭터 선택 — 편집 모드에서 열려요",
+          : t("selectMultipleCharactersAvailableInEditMode"),
         "aria-pressed": batchDescriptor.pressed ? "true" : "false",
         "aria-disabled": batchDescriptor.disabled ? "true" : "false",
         "data-charinfo": "batch",
@@ -3669,15 +3673,15 @@ export class GalleryView extends FileView {
       attr: {
         type: "button",
         title: this.cardEditActive
-          ? "속성 관리 — 이 그룹의 항목"
+          ? t("managePropertiesFieldsInThisGroup")
           : this.batchMode
-            ? "여러 선택을 끝내면 속성을 관리할 수 있어요"
-            : "속성 관리 — 편집 모드에서 열려요",
+            ? t("finishMultipleSelectionToManageProperties")
+            : t("managePropertiesAvailableInEditMode"),
         "aria-label": this.cardEditActive
-          ? "속성 관리"
+          ? t("manageProperties")
           : this.batchMode
-            ? "속성 관리 — 여러 선택을 끝내면 열려요"
-            : "속성 관리 — 편집 모드에서 열려요",
+            ? t("managePropertiesFinishMultipleSelectionToOpen")
+            : t("managePropertiesAvailableInEditMode"),
         "aria-disabled": this.cardEditActive ? "false" : "true",
         "data-fold": "compact",
       },
@@ -3687,10 +3691,10 @@ export class GalleryView extends FileView {
       event.preventDefault();
       if (!this.cardEditActive) {
         if (this.batchMode) {
-          new Notice("여러 선택을 끝내면 속성 관리를 열 수 있어요.");
+          new Notice(t("finishMultipleSelectionToOpenManageProperties"));
           batchBtn.focus();
         } else {
-          new Notice("편집 모드(연필)를 켜면 속성 관리를 열 수 있어요.");
+          new Notice(t("turnOnEditModePencilToOpenManage"));
           toggleBtn.focus();
         }
         return;
@@ -3698,23 +3702,12 @@ export class GalleryView extends FileView {
       this.openAttrManage();
     });
 
-    // Compact width moves it into 보기 with 공유 and 속성 관리.
-    this.foldAllBtn = actions.createEl("button", {
-      cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn charinfo-gallery__fold-all",
-      attr: { type: "button", "data-fold": "compact" },
-    });
-    this.paintFoldAll();
-    this.foldAllBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      void this.toggleAllGroupsCollapsed();
-    });
-
     const viewBtn = actions.createEl("button", {
       cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn",
       attr: {
         type: "button",
-        "aria-label": "보기 설정",
-        title: "보기 설정",
+        "aria-label": t("viewSettings"),
+        title: t("viewSettings"),
         "data-charinfo": "view",
       },
     });
@@ -3733,7 +3726,7 @@ export class GalleryView extends FileView {
         );
         return rows.map((entry) => ({
           fieldId: entry.fieldId,
-          label: entry.label,
+          label: displayPropertyLabel(entry.fieldId, entry.label),
           visible: entry.visible,
         }));
       },
@@ -3771,11 +3764,6 @@ export class GalleryView extends FileView {
       },
       batchAction: () => this.batchActionDescriptor(),
       activateBatchAction: () => this.activateBatchAction(),
-      foldAllAction: () => this.foldAllState(),
-      activateFoldAll: () => {
-        this.viewMenu?.close();
-        void this.toggleAllGroupsCollapsed();
-      },
       refresh: () => this.requestManualRefresh(),
       isRefreshPending: () => this.refreshFlight.pending,
       onChange: () => {
@@ -3793,8 +3781,8 @@ export class GalleryView extends FileView {
       cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn",
       attr: {
         type: "button",
-        "aria-label": "공유",
-        title: "공유",
+        "aria-label": t("share"),
+        title: t("share"),
         "data-fold": "narrow",
       },
     });
@@ -3808,8 +3796,8 @@ export class GalleryView extends FileView {
         cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn charinfo-gallery__icon-btn--quiet",
         attr: {
           type: "button",
-          title: "새로고침",
-          "aria-label": "새로고침",
+          title: t("refresh"),
+          "aria-label": t("refresh"),
           "aria-disabled": this.refreshFlight.pending ? "true" : "false",
           "data-fold": "narrow-refresh",
         },
@@ -3843,34 +3831,34 @@ export class GalleryView extends FileView {
       (option) => (counts.get(option.id) ?? 0) > 0,
     );
 
-    let title = "캐릭터가 없어요.";
+    let title = t("noCharactersYet");
     let detail = "";
 
     if (this.records.length === 0) {
-      title = "캐릭터가 없어요.";
-      detail = "아래 버튼으로 첫 카드를 만드세요.";
+      title = t("noCharactersYet");
+      detail = t("createYourFirstCardWithTheButtonBelow");
     } else if (allCount === 0) {
-      title = "이 아카이브에 카드가 없어요.";
+      title = t("thereAreNoCardsInThisArchive");
       detail = genre
-        ? "아래 버튼으로 첫 카드를 만드세요."
-        : "다른 아카이브를 고르거나 캐릭터를 추가하세요.";
+        ? t("createYourFirstCardWithTheButtonBelow")
+        : t("chooseAnotherArchiveOrAddACharacter");
     } else if (hasSearch && filterDef) {
-      title = "검색 결과가 없어요.";
-      detail = `검색 + ${filterDef.label} 필터 · 이 아카이브 ${allCount}명`;
+      title = t("noSearchResults");
+      detail = t("searchValueFilterValueCharactersInThisArchive", { arg1: filterDef.label, arg2: allCount });
     } else if (hasSearch) {
-      title = "검색 결과가 없어요.";
-      detail = `이 아카이브 ${allCount}명 중에서 찾지 못했어요.`;
+      title = t("noSearchResults");
+      detail = t("noMatchesAmongValueCharactersInThisArchive", { arg1: allCount });
     } else if (filterDef) {
-      title = `${filterDef.label}인 캐릭터가 없어요.`;
+      title = t("noCharactersWithValue", { arg1: filterDef.label });
       const others = visibleOptions
         .filter((s) => s.id !== filterDef.id)
         .map((s) => `${s.label} ${counts.get(s.id) ?? 0}`)
         .join(" · ");
       detail = others
-        ? `이 아카이브 ${allCount}명 · 지금 ${filterDef.label} 필터 (${others})`
-        : `이 아카이브 ${allCount}명 · 지금 ${filterDef.label} 필터`;
+        ? t("valueCharactersInThisArchiveCurrentFilterValue", { arg1: allCount, arg2: filterDef.label, arg3: others })
+        : t("valueCharactersInThisArchiveCurrentFilterValue2", { arg1: allCount, arg2: filterDef.label });
     } else {
-      title = "표시할 카드가 없어요.";
+      title = t("thereAreNoCardsToDisplay");
     }
 
     empty.createEl("p", {
@@ -3893,7 +3881,7 @@ export class GalleryView extends FileView {
       }).catch((error) => {
         console.error(error);
         new Notice(
-          `추가 실패: ${error instanceof Error ? error.message : String(error)}`,
+          t("couldNotAddValue", { arg1: error instanceof Error ? error.message : String(error) }),
         );
       });
     };
@@ -3904,7 +3892,7 @@ export class GalleryView extends FileView {
     // Filter hiding cards that exist → recover first, then add.
     if (filterDef && allCount > 0 && !hasSearch) {
       const clear = actions.createEl("button", {
-        text: "전체 보기",
+        text: t("showAll"),
         cls: "mod-cta",
         attr: { type: "button" },
       });
@@ -3913,7 +3901,7 @@ export class GalleryView extends FileView {
       for (const s of visibleOptions) {
         if (s.id === filterDef.id) continue;
         const btn = actions.createEl("button", {
-          text: `${s.label}만 보기`,
+          text: t("showOnlyValue", { arg1: s.label }),
           cls: "charinfo-gallery__empty-secondary",
           attr: { type: "button" },
         });
@@ -3922,7 +3910,7 @@ export class GalleryView extends FileView {
 
       if (canAdd) {
         const add = actions.createEl("button", {
-          text: "캐릭터 추가",
+          text: t("addCharacter"),
           cls: "charinfo-gallery__empty-secondary",
           attr: { type: "button" },
         });
@@ -3933,7 +3921,7 @@ export class GalleryView extends FileView {
 
     if (hasSearch && filterDef && allCount > 0) {
       const clearFilter = actions.createEl("button", {
-        text: "필터 끄기 (전체)",
+        text: t("clearFilterAll"),
         cls: "mod-cta",
         attr: { type: "button" },
       });
@@ -3941,7 +3929,7 @@ export class GalleryView extends FileView {
         void this.setChipFilter("all"),
       );
       const clearSearch = actions.createEl("button", {
-        text: "검색 지우기",
+        text: t("clearSearch"),
         cls: "charinfo-gallery__empty-secondary",
         attr: { type: "button" },
       });
@@ -3953,7 +3941,7 @@ export class GalleryView extends FileView {
 
     if (hasSearch) {
       const clearSearch = actions.createEl("button", {
-        text: "검색 지우기",
+        text: t("clearSearch"),
         cls: "mod-cta",
         attr: { type: "button" },
       });
@@ -3965,7 +3953,7 @@ export class GalleryView extends FileView {
 
     if (!canAdd) return;
     const add = actions.createEl("button", {
-      text: "캐릭터 추가",
+      text: t("addCharacter"),
       cls: "mod-cta",
       attr: { type: "button" },
     });
@@ -4006,6 +3994,11 @@ export class GalleryView extends FileView {
       (a, b) => (rank.get(a.group) ?? unranked) - (rank.get(b.group) ?? unranked),
     );
 
+    // Fold all rides on the first group's header row: no extra row, so the
+    // cards start exactly where they did before.
+    this.foldAllBtn = null;
+    let foldAllPending = Boolean(this.foldAllState());
+
     for (const { group: rawGroup, list } of sections) {
       const section = main.createDiv({ cls: "charinfo-genre" });
       section.dataset.group = rawGroup;
@@ -4022,13 +4015,26 @@ export class GalleryView extends FileView {
         section.toggleClass("is-collapsed", collapsed);
         const heading = section.createDiv({ cls: "charinfo-genre__header" });
         const titleRow = heading.createDiv({ cls: "charinfo-genre__title-row" });
+        if (foldAllPending) {
+          foldAllPending = false;
+          const foldAll = heading.createEl("button", {
+            cls: "clickable-icon charinfo-icon-btn charinfo-gallery__fold-all",
+            attr: { type: "button" },
+          });
+          foldAll.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void this.toggleAllGroupsCollapsed();
+          });
+          this.foldAllBtn = foldAll;
+        }
 
         if (this.cardEditActive) {
           const handle = titleRow.createDiv({
             cls: "charinfo-genre__drag-handle",
             attr: {
-              title: "드래그해서 그룹 순서 변경",
-              "aria-label": "그룹 순서 변경",
+              title: t("dragToReorderGroups"),
+              "aria-label": t("reorderGroups"),
             },
           });
           setIcon(handle, "grip-vertical");
@@ -4063,8 +4069,8 @@ export class GalleryView extends FileView {
             cls: "clickable-icon charinfo-icon-btn charinfo-genre__rename",
             attr: {
               type: "button",
-              title: "그룹 이름 바꾸기",
-              "aria-label": `「${rawGroup}」 그룹 이름 바꾸기`,
+              title: t("renameGroup"),
+              "aria-label": t("renameGroupValue", { arg1: rawGroup }),
               "data-group": rawGroup,
             },
           });
@@ -4112,10 +4118,10 @@ export class GalleryView extends FileView {
     group: string,
     collapsed: boolean,
   ): void {
-    const label = collapsed ? `「${group}」 그룹 펼치기` : `「${group}」 그룹 접기`;
+    const label = collapsed ? t("expandGroupValue", { arg1: group }) : t("collapseGroupValue", { arg1: group });
     button.setAttribute("aria-expanded", String(!collapsed));
     button.setAttribute("aria-label", label);
-    button.setAttribute("title", collapsed ? "펼치기" : "접기");
+    button.setAttribute("title", collapsed ? t("expand") : t("collapse"));
     button.toggleClass("is-collapsed", collapsed);
     const icon = button.querySelector(".charinfo-genre__fold-icon");
     if (icon instanceof HTMLElement) {
@@ -4156,26 +4162,29 @@ export class GalleryView extends FileView {
     return groups;
   }
 
-  /** Fold all while any group is open; unfold all once every one is folded. */
+  /**
+   * Fold all while any group is open; unfold all once every one is folded.
+   * Null below two named groups: one group already has its own pill.
+   */
   private foldAllState(): { allCollapsed: boolean; label: string; icon: string } | null {
     const groups = this.foldableGroups();
-    if (groups.length === 0) return null;
+    if (groups.length < 2) return null;
     const archive = this.activeArchive().trim();
     const library = this.pageLibrary();
     const allCollapsed = groups.every((group) =>
       isGroupCollapsed(this.plugin.settings, library, archive, group),
     );
     return allCollapsed
-      ? { allCollapsed, label: "모든 그룹 펼치기", icon: "chevrons-up-down" }
-      : { allCollapsed, label: "모든 그룹 접기", icon: "chevrons-down-up" };
+      ? { allCollapsed, label: t("expandAllGroups"), icon: "chevrons-up-down" }
+      : { allCollapsed, label: t("collapseAllGroups"), icon: "chevrons-down-up" };
   }
 
   private paintFoldAll(): void {
     const button = this.foldAllBtn;
     if (!button?.isConnected) return;
     const state = this.foldAllState();
-    button.toggleClass("is-empty", !state);
     if (!state) return;
+    // Obsidian's own explorer uses this icon pair for collapse / expand all.
     button.setAttribute("aria-label", state.label);
     button.setAttribute("title", state.label);
     setIcon(button, state.icon);
@@ -4211,7 +4220,7 @@ export class GalleryView extends FileView {
 
     menu.addItem((item) => {
       item
-        .setTitle("맨 위로")
+        .setTitle(t("moveToTop"))
         .setDisabled(index === 0)
         .onClick(() => {
           const first = order[0];
@@ -4223,7 +4232,7 @@ export class GalleryView extends FileView {
     });
     menu.addItem((item) => {
       item
-        .setTitle("위로")
+        .setTitle(t("moveUp"))
         .setDisabled(index === 0)
         .onClick(() => {
           const above = order[index - 1];
@@ -4235,7 +4244,7 @@ export class GalleryView extends FileView {
     });
     menu.addItem((item) => {
       item
-        .setTitle("아래로")
+        .setTitle(t("moveDown"))
         .setDisabled(index >= order.length - 1)
         .onClick(() => {
           const below = order[index + 1];
@@ -4247,7 +4256,7 @@ export class GalleryView extends FileView {
     });
     menu.addItem((item) => {
       item
-        .setTitle("맨 아래로")
+        .setTitle(t("moveToBottom"))
         .setDisabled(index >= order.length - 1)
         .onClick(() => {
           const last = order[order.length - 1];
@@ -4299,7 +4308,7 @@ export class GalleryView extends FileView {
       cls: "charinfo-card charinfo-card--add",
       attr: {
         type: "button",
-        "aria-label": "캐릭터 추가",
+        "aria-label": t("addCharacter"),
       },
     });
     // Same geometry as a real card (cover 2:3 + meta band); + floats centered.
@@ -4329,7 +4338,7 @@ export class GalleryView extends FileView {
         .catch((error) => {
           console.error(error);
           new Notice(
-            `추가 실패: ${error instanceof Error ? error.message : String(error)}`,
+            t("couldNotAddValue", { arg1: error instanceof Error ? error.message : String(error) }),
           );
         })
         .finally(() => {
@@ -4360,7 +4369,7 @@ export class GalleryView extends FileView {
       // property control, no context menu. One meaning at a time.
       card.setAttribute("role", "checkbox");
       card.setAttribute("aria-checked", picked ? "true" : "false");
-      card.setAttribute("aria-label", `${record.title} 선택`);
+      card.setAttribute("aria-label", t("selectValue", { arg1: record.title }));
       card.tabIndex = 0;
       const mark = card.createDiv({
         cls: "charinfo-card__pick",
@@ -4401,8 +4410,8 @@ export class GalleryView extends FileView {
       const handle = card.createDiv({
         cls: "charinfo-card__drag-handle",
         attr: {
-          title: "드래그해서 순서 변경",
-          "aria-label": "순서 변경",
+          title: t("dragToReorder"),
+          "aria-label": t("reorder"),
         },
       });
       setIcon(handle, "grip-vertical");
@@ -4444,7 +4453,7 @@ export class GalleryView extends FileView {
       coverImg.draggable = false;
       coverImg.style.objectPosition = record.coverPosition || "50% 50%";
     } else {
-      cover.createSpan({ text: "커버 없음", cls: "charinfo-card__cover-empty" });
+      cover.createSpan({ text: t("noCover"), cls: "charinfo-card__cover-empty" });
     }
 
     if (surface.cardCoverEdit) {
@@ -4469,7 +4478,7 @@ export class GalleryView extends FileView {
   }
 
   private fieldDisplayLabel(field: FieldDef): string {
-    return fieldLabel(field, this.plugin.settings.propertyDisplayNames);
+    return displayFieldLabel(field, this.plugin.settings.propertyDisplayNames);
   }
 
   /**
@@ -4535,7 +4544,7 @@ export class GalleryView extends FileView {
           if (unset) {
             const empty = this.paintEmptyField(row, {
               editable,
-              action: `${axis.label} 바꾸기`,
+              action: t("changeValue", { arg1: displayPropertyLabel(axis.propertyId, axis.label) }),
             });
             if (editable && empty instanceof HTMLButtonElement) {
               this.bindAxisMenu(empty, record, axis, "");
@@ -4700,8 +4709,8 @@ export class GalleryView extends FileView {
     // `그룹` does not fill a value — it moves the card to another section.
     const action =
       field.id === "group"
-        ? "다른 그룹으로 옮기기"
-        : `${this.fieldDisplayLabel(field)} 채우기`;
+        ? t("moveToAnotherGroup")
+        : t("fillInValue", { arg1: this.fieldDisplayLabel(field) });
     const btn = row.createEl("button", {
       cls: "charinfo-detail__prop-btn" + (value ? "" : " is-empty"),
       text: value || EMPTY_FIELD_MARK,
@@ -4763,7 +4772,7 @@ export class GalleryView extends FileView {
       await setCharacterField(this.app, record.file, field.key, value);
     } catch (error) {
       new Notice(
-        `저장 실패: ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotSaveValue", { arg1: error instanceof Error ? error.message : String(error) }),
       );
       return;
     } finally {
@@ -4788,10 +4797,10 @@ export class GalleryView extends FileView {
     }
     this.plugin.suppressGalleryRefresh = true;
     try {
-      await setCharacterField(this.app, record.file, "그룹", next);
+      await setCharacterField(this.app, record.file, t("group"), next);
     } catch (error) {
       new Notice(
-        `그룹 저장 실패: ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotSaveGroupValue", { arg1: error instanceof Error ? error.message : String(error) }),
       );
       this.plugin.markGalleriesDirty({ path: record.path });
       return;
@@ -4912,7 +4921,7 @@ export class GalleryView extends FileView {
     const props = this.contentEl.querySelector(".charinfo-detail__props");
     if (!(props instanceof HTMLElement)) return;
     props.empty();
-    props.createDiv({ cls: "charinfo-detail__props-label", text: "속성" });
+    props.createDiv({ cls: "charinfo-detail__props-label", text: t("properties") });
     this.renderViewProperties(props, record, {
       interactiveStatus: this.cardEditActive,
       surface: "peek",
@@ -4935,7 +4944,7 @@ export class GalleryView extends FileView {
     const stored = Array.isArray(raw) ? (raw[0] ?? "") : raw.trim();
     // Unknown ids show themselves, so a removed option stays legible.
     const label = stored ? this.fieldVocabLabel(field, stored) : EMPTY_FIELD_MARK;
-    const action = `${this.fieldDisplayLabel(field)} 바꾸기`;
+    const action = t("changeValue", { arg1: this.fieldDisplayLabel(field) });
     if (!stored) {
       const empty = this.paintEmptyField(row, {
         editable,
@@ -5003,12 +5012,12 @@ export class GalleryView extends FileView {
     }
     if (vocabulary.length === 0) {
       menu.addItem((item) =>
-        item.setTitle("고를 값이 없어요 · 책에서 추가").setDisabled(true),
+        item.setTitle(t("noValuesToChooseAddThemUsingThe")).setDisabled(true),
       );
     }
     menu.addItem((item) =>
       item
-        .setTitle("없음")
+        .setTitle(t("none"))
         .setChecked(!stored)
         .onClick(() => {
           void this.commitFieldValue(record, field, "");
@@ -5027,7 +5036,7 @@ export class GalleryView extends FileView {
       await setCharacterField(this.app, record.file, field.key, value);
     } catch (error) {
       new Notice(
-        `저장 실패: ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotSaveValue", { arg1: error instanceof Error ? error.message : String(error) }),
       );
       return;
     } finally {
@@ -5080,7 +5089,7 @@ export class GalleryView extends FileView {
     if (ids.length === 0) {
       const empty = this.paintEmptyField(wrap, {
         editable: true,
-        action: `${this.fieldDisplayLabel(field)} 고르기`,
+        action: t("chooseValue", { arg1: this.fieldDisplayLabel(field) }),
       });
       empty.addEventListener("click", (event) => {
         event.preventDefault();
@@ -5112,8 +5121,8 @@ export class GalleryView extends FileView {
       text: "+",
       attr: {
         type: "button",
-        title: `${this.fieldDisplayLabel(field)} 고르기`,
-        "aria-label": `${this.fieldDisplayLabel(field)} 고르기`,
+        title: t("chooseValue", { arg1: this.fieldDisplayLabel(field) }),
+        "aria-label": t("chooseValue", { arg1: this.fieldDisplayLabel(field) }),
       },
     });
     const menuKey = `${record.path}#${field.id}`;
@@ -5159,7 +5168,7 @@ export class GalleryView extends FileView {
       await setCharacterList(this.app, record.file, field.key, wanted);
     } catch (error) {
       new Notice(
-        `저장 실패: ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotSaveValue", { arg1: error instanceof Error ? error.message : String(error) }),
       );
       return;
     } finally {
@@ -5230,7 +5239,7 @@ export class GalleryView extends FileView {
     if (opts.surface === "peek" && ids.length === 0) {
       const empty = this.paintEmptyField(wrap, {
         editable: true,
-        action: "태그 고르기",
+        action: t("chooseTags"),
       });
       empty.addEventListener("click", (event) => {
         event.preventDefault();
@@ -5249,8 +5258,8 @@ export class GalleryView extends FileView {
       text: "+",
       attr: {
         type: "button",
-        title: "태그 고르기",
-        "aria-label": "태그 고르기",
+        title: t("chooseTags"),
+        "aria-label": t("chooseTags"),
       },
     });
     trigger.addEventListener("click", (event) => {
@@ -5305,7 +5314,7 @@ export class GalleryView extends FileView {
       await setCharacterTags(this.app, record.file, ids);
     } catch (error) {
       new Notice(
-        `태그 저장 실패: ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotSaveTagsValue", { arg1: error instanceof Error ? error.message : String(error) }),
       );
       return;
     } finally {
@@ -5392,7 +5401,7 @@ export class GalleryView extends FileView {
         type: "button",
         "aria-label": option.label,
         "data-prop": axis.propertyId,
-        title: `${axis.label} 바꾸기`,
+        title: t("changeValue", { arg1: displayPropertyLabel(axis.propertyId, axis.label) }),
       },
     });
     paintStatusColor(tag, option.color);
@@ -5428,7 +5437,7 @@ export class GalleryView extends FileView {
       if (axis.propertyId !== "status") {
         menu.addItem((item) =>
           item
-            .setTitle("없음")
+            .setTitle(t("none"))
             .setChecked(!selectedId)
             .onClick(() => {
               void this.setAxisValue(record, axis.propertyId, "");
@@ -5476,7 +5485,7 @@ export class GalleryView extends FileView {
       // The note kept its old value — so must the record and the DOM. Painting
       // the new pill here would leave the card lying until the next refresh.
       new Notice(
-        `${axis.label} 저장 실패: ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotSaveValueValue", { arg1: displayPropertyLabel(axis.propertyId, axis.label), arg2: error instanceof Error ? error.message : String(error) }),
       );
       return;
     } finally {
@@ -5578,7 +5587,7 @@ export class GalleryView extends FileView {
     const menu = new Menu();
     menu.addItem((item) =>
       item
-        .setTitle("노트 열기")
+        .setTitle(t("openNote"))
         .setIcon("file-text")
         .onClick(() => {
           void this.openCharacterNote(record.file);
@@ -5586,7 +5595,7 @@ export class GalleryView extends FileView {
     );
     menu.addItem((item) =>
       item
-        .setTitle("공유")
+        .setTitle(t("share"))
         .setIcon("globe")
         .onClick(() => {
           void this.shareCharacterNoteLink(record);
@@ -5594,7 +5603,7 @@ export class GalleryView extends FileView {
     );
     menu.addItem((item) =>
       item
-        .setTitle("커버 바꾸기")
+        .setTitle(t("changeCover"))
         .setIcon("image")
         .onClick(() => {
           this.setEditMode(true);
@@ -5609,7 +5618,7 @@ export class GalleryView extends FileView {
     const menu = new Menu();
     menu.addItem((item) =>
       item
-        .setTitle("노트 열기")
+        .setTitle(t("openNote"))
         .setIcon("file-text")
         .onClick(() => {
           void this.openCharacterNote(record.file);
@@ -5617,7 +5626,7 @@ export class GalleryView extends FileView {
     );
     menu.addItem((item) =>
       item
-        .setTitle("공유")
+        .setTitle(t("share"))
         .setIcon("globe")
         .onClick(() => {
           void this.shareCharacterNoteLink(record);
@@ -5625,7 +5634,7 @@ export class GalleryView extends FileView {
     );
     menu.addItem((item) =>
       item
-        .setTitle("커버 바꾸기")
+        .setTitle(t("changeCover"))
         .setIcon("image")
         .onClick(() => {
           void this.openCoverPicker(record);
@@ -5634,7 +5643,7 @@ export class GalleryView extends FileView {
     menu.addSeparator();
     menu.addItem((item) =>
       item
-        .setTitle("삭제")
+        .setTitle(t("delete"))
         .setIcon("trash")
         .setWarning(true)
         .onClick(() => {
@@ -5647,7 +5656,7 @@ export class GalleryView extends FileView {
   private async deleteCharacter(record: CharacterRecord): Promise<void> {
     const label = record.title || record.file.basename;
     const ok = window.confirm(
-      `「${label}」 노트를 삭제할까요?\n휴지통으로 이동합니다.`,
+      t("deleteNoteValueItWillBeMovedTo", { arg1: label }),
     );
     if (!ok) return;
 
@@ -5658,7 +5667,7 @@ export class GalleryView extends FileView {
     } catch (error) {
       console.error(error);
       new Notice(
-        `삭제 실패: ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotDeleteValue", { arg1: error instanceof Error ? error.message : String(error) }),
       );
       return;
     } finally {
@@ -5669,7 +5678,7 @@ export class GalleryView extends FileView {
     if (this.selected?.path === path) {
       this.closePeek();
     }
-    new Notice(`「${label}」을(를) 삭제했어요`);
+    new Notice(t("deletedValue", { arg1: label }));
     // Losing a card can empty an option — reconcile the row in the same frame.
     this.syncChipRow();
     this.renderBody();
@@ -5689,15 +5698,15 @@ export class GalleryView extends FileView {
 
     const hint = cover.createDiv({
       cls: "charinfo-card__cover-hint",
-      text: coverImg ? "드래그 · 위치" : "클릭 · 커버 추가",
+      text: coverImg ? t("dragReposition") : t("clickAddCover"),
     });
 
     const editBtn = cover.createEl("button", {
       cls: "charinfo-card__cover-edit is-always-on",
       attr: {
         type: "button",
-        title: "커버 바꾸기",
-        "aria-label": "커버 바꾸기",
+        title: t("changeCover"),
+        "aria-label": t("changeCover"),
       },
     });
     setIcon(editBtn, "image");
@@ -5768,7 +5777,7 @@ export class GalleryView extends FileView {
         if (totalDx * totalDx + totalDy * totalDy < MOVE_PX * MOVE_PX) return;
         dragging = true;
         cover.addClass("is-repositioning");
-        hint.setText("놓는 중…");
+        hint.setText(t("positioning"));
         this.suppressClick = true;
       }
       event.preventDefault();
@@ -5795,7 +5804,7 @@ export class GalleryView extends FileView {
 
       if (dragging) {
         cover.removeClass("is-repositioning");
-        hint.setText("드래그 · 위치");
+        hint.setText(t("dragReposition"));
         const next = `${Math.round(pos.x)}% ${Math.round(pos.y)}%`;
         record.coverPosition = next;
         this.plugin.suppressGalleryRefresh = true;
@@ -5847,18 +5856,18 @@ export class GalleryView extends FileView {
       async (pick) => {
         await this.applyCoverIntent(record, pick, { quiet: true, propagateFailure: true });
         await this.refreshAfterImageRemoval(record).catch(() => {
-          new Notice("커버는 바뀌었어요. 화면을 다시 열어 확인해 주세요.");
+          new Notice(t("theCoverChangedReopenTheViewToCheck"));
         });
       },
       async (newImages) => {
-        if (this.imageRemovalBusy.has(record.file)) throw new Error("이미지 변경 중이에요. 잠시 후 다시 시도해 주세요.");
+        if (this.imageRemovalBusy.has(record.file)) throw new Error(t("anImageChangeIsInProgressTryAgain"));
         this.plugin.suppressGalleryRefresh = true;
         let added: number;
         try {
           added = await appendNoteImages(this.app, record.file, newImages);
         } catch (error) {
           console.error("Batch note image write failed", error);
-          throw new Error("노트 반영 실패 · 저장된 이미지는 남아 있어요. 다시 추가해 주세요.");
+          throw new Error(t("couldNotUpdateTheNoteSavedImagesRemain"));
         } finally {
           this.plugin.suppressGalleryRefresh = false;
         }
@@ -5867,7 +5876,7 @@ export class GalleryView extends FileView {
           nextMarkdown = await this.app.vault.read(record.file);
         } catch (error) {
           console.error("Batch note image refresh failed", error);
-          throw new Error("이미지는 추가됐지만 화면 갱신에 실패했어요. 갤러리를 다시 열어 확인하세요.");
+          throw new Error(t("imagesWereAddedButTheViewCouldNot"));
         }
         const state = noteImageState(this.app, record.file, nextMarkdown);
         const nextImages = state.images;
@@ -5904,13 +5913,13 @@ export class GalleryView extends FileView {
         move: async (key, direction) => {
           await moveNoteImage(this.app, record.file, key, { direction });
           await this.refreshAfterImageRemoval(record).catch(() => {
-            new Notice("순서는 바뀌었어요. 화면을 다시 열어 확인해 주세요.");
+            new Notice(t("theOrderChangedReopenTheViewToCheck"));
           });
         },
         reorder: async (key, anchor, place) => {
           await moveNoteImage(this.app, record.file, key, { anchor, place });
           await this.refreshAfterImageRemoval(record).catch(() => {
-            new Notice("순서는 바뀌었어요. 화면을 다시 열어 확인해 주세요.");
+            new Notice(t("theOrderChangedReopenTheViewToCheck"));
           });
         },
         subscribe: (refresh) => {
@@ -5943,7 +5952,7 @@ export class GalleryView extends FileView {
   ): Promise<void> {
     const quiet = opts?.quiet === true;
     if (this.imageRemovalBusy.has(record.file)) {
-      if (opts?.propagateFailure) throw new Error("이미지 변경 중이에요. 잠시 후 다시 시도해 주세요.");
+      if (opts?.propagateFailure) throw new Error(t("anImageChangeIsInProgressTryAgain"));
       return;
     }
     // TFile identity survives a rename; path strings do not. Keeping cover
@@ -5994,7 +6003,7 @@ export class GalleryView extends FileView {
             record.cover = snapshot.cover;
             record.coverPosition = snapshot.coverPosition;
             this.syncCoverPreview(record);
-            if (!opts?.propagateFailure) new Notice("커버 변경에 실패했어요");
+            if (!opts?.propagateFailure) new Notice(t("couldNotChangeCover"));
             this.coverLatest.delete(key);
           }
           if (opts?.propagateFailure) throw error;
@@ -6017,13 +6026,13 @@ export class GalleryView extends FileView {
     }
     if (!quiet && !failed) {
       if (intent.kind === "vault") {
-        new Notice(`커버를 「${intent.file.basename}」으로 바꿨어요`);
+        new Notice(t("changedCoverToValue", { arg1: intent.file.basename }));
       } else if (intent.kind === "remote") {
-        new Notice("원격 이미지로 커버를 바꿨어요");
+        new Notice(t("changedCoverToARemoteImage"));
       } else if (intent.kind === "none") {
-        new Notice("카드 커버를 숨겼어요");
+        new Notice(t("hidTheCardCover"));
       } else {
-        new Notice("노트 첫 이미지를 커버로 쓸게요");
+        new Notice(t("theNoteSFirstImageWillBeUsed"));
       }
     }
 
@@ -6075,7 +6084,7 @@ export class GalleryView extends FileView {
       await moveNoteImage(this.app, record.file, fromPath, { anchor: toPath, place });
       await this.refreshAfterImageRemoval(record);
     } catch (error) {
-      new Notice(error instanceof Error ? error.message : "순서를 바꾸지 못했어요.");
+      new Notice(error instanceof Error ? error.message : t("couldNotReorder"));
     }
   }
 
@@ -6087,7 +6096,7 @@ export class GalleryView extends FileView {
       const selector = direction < 0 ? ".charinfo-image-tile__move-prev" : ".charinfo-image-tile__move-next";
       (tile?.querySelector<HTMLElement>(`${selector}:not(:disabled)`) ?? tile?.querySelector<HTMLElement>(".charinfo-thumb"))?.focus({ preventScroll: true });
     } catch (error) {
-      new Notice(error instanceof Error ? error.message : "순서를 바꾸지 못했어요.");
+      new Notice(error instanceof Error ? error.message : t("couldNotReorder"));
     }
   }
 
@@ -6130,7 +6139,7 @@ export class GalleryView extends FileView {
 
   private async removeGalleryImage(record: CharacterRecord, key: string, button?: HTMLButtonElement): Promise<(() => Promise<void>) | undefined> {
     if (button && !this.cardEditActive) return;
-    if (this.imageRemovalBusy.has(record.file)) throw new Error("이미지 변경 중이에요. 잠시 후 다시 시도해 주세요.");
+    if (this.imageRemovalBusy.has(record.file)) throw new Error(t("anImageChangeIsInProgressTryAgain"));
     this.imageRemovalBusy.add(record.file);
     if (button) button.disabled = true;
     const tile = button?.closest<HTMLElement>(".charinfo-image-tile");
@@ -6143,16 +6152,16 @@ export class GalleryView extends FileView {
       const removal = await removeNoteImage(this.app, record.file, key);
       if (removal) {
         const message = document.createDocumentFragment();
-        message.append("이미지를 제거했어요. ");
+        message.append(t("imageRemoved"));
         const undo = document.createElement("button");
-        undo.textContent = "되돌리기";
+        undo.textContent = t("undo");
         undo.className = "charinfo-image-undo";
         message.append(undo);
         const notice = new Notice(message, 10000);
         let restored = false;
         undoRemoval = async () => {
           if (restored) return;
-          if (this.imageRemovalBusy.has(record.file)) throw new Error("이미지 변경 중이에요. 잠시 후 다시 시도해 주세요.");
+          if (this.imageRemovalBusy.has(record.file)) throw new Error(t("anImageChangeIsInProgressTryAgain"));
           this.imageRemovalBusy.add(record.file);
           undo.disabled = true;
           try {
@@ -6160,9 +6169,9 @@ export class GalleryView extends FileView {
             const appended = await restoreNoteImage(this.app, record.file, removal);
             restored = true;
             notice.hide();
-            new Notice(appended ? "노트가 바뀌어 끝에 다시 넣었어요" : "다시 넣었어요");
+            new Notice(appended ? t("theNoteChangedSoTheImageWasAdded") : t("addedBack"));
             await this.refreshAfterImageRemoval(record, key).catch(() => {
-              new Notice("이미지는 복원됐어요. 화면을 다시 열어 확인해 주세요.");
+              new Notice(t("theImageWasRestoredReopenTheViewTo"));
             });
           } finally {
             if (!restored) undo.disabled = false;
@@ -6172,15 +6181,15 @@ export class GalleryView extends FileView {
         undo.addEventListener("click", (event) => {
           event.stopPropagation();
           void undoRemoval?.().catch((error) => {
-            new Notice(error instanceof Error ? error.message : "되돌리지 못했어요. 다시 시도해 주세요.");
+            new Notice(error instanceof Error ? error.message : t("couldNotUndoTryAgain"));
           });
         });
       }
       await this.refreshAfterImageRemoval(record, nextKey).catch(() => {
-        new Notice("노트에 반영됐어요. 화면을 다시 열어 확인해 주세요.");
+        new Notice(t("theNoteWasUpdatedReopenTheViewTo"));
       });
     } catch (error) {
-      if (button) new Notice(error instanceof Error ? error.message : "제거하지 못했어요. 다시 시도해 주세요.");
+      if (button) new Notice(error instanceof Error ? error.message : t("couldNotRemoveTryAgain"));
       if (button) button.disabled = false;
       // A direct note edit may have made this image the cover. Reconcile the
       // protected state even though removal correctly refused the stale click.
@@ -6226,11 +6235,11 @@ export class GalleryView extends FileView {
         if (remove) {
           const protectedCover = isCover && strip.querySelectorAll(".charinfo-thumb").length > 1;
           remove.disabled = protectedCover;
-          remove.title = protectedCover ? "현재 커버예요 · 먼저 다른 이미지를 커버로 골라 주세요" : "노트에서 제거";
+          remove.title = protectedCover ? t("thisIsTheCurrentCoverChooseAnotherCover2") : t("removeFromNote");
         }
         thumb.querySelector(".charinfo-thumb__badge")?.remove();
         if (isCover) {
-          thumb.setAttribute("title", "현재 커버");
+          thumb.setAttribute("title", t("currentCover"));
         } else {
           thumb.removeAttribute("title");
         }
@@ -6273,7 +6282,7 @@ export class GalleryView extends FileView {
       cardImg.remove();
     }
     if (!coverEl.querySelector(".charinfo-card__cover-empty")) {
-      coverEl.createSpan({ text: "커버 없음", cls: "charinfo-card__cover-empty" });
+      coverEl.createSpan({ text: t("noCover"), cls: "charinfo-card__cover-empty" });
     }
   }
 
@@ -6329,7 +6338,7 @@ export class GalleryView extends FileView {
       // gesture's — it rides the lane with everything else.
       this.plugin.settings.sortMode = "manual";
       sortModeChanged = true;
-      this.showGalleryTip("표시 순서를 「자유」로 맞춰 두고, 지금 자리를 저장해요");
+      this.showGalleryTip(t("displayOrderSetToManualSavingTheCurrent"));
     }
 
     if (moved) {
@@ -6386,7 +6395,7 @@ export class GalleryView extends FileView {
     // guarantee; they lost the right to paint.
     if (!this.uiAlive(this.orderLaneGeneration)) return;
     if (failed) {
-      new Notice("순서를 저장하지 못했어요.");
+      new Notice(t("couldNotSaveOrder"));
       this.plugin.markGalleriesDirty();
       void this.refresh();
       return;
@@ -6427,11 +6436,11 @@ export class GalleryView extends FileView {
     const head = detail.createDiv({ cls: "charinfo-detail__head" });
     const back = head.createEl("button", {
       cls: "charinfo-detail__back",
-      attr: { type: "button", "aria-label": "닫기" },
+      attr: { type: "button", "aria-label": t("close") },
     });
     setIcon(back, this.detailFull ? "chevron-left" : "x");
-    back.setAttribute("aria-label", this.detailFull ? "갤러리로 돌아가기" : "닫기");
-    if (this.detailFull) back.createSpan({ text: "갤러리" });
+    back.setAttribute("aria-label", this.detailFull ? t("backToGallery") : t("close"));
+    if (this.detailFull) back.createSpan({ text: t("gallery") });
     back.addEventListener("click", () => this.closePeek());
 
     const titleWrap = head.createDiv({ cls: "charinfo-detail__title-wrap" });
@@ -6441,30 +6450,30 @@ export class GalleryView extends FileView {
         cls: "clickable-icon charinfo-detail__title-rename",
         attr: {
           type: "button",
-          title: "이름 바꾸기",
-          "aria-label": "이름 바꾸기",
+          title: t("rename"),
+          "aria-label": t("rename"),
         },
       });
       setIcon(rename, "pencil");
       rename.addEventListener("click", () => {
         this.characterNameModal?.close();
         const modal = new CharacterNameModal(this.app, {
-          title: "캐릭터 이름 바꾸기",
+          title: t("renameCharacter"),
           initialName: record.이름 || record.file.basename,
-          submitText: "이름 바꾸기",
-          savingText: "바꾸는 중…",
+          submitText: t("rename"),
+          savingText: t("renaming"),
           onSubmit: async (name) => {
             const result = await this.plugin.renameCharacterFromGallery(
               record.file,
               name,
               record.이름,
             );
-            if (!result.ok) return result.error ?? "이름을 바꾸지 못했어요.";
+            if (!result.ok) return result.error ?? t("couldNotRename");
             record.이름 = result.name;
             record.values.이름 = result.name;
             record.title = result.name;
             this.repaintCard(record);
-            new Notice("이름과 노트 파일명을 바꿨어요.");
+            new Notice(t("changedTheNameAndNoteFileName"));
             return null;
           },
           onClose: () => {
@@ -6487,8 +6496,8 @@ export class GalleryView extends FileView {
       cls: "clickable-icon charinfo-detail__icon-btn",
       attr: {
         type: "button",
-        title: "노트 열기",
-        "aria-label": "노트 열기",
+        title: t("openNote"),
+        "aria-label": t("openNote"),
       },
     });
     setIcon(openBtn, "file-text");
@@ -6499,8 +6508,8 @@ export class GalleryView extends FileView {
       cls: "clickable-icon charinfo-detail__icon-btn",
       attr: {
         type: "button",
-        title: "공유",
-        "aria-label": "공유",
+        title: t("share"),
+        "aria-label": t("share"),
       },
     });
     setIcon(linkBtn, "globe");
@@ -6513,7 +6522,7 @@ export class GalleryView extends FileView {
     const props = detail.createDiv({ cls: "charinfo-detail__props" });
     props.createDiv({
       cls: "charinfo-detail__props-label",
-      text: "속성",
+      text: t("properties"),
     });
     this.renderViewProperties(props, record, {
       interactiveStatus: this.cardEditActive,
@@ -6531,7 +6540,7 @@ export class GalleryView extends FileView {
     } catch {
       detail.createDiv({
         cls: "charinfo-detail__error",
-        text: "노트를 읽지 못했어요. 새로고침해 보세요.",
+        text: t("couldNotReadTheNoteTryRefreshing"),
       });
       return;
     }
@@ -6564,7 +6573,7 @@ export class GalleryView extends FileView {
       body.empty();
       body.createDiv({
         cls: "charinfo-detail__error",
-        text: "본문을 그리지 못했어요.",
+        text: t("couldNotRenderTheBody"),
       });
     }
     if (
@@ -6599,7 +6608,7 @@ export class GalleryView extends FileView {
       const tail = parts[parts.length - 1];
       return tail ? decodeURIComponent(tail) : parsed.hostname;
     } catch {
-      return "웹 이미지";
+      return t("webImage");
     }
   }
 
@@ -6697,7 +6706,7 @@ export class GalleryView extends FileView {
       attr: {
         role: "dialog",
         "aria-modal": "true",
-        "aria-label": "이미지 크게 보기",
+        "aria-label": t("enlargeImage"),
       },
     });
     this.imageFocusEl = overlay;
@@ -6728,7 +6737,7 @@ export class GalleryView extends FileView {
         cls: "clickable-icon charinfo-icon-btn charinfo-focus__prev",
         attr: {
           type: "button",
-          "aria-label": "이전 이미지",
+          "aria-label": t("previousImage"),
           ...(arrows.prevDisabled ? { "aria-disabled": "true" } : {}),
         },
       });
@@ -6742,7 +6751,7 @@ export class GalleryView extends FileView {
         cls: "clickable-icon charinfo-icon-btn charinfo-focus__next",
         attr: {
           type: "button",
-          "aria-label": "다음 이미지",
+          "aria-label": t("nextImage"),
           ...(arrows.nextDisabled ? { "aria-disabled": "true" } : {}),
         },
       });
@@ -6755,7 +6764,7 @@ export class GalleryView extends FileView {
     }
     const close = overlay.createEl("button", {
       cls: "clickable-icon charinfo-icon-btn charinfo-focus__close",
-      attr: { type: "button", "aria-label": "닫기" },
+      attr: { type: "button", "aria-label": t("close") },
     });
     setIcon(close, "x");
     close.addEventListener("click", (event) => {
@@ -6861,7 +6870,7 @@ export class GalleryView extends FileView {
     const head = strip.createDiv({ cls: "charinfo-image-strip__head" });
     head.createDiv({
       cls: "charinfo-image-strip__label",
-      text: editable ? "이미지 · 탭하면 커버" : "이미지",
+      text: editable ? t("imagesTapToSetCover") : t("images2"),
       attr: { tabindex: "-1" },
     });
 
@@ -6869,8 +6878,8 @@ export class GalleryView extends FileView {
       strip.createDiv({
         cls: "charinfo-image-strip__empty",
         text: editable
-          ? "이미지가 없어요. 노트에 넣은 뒤 새로고침하세요."
-          : "이미지 없음",
+          ? t("thereAreNoImagesAddThemToThe")
+          : t("noImages"),
       });
       return;
     }
@@ -6884,15 +6893,15 @@ export class GalleryView extends FileView {
     this.imagePreviewUpdate = undefined;
     if (!editable) {
       const media = strip.createDiv({ cls: "charinfo-detail-media" });
-      const open = media.createEl("button", { cls: "charinfo-detail-media__open", attr: { type: "button", "aria-label": "이미지 크게 보기" } });
+      const open = media.createEl("button", { cls: "charinfo-detail-media__open", attr: { type: "button", "aria-label": t("enlargeImage") } });
       const picture = open.createEl("img", { attr: { alt: record.title, draggable: "false" } });
       open.onclick = (event) => { event.preventDefault(); event.stopPropagation(); if (shouldOpenImageFocus({ editMode: this.editMode, batchMode: this.batchMode })) this.openImageFocus(record.path, images, coverRefKey(images[previewIndex]!)); };
       let previous: HTMLButtonElement | undefined, next: HTMLButtonElement | undefined, count: HTMLElement | undefined;
       if (images.length > 1) {
         const nav = media.createDiv({ cls: "charinfo-detail-media__nav" });
-        previous = nav.createEl("button", { attr: { type: "button", "aria-label": "이전 이미지" } }); setIcon(previous, "chevron-left");
+        previous = nav.createEl("button", { attr: { type: "button", "aria-label": t("previousImage") } }); setIcon(previous, "chevron-left");
         count = nav.createSpan({ attr: { "aria-live": "polite" } });
-        next = nav.createEl("button", { attr: { type: "button", "aria-label": "다음 이미지" } }); setIcon(next, "chevron-right");
+        next = nav.createEl("button", { attr: { type: "button", "aria-label": t("nextImage") } }); setIcon(next, "chevron-right");
         previous.onclick = () => { if (previewIndex > 0) { previewIndex--; showPreview?.(); } };
         next.onclick = () => { if (previewIndex < images.length - 1) { previewIndex++; showPreview?.(); } };
       }
@@ -6919,7 +6928,7 @@ export class GalleryView extends FileView {
           role: "button",
           tabindex: "0",
           "aria-label": imageLabel,
-          ...(isCover ? { title: "현재 커버" } : {}),
+          ...(isCover ? { title: t("currentCover") } : {}),
         },
       });
       thumb.dataset.id = imageKey;
@@ -6968,8 +6977,8 @@ export class GalleryView extends FileView {
             text: direction < 0 ? "←" : "→",
             attr: {
               type: "button",
-              "aria-label": `${imageLabel} ${direction < 0 ? "왼쪽" : "오른쪽"}으로 이동`,
-              title: direction < 0 ? "왼쪽으로 이동" : "오른쪽으로 이동",
+              "aria-label": t("moveValueValue", { arg1: imageLabel, arg2: direction < 0 ? t("left") : t("right") }),
+              title: direction < 0 ? t("moveLeft") : t("moveRight"),
             },
           });
           button.disabled = direction < 0 ? index === 0 : index === images.length - 1;
@@ -6998,20 +7007,25 @@ export class GalleryView extends FileView {
           cls: "charinfo-image-tile__remove",
           attr: {
             type: "button",
-            "aria-label": `${imageLabel} 노트에서 제거`,
-            title: isCover && images.length > 1 ? "현재 커버예요 · 먼저 다른 이미지를 커버로 골라 주세요" : "노트에서 제거",
+            "aria-label": t("removeValueFromNote", { arg1: imageLabel }),
+            title: isCover && images.length > 1 ? t("thisIsTheCurrentCoverChooseAnotherCover2") : t("removeFromNote"),
           },
         });
         setIcon(remove.createSpan({ attr: { "aria-hidden": "true" } }), "trash");
-        remove.createSpan({ text: "제거" });
+        remove.createSpan({ text: t("remove2") });
         remove.disabled = isCover && images.length > 1;
         remove.addEventListener("click", (event) => {
           event.stopPropagation();
           void this.removeGalleryImage(record, imageKey, remove).catch((error) => {
-            new Notice(error instanceof Error ? error.message : "이미지를 제거하지 못했어요.");
+            new Notice(error instanceof Error ? error.message : t("couldNotRemoveTheImage"));
           });
         });
       }
     }
   }
+}
+
+/** Translate built-in UI labels while preserving user-renamed fields. */
+function axisLabel(...args: Parameters<typeof rawAxisLabel>): string {
+  return displayPropertyLabel(args[0], rawAxisLabel(...args));
 }

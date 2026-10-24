@@ -25,11 +25,11 @@ test("public-host network use and retention are disclosed", () => {
 test("hosted-share UI warns before publish and labels one-year retention honestly", () => {
   const modal = read("src/ui/ShareGalleryModal.ts");
   const settings = read("src/ui/SettingTab.ts");
-  assert.match(modal, /링크가 있는 사람은 누구나 볼 수 있어요/);
-  assert.match(modal, /id: "permanent", label: "1년"/);
-  assert.match(settings, /addOption\("permanent", "1년"\)/);
+  assert.match(modal, /sharingUploadsSelectedCardDetailsAndCoversTo/);
+  assert.match(modal, /id: "permanent", label: t\("1Year"\)/);
+  assert.match(settings, /addOption\("permanent", t\("1Year"\)\)/);
   assert.doesNotMatch(modal, /id: "permanent", label: "상시"/);
-  assert.match(modal, /이미 열린 사본은 잠시 남을 수 있어요/);
+  assert.match(modal, /sharingStoppedCopiesAlreadyOpenMayRemainBriefly2/);
 });
 
 test("the deployed Pages handlers are audited and hardened", () => {
@@ -68,10 +68,10 @@ test("published links remain manageable after note lifecycle changes", () => {
   assert.match(main, /remapGalleryPageState/);
   assert.match(main, /remapCharacterWebShareState/);
   assert.match(settings, /Keep any hosted-share credential/);
-  assert.match(settingTab, /노트를 옮기거나 지워도 여기서 공개 링크를 확인하고 멈출 수 있어요/);
-  assert.match(settingTab, /멈추지 못했어요\. 링크는 아직 열려 있어요/);
-  assert.match(settingTab, /label: "이전 링크"/);
-  assert.match(settingTab, /원본 노트 연결 안 됨/);
+  assert.match(settingTab, /youCanCheckAndStopPublicLinksHere/);
+  assert.match(settingTab, /couldNotStopSharingTheLinkIsStill/);
+  assert.match(settingTab, /label: t\("previousLink"\)/);
+  assert.match(settingTab, /sourceNoteNotLinked/);
   assert.match(settingTab, /hostedShareBaseFromUrl\(state\.url\)/);
   assert.match(settingTab, /uploadKeyForHostedTarget/);
   assert.doesNotMatch(settingTab, /마지막 갤러리 링크/);

@@ -117,10 +117,10 @@ test("shared names still reach every surface that shows them", () => {
   const view = readFileSync(join(root, "src/views/GalleryView.ts"), "utf8");
   const page = readFileSync(join(root, "src/page/galleryPage.ts"), "utf8");
 
-  assert.match(modal, /CREATE_GALLERY_NAME/);
+  assert.match(modal, /t\("createNewGallery"\)/);
   assert.doesNotMatch(modal, /새 갤러리 창/);
   // The pane menu is the remaining way to create another gallery.
-  assert.match(view, /\.setTitle\(CREATE_GALLERY_NAME\)/);
+  assert.match(view, /\.setTitle\(t\("createNewGallery"\)\)/);
   assert.doesNotMatch(view, /새 갤러리 페이지/);
   assert.match(page, /OPEN_GALLERY_NAME/);
   assert.doesNotMatch(page, /«갤러리 열기»/);
@@ -138,4 +138,16 @@ test("both READMEs document the two palette commands and none of the removed one
     assert.doesNotMatch(readme, /캐릭터 노트 만들기/);
     assert.doesNotMatch(readme, /\| (Share gallery|New gallery) \|/);
   }
+});
+
+test("command names follow language changes after the module was imported", async () => {
+  const { uiLanguage } = await import("../src/i18n/index.ts");
+  try {
+    uiLanguage.set("en");
+    assert.equal(commandById("open-gallery")?.name, "Open gallery");
+    assert.equal(commandById("toggle-edit-mode")?.name, "Toggle gallery edit mode");
+    uiLanguage.set("ko");
+    assert.equal(commandById("open-gallery")?.name, "갤러리 열기");
+    assert.equal(commandById("toggle-edit-mode")?.name, "갤러리 편집 켜기 / 끄기");
+  } finally { uiLanguage.set("ko"); }
 });

@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 import {
   groupRenameErrorMessage,
   groupRenameProblem,
@@ -65,14 +67,14 @@ export class GroupRenameDialog {
     const head = this.dialog.createDiv({ cls: "charinfo-batch-dialog__head" });
     head.createSpan({
       cls: "charinfo-batch-dialog__title",
-      text: "그룹 이름 바꾸기",
+      text: t("renameGroup"),
       attr: { id: titleId },
     });
 
     const body = this.dialog.createDiv({ cls: "charinfo-group-rename-dialog__body" });
     body.createEl("label", {
       cls: "charinfo-group-rename-dialog__label",
-      text: "새 그룹 이름",
+      text: t("newGroupName"),
       attr: { for: inputId },
     });
     this.input = body.createEl("input", {
@@ -97,13 +99,13 @@ export class GroupRenameDialog {
     const foot = this.dialog.createDiv({ cls: "charinfo-batch-dialog__foot" });
     this.cancelBtn = foot.createEl("button", {
       cls: "charinfo-text-btn charinfo-batch-dialog__cancel",
-      text: "취소",
+      text: t("cancel"),
       attr: { type: "button" },
     });
     this.cancelBtn.addEventListener("click", () => this.cancel());
     this.submitBtn = foot.createEl("button", {
       cls: "charinfo-text-btn mod-cta charinfo-batch-dialog__confirm",
-      text: "이름 바꾸기",
+      text: t("rename"),
       attr: { type: "button" },
     });
     this.submitBtn.addEventListener("click", () => this.submit());
@@ -155,7 +157,7 @@ export class GroupRenameDialog {
     this.dialog?.addClass("is-saving");
     this.dialog?.setAttribute("aria-busy", "true");
     this.savingLayer?.removeAttribute("aria-hidden");
-    this.savingText?.setText("그룹 이름을 바꾸는 중…");
+    this.savingText?.setText(t("renamingGroup"));
     if (this.input) this.input.disabled = true;
     if (this.cancelBtn) this.cancelBtn.disabled = true;
     if (this.submitBtn) this.submitBtn.disabled = true;

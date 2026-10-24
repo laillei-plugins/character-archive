@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: native Node TS tests require explicit extensions.
+import { t } from "../i18n/index.ts";
 /** The default route's visible name. A named group may never claim it. */
 export const DEFAULT_ROUTE_LABEL = "기본";
 
@@ -58,14 +60,14 @@ export function groupAddProblem(input: {
 }
 
 export function groupRenameErrorMessage(problem: GroupRenameProblem): string {
-  if (problem === "empty") return "이름을 입력해 주세요.";
+  if (problem === "empty") return t("enterAName");
   if (problem === "duplicate") {
-    return "이미 같은 이름의 그룹이 있어요. 다른 이름을 입력해 주세요.";
+    return t("aGroupWithThisNameAlreadyExistsEnter");
   }
   if (problem === "reserved") {
-    return `「${DEFAULT_ROUTE_LABEL}」은 기본 그룹의 이름이라 쓸 수 없어요. 다른 이름을 입력해 주세요.`;
+    return t("valueIsReservedForTheDefaultGroupEnter", { arg1: DEFAULT_ROUTE_LABEL });
   }
-  return "기본은 그룹이 아니라서 이름을 바꿀 수 없어요.";
+  return t("theDefaultRouteIsNotAGroupAnd");
 }
 
 export function groupRenameSuccessMessage(
@@ -73,9 +75,9 @@ export function groupRenameSuccessMessage(
   to: string,
   notes: number,
 ): string {
-  const suffix = notes > 0 ? `노트 ${notes}개` : "빈 그룹";
+  const suffix = notes > 0 ? t("valueNotes", { arg1: notes }) : t("emptyGroup2");
   const source = normalizeRenameInput(from) || DEFAULT_ROUTE_LABEL;
-  return `「${source}」 그룹 이름을 「${normalizeRenameInput(to)}」로 바꿨어요 · ${suffix}`;
+  return t("renamedGroupValueToValueValue", { arg1: source, arg2: normalizeRenameInput(to), arg3: suffix });
 }
 
 /** Replace a group identity without moving its position in the list. */

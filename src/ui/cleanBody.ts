@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t as uiText, translate, uiLanguage } from "../i18n/index.ts";
 /**
  * Structured character sheet (props / abilities / notes / prompt copy).
  *
@@ -443,6 +445,7 @@ export function renderCleanBody(
   container.empty();
   container.addClass("charinfo-sheet");
 
+  const t: typeof uiText = (key, ...args) => translate(mode === "peek" ? uiLanguage.current : "ko", key, ...args);
   const doc = parseDetailDoc(markdown, mode);
   const keepEmpty = mode === "peek";
 
@@ -453,7 +456,7 @@ export function renderCleanBody(
 
   for (const block of doc.blocks) {
     if (block.type === "prompts") {
-      renderPromptBlock(container, block.prompts, block.title);
+      renderPromptBlock(container, block.prompts, block.title, mode);
       continue;
     }
     const section = block.section;
@@ -487,7 +490,7 @@ export function renderCleanBody(
   if (!container.querySelector(".charinfo-sheet__block, .charinfo-sheet__meta")) {
     container.createDiv({
       cls: "charinfo-sheet__empty",
-      text: "표시할 프로필 본문이 없어요.",
+      text: t("thereIsNoProfileContentToDisplay"),
     });
   }
 }
@@ -496,7 +499,9 @@ function renderPromptBlock(
   container: HTMLElement,
   prompts: DetailProp[],
   title = "프롬프트",
+  mode: DetailParseMode = "share",
 ): void {
+  const t: typeof uiText = (key, ...args) => translate(mode === "peek" ? uiLanguage.current : "ko", key, ...args);
   if (!prompts.length) return;
   const block = container.createDiv({ cls: "charinfo-sheet__block is-prompts" });
   block.createDiv({ cls: "charinfo-sheet__heading", text: title });
@@ -514,15 +519,15 @@ function renderPromptBlock(
       cls: "clickable-icon charinfo-sheet__copy-icon is-in-box",
       attr: {
         type: "button",
-        title: `${prompt.label} 복사`,
-        "aria-label": `${prompt.label} 복사`,
+        title: t("copyValue", { arg1: prompt.label }),
+        "aria-label": t("copyValue", { arg1: prompt.label }),
       },
     });
     setIcon(btn, "copy");
     btn.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      void copyText(prompt.value, btn);
+      void copyText(prompt.value, btn, mode);
     });
 
     pre.addEventListener("dblclick", (event) => {
@@ -536,7 +541,8 @@ function renderPromptBlock(
   }
 }
 
-async function copyText(text: string, button: HTMLElement): Promise<void> {
+async function copyText(text: string, button: HTMLElement, mode: DetailParseMode): Promise<void> {
+  const t: typeof uiText = (key, ...args) => translate(mode === "peek" ? uiLanguage.current : "ko", key, ...args);
   // Byte-preserve fence contents — do not trim on copy.
   const value = text;
   const show = (icon: string, title: string) => {
@@ -544,16 +550,16 @@ async function copyText(text: string, button: HTMLElement): Promise<void> {
     button.setAttr("title", title);
   };
   if (value.length === 0) {
-    show("circle-alert", "비어 있음");
-    window.setTimeout(() => show("copy", "복사"), 1000);
+    show("circle-alert", t("empty"));
+    window.setTimeout(() => show("copy", t("copy")), 1000);
     return;
   }
   const ok = await writeClipboard(value);
-  show(ok ? "check" : "x", ok ? "복사됨" : "실패");
+  show(ok ? "check" : "x", ok ? t("copied") : t("failed"));
   button.classList.toggle("is-copied", ok);
   window.setTimeout(() => {
     button.classList.remove("is-copied");
-    show("copy", button.getAttr("aria-label") || "복사");
+    show("copy", button.getAttr("aria-label") || t("copy"));
   }, 1200);
 }
 

@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 import { App, Modal } from "obsidian";
 import {
   characterNameProblem,
@@ -48,7 +50,7 @@ export class CharacterNameModal extends Modal {
     });
     body.createEl("label", {
       cls: "charinfo-character-name-modal__label",
-      text: "이름",
+      text: t("name"),
       attr: { for: inputId },
     });
     this.input = body.createEl("input", {
@@ -57,7 +59,7 @@ export class CharacterNameModal extends Modal {
       attr: {
         id: inputId,
         value: this.opts.initialName ?? "",
-        placeholder: this.opts.placeholder ?? "캐릭터 이름",
+        placeholder: this.opts.placeholder ?? t("characterName"),
         spellcheck: "false",
         "aria-describedby": errorId,
       },

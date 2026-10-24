@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 import { setIcon } from "obsidian";
 import type { TagDef } from "../settings";
 import { placeAnchoredPopover } from "./typeMenuPlacement";
@@ -37,7 +39,7 @@ export class TagChecklistPopover {
     this.close();
     const panel = document.body.createDiv({
       cls: "charinfo-view-menu charinfo-tag-menu",
-      attr: { role: "group", "aria-label": "태그 고르기" },
+      attr: { role: "group", "aria-label": t("chooseTags") },
     });
     this.panel = panel;
 
@@ -109,7 +111,7 @@ export class TagChecklistPopover {
     const panel = this.panel;
     if (!panel) return;
     panel.empty();
-    panel.createDiv({ cls: "charinfo-view-menu__title", text: "태그" });
+    panel.createDiv({ cls: "charinfo-view-menu__title", text: t("tags") });
 
     const selected = new Set(this.handlers.getSelected());
     const known = new Set(this.vocab.map((t) => t.id));
@@ -118,7 +120,7 @@ export class TagChecklistPopover {
     if (this.vocab.length === 0 && ghosts.length === 0) {
       panel.createDiv({
         cls: "charinfo-view-menu__hint",
-        text: "설정 → 태그 옵션에서 태그를 먼저 추가하세요.",
+        text: t("addTagsInSettingsTagOptionsFirst"),
       });
       this.placePanel();
       return;
@@ -157,7 +159,7 @@ export class TagChecklistPopover {
     if (checked) setIcon(box, "check");
     row.createSpan({ cls: "charinfo-tag-menu__label", text: label });
     if (ghost) {
-      row.createSpan({ cls: "charinfo-tag-menu__note", text: "삭제된 태그" });
+      row.createSpan({ cls: "charinfo-tag-menu__note", text: t("deletedTag") });
     }
 
     row.addEventListener("click", (event) => {

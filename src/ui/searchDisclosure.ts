@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 export type FoldTier = "none" | "narrow" | "compact";
 
 export interface SearchDisclosureState {
@@ -279,7 +281,7 @@ export function describeBatchAction(input: {
   batchSaving: boolean;
 }): BatchActionDescriptor {
   return {
-    label: input.batchMode ? "여러 선택 끝내기" : "여러 선택",
+    label: input.batchMode ? t("finishMultipleSelection") : t("multipleSelection"),
     pressed: input.batchMode,
     disabled: input.batchSaving,
     classes:

@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: native Node TS tests require explicit extensions.
+import { t } from "../i18n/index.ts";
 /**
  * 여러 캐릭터를 한 번에 다른 그룹으로 — plan, execute, rollback.
  *
@@ -16,9 +18,7 @@
  * - **Only real changes count.** A note already in the destination is a no-op,
  *   never a write, and never part of the success count.
  *
- * This file imports nothing — `node --test` runs it straight from TypeScript
- * (see `tests/batch-group-move.test.ts`). Keep it that way: a relative import
- * without a `.ts` extension cannot load under Node's test runner.
+ * Runtime imports use explicit `.ts` extensions for the native Node test runner.
  */
 
 /** Same normalization `그룹` routing uses everywhere else (`normalizeGroupKey`). */
@@ -52,7 +52,7 @@ export interface BatchMovePlan {
 
 /** A destination that is not a named group cannot be planned. */
 export class BatchMoveDestinationError extends Error {
-  constructor(message = "이동할 그룹을 골라 주세요.") {
+  constructor(message = t("chooseAGroupToMoveTo")) {
     super(message);
     this.name = "BatchMoveDestinationError";
   }
@@ -396,11 +396,11 @@ function destinationMeta(row: {
   alreadyThere: number;
   eligible: boolean;
 }): string {
-  if (!row.eligible) return "이미 모두 이 그룹에 있어요";
+  if (!row.eligible) return t("allSelectedCharactersAreAlreadyInThisGroup");
   if (row.alreadyThere > 0) {
-    return `선택한 ${row.alreadyThere}명은 이미 이 그룹에 있어요`;
+    return t("valueSelectedCharactersAreAlreadyInThisGroup", { arg1: row.alreadyThere });
   }
-  if (row.total === 0) return "비어 있는 그룹";
+  if (row.total === 0) return t("emptyGroup");
   return "";
 }
 
@@ -410,8 +410,8 @@ export function batchMoveSuccessMessage(
   destination: string,
 ): string {
   const group = normalizeMoveGroup(destination);
-  if (changed === 0) return `이미 모두 ${group} 그룹에 있어요.`;
-  return `${changed}명을 ${group} 그룹으로 옮겼어요.`;
+  if (changed === 0) return t("allSelectedCharactersAreAlreadyInTheValue", { arg1: group });
+  return t("movedValueCharactersToTheValueGroup", { arg1: changed, arg2: group });
 }
 
 /**
@@ -422,9 +422,9 @@ export function batchMoveFailureMessage(error: BatchGroupMoveError): string {
   const detail = error.message.trim();
   const tail = detail ? ` · ${detail}` : "";
   if (error.rollbackFailures.length > 0) {
-    return `그룹을 바꾸지 못했어요 · ${error.rollbackFailures.length}명은 되돌리지 못했어요. 노트를 확인해 주세요.${tail}`;
+    return t("couldNotChangeGroupCouldNotRestoreValue", { arg1: error.rollbackFailures.length, arg2: tail });
   }
-  return `그룹을 바꾸지 못했어요. 모두 원래대로 돌려놓았어요.${tail}`;
+  return t("couldNotChangeGroupAllChangesWereRestored", { arg1: tail });
 }
 
 export type BatchEscapeAction =

@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 import {
   App,
   Modal,
@@ -96,7 +98,7 @@ export class CoverPickerModal extends Modal {
 
   onOpen(): void {
     this.modalEl.addClass("charinfo-cover-modal");
-    this.setTitle("커버");
+    this.setTitle(t("cover"));
 
     const { contentEl } = this;
     contentEl.empty();
@@ -124,7 +126,7 @@ export class CoverPickerModal extends Modal {
     const add = contentEl.createDiv({ cls: "charinfo-cover-picker__block" });
     add.createDiv({
       cls: "charinfo-cover-picker__block-title",
-      text: "추가",
+      text: t("add"),
     });
     const actions = add.createDiv({ cls: "charinfo-cover-picker__actions" });
 
@@ -141,9 +143,9 @@ export class CoverPickerModal extends Modal {
     });
     fileText.createDiv({
       cls: "charinfo-cover-picker__action-label",
-      text: "파일",
+      text: t("file"),
     });
-    fileBtn.setAttribute("title", "여러 이미지를 한 번에 선택할 수 있어요");
+    fileBtn.setAttribute("title", t("youCanSelectSeveralImagesAtOnce"));
     fileBtn.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -164,7 +166,7 @@ export class CoverPickerModal extends Modal {
     });
     linkText.createDiv({
       cls: "charinfo-cover-picker__action-label",
-      text: "링크",
+      text: t("link"),
     });
     linkBtn.addEventListener("click", (event) => {
       event.preventDefault();
@@ -179,7 +181,7 @@ export class CoverPickerModal extends Modal {
     this.linkInput = this.linkPanel.createEl("input", {
       type: "text",
       cls: "charinfo-cover-picker__link",
-      attr: { placeholder: "https://… 또는 vault 경로" },
+      attr: { placeholder: t("httpsOrVaultPath") },
     });
     this.linkInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.isComposing) {
@@ -188,7 +190,7 @@ export class CoverPickerModal extends Modal {
       }
     });
     const linkGo = this.linkPanel.createEl("button", {
-      text: "적용",
+      text: t("apply"),
       cls: "charinfo-cover-picker__link-go",
       attr: { type: "button" },
     });
@@ -201,11 +203,11 @@ export class CoverPickerModal extends Modal {
     // —— 4. Reset / clear (quiet) ——
     const footer = contentEl.createDiv({ cls: "charinfo-cover-picker__footer" });
     const defBtn = footer.createEl("button", {
-      text: "기본으로",
+      text: t("resetToDefault"),
       cls: "charinfo-cover-picker__quiet",
       attr: {
         type: "button",
-        title: "노트의 첫 이미지를 자동으로 사용",
+        title: t("automaticallyUseTheNoteSFirstImage"),
       },
     });
     defBtn.addEventListener("click", (event) => {
@@ -215,11 +217,11 @@ export class CoverPickerModal extends Modal {
     });
 
     const noneBtn = footer.createEl("button", {
-      text: "커버 없음",
+      text: t("noCover"),
       cls: "charinfo-cover-picker__quiet",
       attr: {
         type: "button",
-        title: "이미지는 남기고 카드 커버만 숨김",
+        title: t("hideTheCardCoverAndKeepTheImages"),
       },
     });
     noneBtn.addEventListener("click", (event) => {
@@ -242,35 +244,35 @@ export class CoverPickerModal extends Modal {
     if (this.currentCover) {
       const frame = this.currentEl.createDiv({ cls: "charinfo-cover-picker__current-frame" });
       const image = frame.createEl("img", { cls: "charinfo-cover-picker__current-img", attr: {
-        src: coverDisplaySrc(this.app, this.currentCover), alt: "현재 커버", draggable: "false",
+        src: coverDisplaySrc(this.app, this.currentCover), alt: t("currentCover"), draggable: "false",
       } });
       image.style.objectPosition = this.record.coverPosition || "50% 50%";
     }
-    this.currentEl.createDiv({ cls: "charinfo-cover-picker__current-cap", text: this.currentCover ? "현재 커버" : "커버 없음" });
+    this.currentEl.createDiv({ cls: "charinfo-cover-picker__current-cap", text: this.currentCover ? t("currentCover") : t("noCover") });
     this.pickEl.empty();
     const heading = this.pickEl.createDiv({ cls: "charinfo-cover-picker__block-title" });
-    heading.createSpan({ text: "고르기" });
-    heading.createSpan({ text: `총 ${this.images.length}장` });
+    heading.createSpan({ text: t("choose") });
+    heading.createSpan({ text: t("valueImagesTotal", { arg1: this.images.length }) });
     const grid = this.pickEl.createDiv({ cls: "charinfo-cover-picker__grid" });
-    if (!this.images.length) grid.createDiv({ cls: "charinfo-cover-picker__empty", text: "이미지를 추가해 주세요." });
+    if (!this.images.length) grid.createDiv({ cls: "charinfo-cover-picker__empty", text: t("addAnImage") });
     const currentKey = this.currentCover ? coverRefKey(this.currentCover) : null;
     for (const [position, image] of this.images.entries()) {
       const key = coverRefKey(image);
       const label = this.coverLabel(image), isCurrent = key === currentKey;
       const tile = grid.createDiv({ cls: "charinfo-cover-picker__tile", attr: { "data-image-key": key } });
       const pick = tile.createEl("button", { cls: "charinfo-cover-picker__cell" + (isCurrent ? " is-current" : ""), attr: {
-        type: "button", title: label, "aria-label": `${position + 1}번 ${label} 커버로 선택`, "aria-pressed": String(isCurrent), "data-action": "pick",
+        type: "button", title: label, "aria-label": t("selectImageValueValueAsCover", { arg1: position + 1, arg2: label }), "aria-pressed": String(isCurrent), "data-action": "pick",
       } });
       pick.createEl("img", { attr: { src: coverDisplaySrc(this.app, image), alt: "", loading: "lazy", draggable: "false" } });
       pick.createSpan({ cls: "charinfo-cover-picker__number", text: String(position + 1) });
-      if (isCurrent) pick.createSpan({ cls: "charinfo-cover-picker__badge", text: "현재" });
+      if (isCurrent) pick.createSpan({ cls: "charinfo-cover-picker__badge", text: t("current") });
       pick.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
         void this.commit(image);
       });
       const actions = tile.createDiv({ cls: "charinfo-cover-picker__image-actions" });
-      pick.title = `${label} · Alt + 방향키로 순서 변경`;
+      pick.title = t("valueAltArrowKeysToReorder", { arg1: label });
       pick.addEventListener("keydown", (event) => {
         if (!event.altKey || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
         event.preventDefault(); event.stopPropagation();
@@ -278,8 +280,8 @@ export class CoverPickerModal extends Modal {
       });
       const protectedCover = isCurrent && this.images.length > 1;
       const remove = actions.createEl("button", { cls: "clickable-icon charinfo-icon-btn charinfo-cover-picker__remove", attr: {
-        type: "button", "aria-label": `${position + 1}번 이미지 제거`, "data-action": "remove",
-        title: protectedCover ? "다른 이미지를 커버로 선택한 뒤 제거할 수 있어요" : "이미지 제거",
+        type: "button", "aria-label": t("removeImageValue", { arg1: position + 1 }), "data-action": "remove",
+        title: protectedCover ? t("chooseAnotherCoverImageBeforeRemovingThisOne") : t("removeImage"),
       } });
       setIcon(remove, "trash-2");
       remove.disabled = protectedCover;
@@ -291,7 +293,7 @@ export class CoverPickerModal extends Modal {
       if (this.busy) return;
       this.setBusy(true);
       void this.operations.reorder(key, anchor, place).then(() => this.refresh(key, "pick")).catch((error) => {
-        this.setStatus(error instanceof Error ? error.message : "순서를 바꾸지 못했어요.", true);
+        this.setStatus(error instanceof Error ? error.message : t("couldNotReorder"), true);
         return this.refresh();
       }).finally(() => { if (this.opened) { this.setBusy(false); this.renderImages(key, "pick"); } });
     }, () => this.opened && !this.busy && this.images.length > 1);
@@ -317,7 +319,7 @@ export class CoverPickerModal extends Modal {
       this.renderImages(followKey, action);
       return true;
     } catch (error) {
-      if (this.opened && version === this.refreshVersion) this.setStatus("화면을 새로 불러오지 못했어요. 다시 시도해 주세요.", true);
+      if (this.opened && version === this.refreshVersion) this.setStatus(t("couldNotReloadTheViewTryAgain"), true);
       return false;
     }
   }
@@ -330,7 +332,7 @@ export class CoverPickerModal extends Modal {
       await this.operations.move(key, direction);
       await this.refresh(key, String(direction));
     } catch (error) {
-      if (this.opened) this.setStatus(error instanceof Error ? error.message : "순서를 바꾸지 못했어요.", true);
+      if (this.opened) this.setStatus(error instanceof Error ? error.message : t("couldNotReorder"), true);
     } finally {
       this.movePending -= 1;
       if (this.opened && this.movePending === 0) { this.setBusy(false); this.renderImages(key, String(direction)); }
@@ -347,8 +349,8 @@ export class CoverPickerModal extends Modal {
       if (undo && this.opened && this.undoEl) {
         this.setStatus("");
         this.undoKey = key;
-        this.undoEl.setText("이미지를 제거했어요. ");
-        const button = this.undoEl.createEl("button", { cls: "charinfo-image-undo", text: "되돌리기", attr: { type: "button", "aria-label": "이미지 제거 되돌리기" } });
+        this.undoEl.setText(t("imageRemoved"));
+        const button = this.undoEl.createEl("button", { cls: "charinfo-image-undo", text: t("undo"), attr: { type: "button", "aria-label": t("undoImageRemoval") } });
         button.onclick = () => {
           if (this.busy) return;
           this.setBusy(true);
@@ -356,13 +358,13 @@ export class CoverPickerModal extends Modal {
             if (this.opened) { this.setStatus(""); this.undoEl?.empty(); this.undoKey = undefined; }
             await this.refresh(key, "pick");
           }).catch((error) => {
-            if (this.opened) this.setStatus(error instanceof Error ? error.message : "되돌리지 못했어요.", true);
+            if (this.opened) this.setStatus(error instanceof Error ? error.message : t("couldNotUndo"), true);
           }).finally(() => { if (this.opened) this.setBusy(false); });
         };
       }
       await this.refresh(neighbor ? coverRefKey(neighbor) : undefined, "remove");
     } catch (error) {
-      if (this.opened) this.setStatus(error instanceof Error ? error.message : "이미지를 제거하지 못했어요.", true);
+      if (this.opened) this.setStatus(error instanceof Error ? error.message : t("couldNotRemoveTheImage"), true);
       await this.refresh();
     } finally {
       if (this.opened) { this.setBusy(false); this.renderImages(neighbor ? coverRefKey(neighbor) : undefined, "remove"); }
@@ -376,7 +378,7 @@ export class CoverPickerModal extends Modal {
     this.currentCover = result.currentCover;
     if (this.linkInput) this.linkInput.value = "";
     this.renderImages(coverRefKey(image));
-    this.setStatus(result.added ? "이미지를 추가했어요." : "이미 추가한 이미지예요.");
+    this.setStatus(result.added ? t("imageAdded") : t("thisImageHasAlreadyBeenAdded"));
   }
 
   private coverLabel(cover: CoverRef): string {
@@ -387,7 +389,7 @@ export class CoverPickerModal extends Modal {
       const tail = parts[parts.length - 1];
       return tail ? decodeURIComponent(tail) : parsed.hostname;
     } catch {
-      return "웹 이미지";
+      return t("webImage");
     }
   }
 
@@ -482,13 +484,13 @@ export class CoverPickerModal extends Modal {
     let vaultFallbacks = 0;
     try {
       for (const [index, file] of files.entries()) {
-        if (token === this.opToken) this.setStatus(`올리는 중… ${index + 1}/${files.length}`);
+        if (token === this.opToken) this.setStatus(t("uploadingValueValue", { arg1: index + 1, arg2: files.length }));
         if (!isImagePath(file.name)) {
-          failed.push(`${file.name}: 이미지 파일 아님`);
+          failed.push(t("valueNotAnImageFile", { arg1: file.name }));
           continue;
         }
         if (file.size > MAX_REMOTE_BYTES) {
-          failed.push(`${file.name}: 최대 25MB`);
+          failed.push(t("valueMaximum25mb", { arg1: file.name }));
           continue;
         }
         try {
@@ -507,7 +509,7 @@ export class CoverPickerModal extends Modal {
           uploaded.push({ kind: "vault", file: saved });
         } catch (error) {
           console.error("Image import failed", file.name, error);
-          failed.push(`${file.name}: ${error instanceof Error ? error.message : "저장 실패"}`);
+          failed.push(`${file.name}: ${error instanceof Error ? error.message : t("saveFailed")}`);
         }
       }
       let added = 0;
@@ -525,23 +527,23 @@ export class CoverPickerModal extends Modal {
       const firstAdded = uploaded.find((image) => this.images.some((candidate) => coverRefKey(candidate) === coverRefKey(image)));
       this.renderImages(firstAdded ? coverRefKey(firstAdded) : undefined);
       const coverMessage = coverWasHidden
-        ? " · 커버 숨김 유지"
+        ? t("coverRemainsHidden")
         : !hadImages && added > 0 && this.currentCover
-          ? " · 첫 이미지가 커버"
-          : " · 커버 그대로";
-      const fallbackMessage = vaultFallbacks ? ` · ${vaultFallbacks}장 vault에 저장` : "";
+          ? t("firstImageIsTheCover")
+          : t("coverUnchanged");
+      const fallbackMessage = vaultFallbacks ? t("valueImagesSavedInVault", { arg1: vaultFallbacks }) : "";
       const failedMessage = failed.length
-        ? ` · ${failed.length}장 실패: ${failed.slice(0, 2).join(", ")}${failed.length > 2 ? " 외" : ""}`
+        ? t("valueImagesFailedValueValue", { arg1: failed.length, arg2: failed.slice(0, 2).join(", "), arg3: failed.length > 2 ? t("andMore") : "" })
         : "";
-      const refreshMessage = refreshFailed ? " · 갤러리를 다시 열어 확인하세요" : "";
-      this.setStatus(`${added}장 추가${coverMessage}${fallbackMessage}${failedMessage}${refreshMessage}`, failed.length > 0 || refreshFailed);
+      const refreshMessage = refreshFailed ? t("reopenTheGalleryToCheck") : "";
+      this.setStatus(t("addedValueImagesValueValueValueValue", { arg1: added, arg2: coverMessage, arg3: fallbackMessage, arg4: failedMessage, arg5: refreshMessage }), failed.length > 0 || refreshFailed);
     } catch (error) {
       console.error(error);
       if (token !== this.opToken) return;
       const failedSummary = failed.length
-        ? ` · ${failed.length}장 실패: ${failed.slice(0, 2).join(", ")}`
+        ? t("valueImagesFailedValue", { arg1: failed.length, arg2: failed.slice(0, 2).join(", ") })
         : "";
-      this.setStatus(`${error instanceof Error ? error.message : `실패: ${String(error)}`}${failedSummary}`, true);
+      this.setStatus(`${error instanceof Error ? error.message : t("failedValue", { arg1: String(error) })}${failedSummary}`, true);
     } finally {
       if (token === this.opToken) this.setBusy(false);
     }
@@ -551,14 +553,14 @@ export class CoverPickerModal extends Modal {
     if (this.busy) return;
     const link = raw.trim();
     if (!link) {
-      this.setStatus("링크를 입력하세요.", true);
+      this.setStatus(t("enterALink"), true);
       this.showLinkPanel();
       return;
     }
 
     const token = ++this.opToken;
     this.setBusy(true);
-    this.setStatus("처리 중…");
+    this.setStatus(t("processing"));
     try {
       const wiki = link.match(/^!?\[\[([^\]]+)\]\]$/);
       const pathLike = wiki?.[1]?.split("|")[0]?.trim() || link;
@@ -568,7 +570,7 @@ export class CoverPickerModal extends Modal {
         return;
       }
       if (/^http:\/\//i.test(pathLike)) {
-        this.setStatus("https만 가능해요.", true);
+        this.setStatus(t("onlyHttpsIsSupported"), true);
         return;
       }
 
@@ -580,12 +582,12 @@ export class CoverPickerModal extends Modal {
         await this.appendLink({ kind: "vault", file: existing }, token);
         return;
       }
-      this.setStatus("이미지를 찾지 못했어요.", true);
+      this.setStatus(t("couldNotFindTheImage"), true);
     } catch (error) {
       if (token !== this.opToken) return;
       console.error(error);
       this.setStatus(
-        `실패: ${error instanceof Error ? error.message : String(error)}`,
+        t("failedValue", { arg1: error instanceof Error ? error.message : String(error) }),
         true,
       );
     } finally {
@@ -651,10 +653,10 @@ export class CoverPickerModal extends Modal {
       if (token !== this.opToken) return;
       console.error(error);
       this.setStatus(
-        `저장 실패: ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotSaveValue", { arg1: error instanceof Error ? error.message : String(error) }),
         true,
       );
-      new Notice("커버 저장 실패");
+      new Notice(t("couldNotSaveCover"));
     } finally {
       if (token === this.opToken) this.setBusy(false);
     }

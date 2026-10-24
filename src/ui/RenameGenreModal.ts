@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 import { App, Modal, Notice } from "obsidian";
 
 /**
@@ -26,17 +28,17 @@ export class RenameGenreModal extends Modal {
     contentEl.empty();
     contentEl.addClass("charinfo-rename-modal");
     this.modalEl.addClass("charinfo-rename-modal-shell");
-    this.setTitle("아카이브 이름");
+    this.setTitle(t("archiveName"));
 
     contentEl.createDiv({
       cls: "charinfo-rename-modal__lead",
-      text: "원하는 아카이브 이름으로 바꿀 수 있어요.",
+      text: t("youCanChooseANewArchiveName"),
     });
 
     const field = contentEl.createDiv({ cls: "charinfo-rename-modal__field" });
     field.createDiv({
       cls: "charinfo-rename-modal__label",
-      text: "새 이름",
+      text: t("newName"),
     });
     this.inputEl = field.createEl("input", {
       type: "text",
@@ -56,7 +58,7 @@ export class RenameGenreModal extends Modal {
 
     const cta = contentEl.createEl("button", {
       cls: "mod-cta charinfo-rename-modal__cta",
-      text: "바꾸기",
+      text: t("change"),
       attr: { type: "button" },
     });
     cta.addEventListener("click", () => void this.submit());
@@ -70,7 +72,7 @@ export class RenameGenreModal extends Modal {
   private async submit(): Promise<void> {
     const to = this.next.trim();
     if (!to) {
-      new Notice("아카이브 이름을 입력하세요.");
+      new Notice(t("enterAnArchiveName"));
       this.inputEl?.focus();
       return;
     }

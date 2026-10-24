@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: native Node TS tests require explicit extensions.
+import { t } from "../i18n/index.ts";
 /**
  * Character identity rules shared by the creation dialog and the vault writer.
  * This module deliberately imports nothing from Obsidian so Node tests can run
@@ -37,21 +39,21 @@ export function characterNameProblem(raw: unknown): CharacterNameProblem | null 
 export function characterNameProblemMessage(problem: CharacterNameProblem): string {
   switch (problem) {
     case "empty":
-      return "이름을 입력해 주세요.";
+      return t("enterAName");
     case "dot":
-      return "이 이름은 파일 이름으로 쓸 수 없어요.";
+      return t("thisNameCannotBeUsedAsAFile");
     case "extension":
-      return "이름에는 .md를 붙이지 마세요.";
+      return t("doNotAddMdToTheName");
     case "invalid-character":
-      return "파일 이름에 쓸 수 없는 문자가 있어요.";
+      return t("theNameContainsCharactersThatCannotBeUsed");
     case "trailing":
-      return "이름 끝에 점이나 공백을 둘 수 없어요.";
+      return t("aNameCannotEndWithAPeriodOr");
     case "reserved":
-      return "운영체제가 예약한 이름이라 사용할 수 없어요.";
+      return t("thisNameIsReservedByTheOperatingSystem");
     case "too-long":
-      return "파일 이름으로 쓰기에는 너무 길어요.";
+      return t("thisNameIsTooLongForAFile");
     case "collision":
-      return "같은 폴더에 같은 이름의 노트가 이미 있어요.";
+      return t("aNoteWithThisNameAlreadyExistsIn");
   }
 }
 

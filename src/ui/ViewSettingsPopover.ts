@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 import { Notice, setIcon } from "obsidian";
 import {
   FILTER_AXIS_IDS,
@@ -32,9 +34,6 @@ export interface ViewSettingsPopoverHandlers {
   onManageAttributes: () => void;
   batchAction: () => BatchActionDescriptor;
   activateBatchAction: () => void;
-  /** Fold-all row for the compact tier; null when there is no named group. */
-  foldAllAction: () => { label: string; icon: string } | null;
-  activateFoldAll: () => void;
   refresh: () => Promise<void>;
   isRefreshPending: () => boolean;
   onChange: () => void;
@@ -169,10 +168,10 @@ export class ViewSettingsPopover {
 
   private render(panel: HTMLElement): void {
     panel.empty();
-    panel.createDiv({ cls: "charinfo-view-menu__title", text: "보기 설정" });
+    panel.createDiv({ cls: "charinfo-view-menu__title", text: t("viewSettings") });
     panel.createDiv({
       cls: "charinfo-view-menu__hint",
-      text: "순서는 속성 관리에서 정해요.",
+      text: t("setTheOrderInManageProperties"),
     });
 
     const list = panel.createDiv({ cls: "charinfo-prop-list" });
@@ -184,7 +183,7 @@ export class ViewSettingsPopover {
     if (rows.length === 0) {
       list.createDiv({
         cls: "charinfo-view-menu__hint",
-        text: "이 아카이브에 보일 항목이 없어요.",
+        text: t("thereAreNoFieldsToShowInThis"),
       });
     } else {
       for (const row of rows) this.renderRow(list, row, rerender);
@@ -196,7 +195,7 @@ export class ViewSettingsPopover {
     const row = panel.createDiv({ cls: "charinfo-view-menu__toggle-row" });
     row.createDiv({
       cls: "charinfo-view-menu__toggle-label",
-      text: "이미지 맞추기",
+      text: t("fitImage"),
     });
     const toggle = row.createEl("button", {
       cls: "charinfo-view-menu__switch" + (fit ? " is-on" : ""),
@@ -204,7 +203,7 @@ export class ViewSettingsPopover {
         type: "button",
         role: "switch",
         "aria-checked": fit ? "true" : "false",
-        "aria-label": "이미지 맞추기",
+        "aria-label": t("fitImage"),
       },
     });
     toggle.createSpan({ cls: "charinfo-view-menu__switch-knob" });
@@ -241,7 +240,7 @@ export class ViewSettingsPopover {
     }[] = [];
     if (state.foldTier !== "none") {
       rows.push({
-        label: "공유",
+        label: t("share"),
         icon: "globe",
         disabled: false,
         activate: this.handlers.onShare,
@@ -249,7 +248,7 @@ export class ViewSettingsPopover {
     }
     if (state.foldTier === "compact") {
       rows.push({
-        label: "속성 관리",
+        label: t("manageProperties"),
         icon: "book",
         disabled: state.batchMode || !state.cardEditActive,
         activate: () => {
@@ -271,15 +270,6 @@ export class ViewSettingsPopover {
           activate: this.handlers.activateBatchAction,
         });
       }
-      const foldAll = this.handlers.foldAllAction();
-      if (foldAll) {
-        rows.push({
-          label: foldAll.label,
-          icon: foldAll.icon,
-          disabled: false,
-          activate: this.handlers.activateFoldAll,
-        });
-      }
     }
     if (rows.length === 0) return;
     const section = panel.createDiv({ cls: "charinfo-view-menu__actions" });
@@ -296,7 +286,7 @@ export class ViewSettingsPopover {
     });
     const pending = this.handlers.isRefreshPending();
     this.renderActionRow(section, {
-      label: "새로고침",
+      label: t("refresh"),
       icon: "refresh-cw",
       disabled: pending,
       classes: pending ? " is-pending" : "",
@@ -344,11 +334,11 @@ export class ViewSettingsPopover {
     const section = panel.createDiv({ cls: "charinfo-view-menu__filter" });
     section.createDiv({
       cls: "charinfo-view-menu__title",
-      text: "맨 위 필터 칩",
+      text: t("galleryFilterChips"),
     });
     section.createDiv({
       cls: "charinfo-view-menu__hint",
-      text: "갤러리 맨 위 칩에 쓸 속성을 고르세요.",
+      text: t("chooseThePropertyUsedByTheGalleryFilter"),
     });
     const pageAxis =
       this.pageAxisOverride === undefined
@@ -369,21 +359,21 @@ export class ViewSettingsPopover {
       cls: "charinfo-view-menu__axis-group",
       attr: {
         role: "radiogroup",
-        "aria-label": "맨 위 필터 칩",
+        "aria-label": t("galleryFilterChips"),
         ...(this.pending ? { "aria-busy": "true" } : {}),
       },
     });
     this.axisRadio(group, {
       active: pageAxis == null,
-      label: "기본값 사용",
-      note: `전체 설정을 따라요 · 현재: ${this.handlers.axisName(globalAxis)}`,
+      label: t("useDefault"),
+      note: t("followingPluginSettingsCurrentValue", { arg1: this.handlers.axisName(globalAxis) }),
       value: "default",
       disabled: this.pending,
       onPick: () => this.commitPageAxis(null, rerender),
     });
     group.createDiv({
       cls: "charinfo-view-menu__axis-sublabel",
-      text: "이 페이지만 바꾸기",
+      text: t("overrideForThisPage"),
     });
     for (const axis of axes) {
       const pinnedUnavailable = pageAxis === axis.id && !axis.available;
@@ -391,8 +381,8 @@ export class ViewSettingsPopover {
       const note = axis.available
         ? this.axisPreview(axis.options)
         : axis.reachable
-          ? "현재 선택됨 · 속성 관리에서 선택 항목을 추가해 주세요."
-          : "현재 선택됨 · 이 아카이브에서 쓰지 않는 속성이에요.";
+          ? t("currentlySelectedAddOptionsInManageProperties")
+          : t("currentlySelectedThisArchiveDoesNotUseThis");
       this.axisRadio(group, {
         active: pageAxis === axis.id,
         label: this.handlers.axisName(axis.id),
@@ -416,16 +406,16 @@ export class ViewSettingsPopover {
       });
       if (emptyAxes.length > 0) {
         footer.createDiv({
-          text: `${emptyAxes
+          text: t("valueAvailableAfterAddingOptionsInManageProperties", { arg1: emptyAxes
             .map((axis) => this.handlers.axisName(axis.id))
-            .join(" · ")}: 속성 관리에서 선택 항목을 추가하면 쓸 수 있어요.`,
+            .join(" · ") }),
         });
       }
       if (unreachableAxes.length > 0) {
         footer.createDiv({
-          text: `${unreachableAxes
+          text: t("valueThisArchiveDoesNotUseThisProperty", { arg1: unreachableAxes
             .map((axis) => this.handlers.axisName(axis.id))
-            .join(" · ")}: 이 아카이브에서 쓰지 않는 속성이에요.`,
+            .join(" · ") }),
         });
       }
     }
@@ -433,9 +423,9 @@ export class ViewSettingsPopover {
 
   private axisPreview(options: string[]): string {
     const labels = options.map((label) => label.trim()).filter(Boolean);
-    const preview = ["전체", ...labels.slice(0, 2)].join(" · ");
+    const preview = [t("all"), ...labels.slice(0, 2)].join(" · ");
     const rest = labels.length - 2;
-    return rest > 0 ? `${preview} · 외 ${rest}개` : preview;
+    return rest > 0 ? t("valueAndValueMore2", { arg1: preview, arg2: rest }) : preview;
   }
 
   private axisRadio(
@@ -502,7 +492,7 @@ export class ViewSettingsPopover {
       .catch(() => {
         this.pending = false;
         this.pageAxisOverride = current;
-        new Notice("필터 저장에 실패했어요. 다시 시도해 주세요.");
+        new Notice(t("couldNotSaveFilterTryAgain"));
         rerender();
       });
   }
@@ -527,7 +517,7 @@ export class ViewSettingsPopover {
       cls: "charinfo-prop-row__eye",
       attr: {
         type: "button",
-        title: field.visible ? "카드에서 숨기기" : "카드에 보이기",
+        title: field.visible ? t("hideOnCards") : t("showOnCards"),
         "aria-pressed": field.visible ? "true" : "false",
       },
     });

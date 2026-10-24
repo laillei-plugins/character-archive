@@ -1,10 +1,16 @@
+// @ts-expect-error TS5097: native Node TS tests.
+import { displayPropertyLabel } from "../i18n/display.ts";
+// @ts-expect-error TS5097: native Node TS tests.
+import { displayFieldLabel, displayColorLabel } from "../i18n/display.ts";
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 import { Modal, Notice, setIcon } from "obsidian";
 import type CharinfoPlugin from "../main";
 import type { CharacterRecord } from "../data/CharacterStore";
 import {
   STATUS_COLOR_TOKENS,
   axisFor,
-  axisLabel,
+  axisLabel as rawAxisLabel,
   countRawAxisOccupants,
   decodeGroupRoute,
   encodeGroupRoute,
@@ -120,9 +126,13 @@ export interface AttrManageContext {
 }
 
 /** The root screen's one title: the rail and the ledger, in that order. */
-const ROOT_TITLE = "그룹 · 속성 관리";
+const rootTitle = () => t("groupsManageProperties");
 
 /** Visible name of one routing scope. `""` is 기본, never 미분류. */
+function displayScopeLabel(group: string): string {
+  return group.trim() || t("default");
+}
+
 function scopeLabel(group: string): string {
   return group.trim() || DEFAULT_ROUTE_LABEL;
 }
@@ -160,14 +170,14 @@ interface FieldTypeChoice {
 
 const TEXT_TYPE_CHOICE: FieldTypeChoice = {
   type: "text",
-  label: "글",
+  get label() { return t("text"); },
   icon: "type",
 };
 
 const FIELD_TYPE_CHOICES: FieldTypeChoice[] = [
   TEXT_TYPE_CHOICE,
-  { type: "select", label: "선택", icon: "circle" },
-  { type: "multi-select", label: "여러 값", icon: "list" },
+  { type: "select", get label() { return t("select"); }, icon: "circle" },
+  { type: "multi-select", get label() { return t("multipleValues"); }, icon: "list" },
 ];
 
 function fieldTypeChoice(type: FieldType): FieldTypeChoice {
@@ -323,12 +333,12 @@ export class AttrManageModal extends Modal {
       );
     } catch (error) {
       console.error("[charinfo] 그룹 속성 기본값 저장 실패", error);
-      this.saveError = "저장하지 못했어요.";
+      this.saveError = t("couldNotSave");
       this.retry = {
         scope: "schema",
         axisId: this.axisId,
         group,
-        action: "기본값",
+        action: t("defaultValue"),
         work: () =>
           this.plugin.persistGroupSchema(
             this.ctx.library,
@@ -378,8 +388,8 @@ export class AttrManageModal extends Modal {
       cls: "clickable-icon charinfo-icon-btn charinfo-attr-modal__back is-hidden",
       attr: {
         "data-focus": "back",
-        "aria-label": "속성 목록으로 돌아가기",
-        title: "속성 목록으로 돌아가기",
+        "aria-label": t("backToPropertyList"),
+        title: t("backToPropertyList"),
       },
     });
     setIcon(back, "arrow-left");
@@ -387,7 +397,7 @@ export class AttrManageModal extends Modal {
     this.backBtn = back;
     this.titleLabel = this.titleEl.createSpan({
       cls: "charinfo-attr-modal__title",
-      text: ROOT_TITLE,
+      text: rootTitle(),
     });
   }
 
@@ -400,7 +410,7 @@ export class AttrManageModal extends Modal {
     this.titleRow?.toggleClass("is-root", home);
     if (this.titleLabel) {
       const field = this.detailField();
-      this.titleLabel.setText(home || !field ? ROOT_TITLE : this.fieldName(field));
+      this.titleLabel.setText(home || !field ? rootTitle() : this.fieldName(field));
     }
   }
 
@@ -434,7 +444,7 @@ export class AttrManageModal extends Modal {
   }
 
   private fieldName(field: FieldDef): string {
-    return fieldLabel(field, this.settings().propertyDisplayNames);
+    return displayFieldLabel(field, this.settings().propertyDisplayNames);
   }
 
   private redraw(): void {
@@ -500,9 +510,9 @@ export class AttrManageModal extends Modal {
    * and only then, says which one it is.
    */
   private routeTitle(route: string, routes: RouteInventory): string {
-    const label = scopeLabel(route);
+    const label = displayScopeLabel(route);
     if (route || !routes.named.includes(DEFAULT_ROUTE_LABEL)) return label;
-    return `${label} (그룹 없음)`;
+    return t("valueNoGroup", { arg1: label });
   }
 
   /** The cards this scope actually governs — the retype guard's population. */
@@ -563,7 +573,7 @@ export class AttrManageModal extends Modal {
   private renderGroupRail(root: HTMLElement, routes: RouteInventory): void {
     const rail = root.createDiv({
       cls: "charinfo-attr-modal__group-rail",
-      attr: { role: "group", "aria-label": "그룹" },
+      attr: { role: "group", "aria-label": t("group") },
     });
     if (this.pending) rail.setAttribute("aria-busy", "true");
     for (const route of routes.routes) {
@@ -580,8 +590,8 @@ export class AttrManageModal extends Modal {
       type: "button",
       cls: "charinfo-group-chip is-add",
       attr: {
-        "aria-label": "그룹 추가",
-        title: "그룹 추가",
+        "aria-label": t("addGroup"),
+        title: t("addGroup"),
         "data-focus": "group-add",
       },
     });
@@ -590,7 +600,7 @@ export class AttrManageModal extends Modal {
       attr: { "aria-hidden": "true" },
     });
     setIcon(icon, "plus");
-    add.createSpan({ cls: "charinfo-group-chip__name", text: "그룹" });
+    add.createSpan({ cls: "charinfo-group-chip__name", text: t("group") });
     add.disabled = this.pending;
     add.addEventListener("click", () => this.openGroupAdd());
   }
@@ -621,8 +631,8 @@ export class AttrManageModal extends Modal {
       type: "button",
       cls: "charinfo-group-chip__grip",
       attr: {
-        "aria-label": `「${title}」 그룹 순서 바꾸기`,
-        title: "드래그하거나 Alt+←/→로 순서 바꾸기",
+        "aria-label": t("reorderGroupValue", { arg1: title }),
+        title: t("dragOrUseAltToReorder"),
         "aria-keyshortcuts":
           "Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown",
         "data-focus": this.groupFocusKey("grip", route),
@@ -644,7 +654,7 @@ export class AttrManageModal extends Modal {
       cls: "charinfo-group-chip__select",
       attr: {
         // A count alone is not a name; the chip says what it counts.
-        "aria-label": `「${title}」 그룹 · 캐릭터 ${members}명`,
+        "aria-label": t("groupValueValueCharacters", { arg1: title, arg2: members }),
         "aria-pressed": selected ? "true" : "false",
         title,
         "data-focus": this.scopeFocusKey(route),
@@ -652,7 +662,7 @@ export class AttrManageModal extends Modal {
     });
     select.createSpan({
       cls: "charinfo-group-chip__name charinfo-prop-row__label",
-      text: scopeLabel(route),
+      text: displayScopeLabel(route),
     });
     select.createSpan({
       cls: "charinfo-group-chip__count",
@@ -663,7 +673,7 @@ export class AttrManageModal extends Modal {
     select.addEventListener("click", () => this.selectScope(route));
 
     if (selected) {
-      const renameLabel = `「${title}」 그룹 이름 바꾸기`;
+      const renameLabel = t("renameGroupValue", { arg1: title });
       const rename = chip.createEl("button", {
         type: "button",
         cls: "clickable-icon charinfo-icon-btn charinfo-group-chip__rename",
@@ -677,7 +687,7 @@ export class AttrManageModal extends Modal {
       rename.disabled = this.pending;
       rename.addEventListener("click", () => this.openGroupRename(route));
 
-      const deleteLabel = `「${title}」 그룹 삭제`;
+      const deleteLabel = t("deleteGroupValue", { arg1: title });
       const remove = chip.createEl("button", {
         type: "button",
         cls: "clickable-icon charinfo-icon-btn charinfo-group-chip__delete",
@@ -726,16 +736,16 @@ export class AttrManageModal extends Modal {
       type: "text",
       cls: "charinfo-attr-modal__row-input",
       attr: {
-        placeholder: "그룹 이름",
+        placeholder: t("groupName"),
         spellcheck: "false",
-        "aria-label": renaming ? `「${title}」 새 그룹 이름` : "새 그룹 이름",
+        "aria-label": renaming ? t("newNameForGroupValue", { arg1: title }) : t("newGroupName"),
         "data-focus": "group-editor-input",
       },
     });
     input.value = this.groupDraft;
     input.disabled = this.pending;
 
-    const submitLabel = renaming ? "그룹 이름 저장" : "그룹 추가";
+    const submitLabel = renaming ? t("saveGroupName") : t("addGroup");
     const submit = row.createEl("button", {
       type: "button",
       cls: "clickable-icon charinfo-icon-btn charinfo-attr-modal__add-submit",
@@ -750,8 +760,8 @@ export class AttrManageModal extends Modal {
       type: "button",
       cls: "clickable-icon charinfo-icon-btn charinfo-attr-modal__row-remove",
       attr: {
-        "aria-label": renaming ? "이름 바꾸기 취소" : "그룹 추가 취소",
-        title: "취소",
+        "aria-label": renaming ? t("cancelRename") : t("cancelAddingGroup"),
+        title: t("cancel"),
         "data-focus": "group-editor-cancel",
       },
     });
@@ -811,7 +821,7 @@ export class AttrManageModal extends Modal {
     if (!editor) return;
     const draft = normalizeRenameInput(this.groupDraft);
     if (draft && draft !== this.groupDraftBaseline()) {
-      new Notice(`입력한 「${draft}」은 저장하지 않고 닫았어요.`);
+      new Notice(t("closedWithoutSavingValue", { arg1: draft }));
     }
     this.groupEditor = null;
     this.groupDraft = "";
@@ -866,7 +876,7 @@ export class AttrManageModal extends Modal {
       // and that redraw re-anchors `this.group` to a route that still exists.
       const wasSelected = this.group === from;
       const saved = await this.run(
-        "이름",
+        t("name"),
         this.axisId,
         () => this.ctx.renameGroup(from, name),
         "schema",
@@ -898,7 +908,7 @@ export class AttrManageModal extends Modal {
     this.groupEditor = null;
     this.groupDraft = "";
     const saved = await this.run(
-      "추가",
+      t("add"),
       this.axisId,
       () => this.ctx.createGroup(name),
       "schema",
@@ -946,7 +956,7 @@ export class AttrManageModal extends Modal {
     const next = moveInOrder(order, fromId, toId, place);
     if (next.join("\0") === order.join("\0")) return;
     void this.run(
-      "순서",
+      t("order"),
       this.axisId,
       async () => {
         await this.ctx.reorderRoutes(next.map(decodeGroupRoute));
@@ -1038,7 +1048,7 @@ export class AttrManageModal extends Modal {
       if (
         field &&
         this.renameDraft.trim() &&
-        this.renameDraft.trim() !== this.fieldName(field)
+        this.renameDraft.trim() !== fieldLabel(field, this.settings().propertyDisplayNames)
       ) {
         focus = `field-name-${field.id}`;
       }
@@ -1059,7 +1069,7 @@ export class AttrManageModal extends Modal {
     }
     if (!focus) return true;
     this.focusKey = focus;
-    new Notice("먼저 저장하거나 취소해 주세요.");
+    new Notice(t("saveOrCancelFirst"));
     this.applyFocus();
     return false;
   }
@@ -1106,11 +1116,11 @@ export class AttrManageModal extends Modal {
     const members = this.ctx.memberCount(route);
     const sheet = root.createDiv({
       cls: "charinfo-attr-modal__danger",
-      attr: { role: "group", "aria-label": `「${title}」 그룹 삭제 확인` },
+      attr: { role: "group", "aria-label": t("confirmDeletingGroupValue", { arg1: title }) },
     });
     sheet.createDiv({
       cls: "charinfo-attr-modal__danger-title",
-      text: `「${title}」 그룹 삭제`,
+      text: t("deleteGroupValue", { arg1: title }),
     });
     sheet.createDiv({
       cls: "charinfo-attr-modal__danger-copy",
@@ -1125,7 +1135,7 @@ export class AttrManageModal extends Modal {
       const move = sheet.createDiv({ cls: "charinfo-attr-modal__danger-move" });
       const pick = move.createEl("select", {
         cls: "charinfo-attr-modal__select",
-        attr: { "aria-label": "옮길 위치", "data-focus": "delete-dest" },
+        attr: { "aria-label": t("moveTo"), "data-focus": "delete-dest" },
       });
       for (const group of destinations) {
         pick.createEl("option", {
@@ -1140,7 +1150,7 @@ export class AttrManageModal extends Modal {
       });
       const apply = move.createEl("button", {
         type: "button",
-        text: "옮기고 삭제",
+        text: t("moveAndDelete"),
         attr: { "data-focus": "delete-move" },
       });
       apply.disabled = this.pending || destinations.length === 0;
@@ -1151,7 +1161,7 @@ export class AttrManageModal extends Modal {
         const reasonId = "charinfo-group-move-reason";
         move.createDiv({
           cls: "charinfo-attr-modal__danger-reason",
-          text: "옮길 다른 그룹이 없어요. 먼저 그룹을 추가해 주세요.",
+          text: t("thereAreNoOtherGroupsToMoveTo"),
           attr: { id: reasonId },
         });
         apply.setAttribute("aria-describedby", reasonId);
@@ -1161,7 +1171,7 @@ export class AttrManageModal extends Modal {
       const trash = sheet.createEl("button", {
         type: "button",
         cls: "mod-warning",
-        text: `캐릭터 ${members}명을 휴지통으로 보내고 삭제`,
+        text: t("moveValueCharactersToTrashAndDelete", { arg1: members }),
         attr: { "data-focus": "delete-trash" },
       });
       trash.disabled = this.pending;
@@ -1172,7 +1182,7 @@ export class AttrManageModal extends Modal {
     const actions = sheet.createDiv({ cls: "charinfo-attr-modal__confirm-actions" });
     const cancel = actions.createEl("button", {
       type: "button",
-      text: "취소",
+      text: t("cancel"),
       attr: { "data-focus": "delete-cancel" },
     });
     cancel.disabled = this.pending;
@@ -1185,7 +1195,7 @@ export class AttrManageModal extends Modal {
     const apply = actions.createEl("button", {
       type: "button",
       cls: "mod-warning",
-      text: "삭제",
+      text: t("delete"),
     });
     apply.disabled = this.pending;
     apply.addEventListener("click", () => void this.commitGroupDelete("move"));
@@ -1195,12 +1205,12 @@ export class AttrManageModal extends Modal {
   private deleteCopy(route: string, members: number): string {
     if (!route) {
       return members > 0
-        ? `「${DEFAULT_ROUTE_LABEL}」은 지워도 사라지지 않아요. 캐릭터 ${members}명을 옮기거나 휴지통으로 보내고, 이 그룹의 속성 목록만 처음 상태로 돌아가요.`
-        : `「${DEFAULT_ROUTE_LABEL}」은 지워도 사라지지 않아요. 속성 목록만 처음 상태로 돌아가고, 노트의 값은 지워지지 않아요.`;
+        ? t("valueRemainsAfterDeletionMoveItsValueCharacters", { arg1: DEFAULT_ROUTE_LABEL, arg2: members })
+        : t("valueRemainsAfterDeletionOnlyItsPropertyList", { arg1: DEFAULT_ROUTE_LABEL });
     }
     return members > 0
-      ? `이 그룹의 캐릭터 ${members}명을 옮기거나 휴지통으로 보내야 해요. 옮기면 속성 값은 지워지지 않아요.`
-      : "옮길 캐릭터가 없어요. 속성 목록만 사라지고, 값은 지워지지 않아요.";
+      ? t("moveThisGroupSValueCharactersElsewhereOr", { arg1: members })
+      : t("thereAreNoCharactersToMoveOnlyThe");
   }
 
   /**
@@ -1221,7 +1231,7 @@ export class AttrManageModal extends Modal {
     state.outcome = outcome;
     const members = this.ctx.memberCount(from);
     const saved = await this.run(
-      "삭제",
+      t("delete"),
       this.axisId,
       async () => {
         if (outcome === "trash") await this.ctx.trashGroup(from);
@@ -1233,7 +1243,7 @@ export class AttrManageModal extends Modal {
     if (!saved) return; // the sheet stays open for a retry
     if (outcome === "trash" && members > 0) {
       new Notice(
-        `「${scopeLabel(from)}」 그룹을 지우고 노트 ${members}개를 휴지통으로 보냈어요. 복구는 옵시디언 휴지통 설정에 따라요.`,
+        t("deletedGroupValueAndMovedValueNotesTo", { arg1: displayScopeLabel(from), arg2: members }),
       );
     }
     this.cancelEditing();
@@ -1281,8 +1291,8 @@ export class AttrManageModal extends Modal {
         type: "button",
         cls: "clickable-icon charinfo-icon-btn charinfo-attr-modal__handle",
         attr: {
-          "aria-label": `${this.fieldName(field)} 순서 바꾸기`,
-          title: "드래그하거나 Alt+↑/↓로 순서 바꾸기",
+          "aria-label": t("reorderValue", { arg1: this.fieldName(field) }),
+          title: t("dragOrUseAltToReorder2"),
           "aria-keyshortcuts": "Alt+ArrowUp Alt+ArrowDown",
           "data-focus": `field-handle-${field.id}`,
         },
@@ -1304,7 +1314,7 @@ export class AttrManageModal extends Modal {
         type: "button",
         cls: "charinfo-attr-modal__row-label charinfo-attr-modal__field-name",
         text: this.fieldName(field),
-        attr: { "data-focus": `field-${field.id}`, title: "속성 열기" },
+        attr: { "data-focus": `field-${field.id}`, title: t("openProperty") },
       });
       name.disabled = this.pending;
       name.addEventListener("click", (event) => {
@@ -1320,8 +1330,8 @@ export class AttrManageModal extends Modal {
         type: "button",
         cls: "clickable-icon charinfo-icon-btn charinfo-attr-modal__row-remove",
         attr: {
-          "aria-label": `${this.fieldName(field)} 목록에서 빼기`,
-          title: "속성 빼기 (노트의 값도 지워져요)",
+          "aria-label": t("removeValueFromList", { arg1: this.fieldName(field) }),
+          title: t("removePropertyAlsoDeletesValuesFromNotes"),
           "data-focus": `field-remove-${field.id}`,
         },
       });
@@ -1379,7 +1389,7 @@ export class AttrManageModal extends Modal {
       ...ids.filter((id) => !isLockedFieldId(id)),
     ];
     void this.runSchema(
-      "순서",
+      t("order"),
       (group) => {
         reorderActiveFields(
           this.settings(),
@@ -1415,11 +1425,11 @@ export class AttrManageModal extends Modal {
       cls: "charinfo-attr-modal__row-input",
       attr: {
         spellcheck: "false",
-        "aria-label": "속성 이름",
+        "aria-label": t("propertyName"),
         "data-focus": `field-name-${field.id}`,
       },
     });
-    input.value = this.fieldName(field);
+    input.value = fieldLabel(field, this.settings().propertyDisplayNames);
     this.renameDraft = input.value;
     input.disabled = this.pending;
     input.addEventListener("input", () => {
@@ -1429,7 +1439,7 @@ export class AttrManageModal extends Modal {
       const label = input.value.trim();
       if (!label) {
         this.focusKey = `field-name-${field.id}`;
-        new Notice("이름을 입력해 주세요.");
+        new Notice(t("enterAName"));
         this.applyFocus();
         return;
       }
@@ -1440,7 +1450,7 @@ export class AttrManageModal extends Modal {
         const axisId = (builtinFieldDef(field.id)?.id ??
           "status") as PrimaryFilterProperty;
         void this.run(
-          "이름",
+          t("name"),
           axisId,
           async () => {
             await this.plugin.commitSettings((s) => {
@@ -1453,7 +1463,7 @@ export class AttrManageModal extends Modal {
         );
         return;
       }
-      void this.runSchema("이름", (group) => {
+      void this.runSchema(t("name"), (group) => {
         renameField(
           this.settings(),
           this.ctx.library,
@@ -1503,7 +1513,7 @@ export class AttrManageModal extends Modal {
     if (!canRetypeFieldId(field.id)) {
       const slot = row.createDiv({
         cls: base + " is-static",
-        attr: { title: `${this.fieldName(field)} 종류 · ${label}` },
+        attr: { title: t("valueTypeValue", { arg1: this.fieldName(field), arg2: label }) },
       });
       const icon = slot.createSpan({
         cls: "charinfo-attr-modal__type-icon",
@@ -1520,8 +1530,8 @@ export class AttrManageModal extends Modal {
       type: "button",
       cls: base,
       attr: {
-        "aria-label": `${this.fieldName(field)} 종류 · ${label}`,
-        title: "속성 종류 바꾸기",
+        "aria-label": t("valueTypeValue", { arg1: this.fieldName(field), arg2: label }),
+        title: t("changePropertyType"),
         "aria-haspopup": "true",
         "data-focus": focusKey,
       },
@@ -1566,11 +1576,11 @@ export class AttrManageModal extends Modal {
     this.closeTypeMenu();
     const menu = this.containerEl.createDiv({
       cls: "charinfo-attr-modal__type-menu",
-      attr: { role: "menu", "aria-label": "속성 종류" },
+      attr: { role: "menu", "aria-label": t("propertyType") },
     });
     menu.createDiv({
       cls: "charinfo-attr-modal__type-menu-head",
-      text: "속성 종류",
+      text: t("propertyType"),
     });
     const items: HTMLButtonElement[] = [];
     for (const choice of FIELD_TYPE_CHOICES) {
@@ -1721,20 +1731,20 @@ export class AttrManageModal extends Modal {
   ): Promise<void> {
     if (type === field.type) return;
     if (!canRetypeFieldId(field.id)) {
-      new Notice("「이름」은 종류를 바꿀 수 없어요.");
+      new Notice(t("theTypeOfNameCannotBeChanged"));
       return;
     }
     if (field.type === "multi-select" && type !== "multi-select") {
       const lossy = multiValuedRecords(this.routeMembers(), field);
       if (lossy.length > 0) {
         new Notice(
-          `값이 2개 이상인 카드가 ${lossy.length}장 있어서 「${fieldTypeLabel(type)}」으로 바꿀 수 없어요. 먼저 값을 하나로 줄여 주세요.`,
+          t("cannotChangeToValueBecauseValueCardsHave", { arg1: lossy.length, arg2: fieldTypeLabel(type) }),
         );
         return;
       }
     }
     const saved = await this.runSchema(
-      "종류",
+      t("type"),
       (group) => {
         retypeField(
           this.settings(),
@@ -1749,9 +1759,9 @@ export class AttrManageModal extends Modal {
     );
     if (!saved || field.options.length === 0) return;
     if (type === "text") {
-      new Notice("선택 항목은 보관돼요. 선택 종류로 돌아오면 다시 보여요.");
+      new Notice(t("optionsAreKeptTheyWillReappearWhenYou"));
     } else if (field.type === "text") {
-      new Notice("목록에 없는 기존 값은 회색으로 보여요.");
+      new Notice(t("existingValuesOutsideTheListAppearInGray"));
     }
   }
 
@@ -1791,16 +1801,16 @@ export class AttrManageModal extends Modal {
       await this.removeField(field, origin);
       return;
     }
-    const scope = scopeLabel(this.group);
+    const scope = displayScopeLabel(this.group);
     const usage =
       used > 0
-        ? `「${this.fieldName(field)}」 값이 있는 카드가 「${scope}」에 ${used}장 있어요. `
-        : "이 항목은 기본 속성이에요. ";
+        ? t("valueCardsInValueHaveAValueFor", { arg1: this.fieldName(field), arg2: scope, arg3: used })
+        : t("thisIsABuiltInProperty");
     this.confirmDelete = null;
     this.confirmFieldRemove = {
       id: field.id,
       origin,
-      message: `${usage}목록에서 빠지고, 카드 속성에서도 값이 지워져요. 되돌릴 수 없어요.`,
+      message: t("valueItWillBeRemovedFromTheList", { arg1: usage }),
     };
     this.focusKey = `field-remove-confirm-${field.id}`;
     this.redraw();
@@ -1824,7 +1834,7 @@ export class AttrManageModal extends Modal {
         (origin === "detail" ? " is-detail" : ""),
       attr: {
         role: "group",
-        "aria-label": `${this.fieldName(field)} 빼기 확인`,
+        "aria-label": t("confirmRemovingValue", { arg1: this.fieldName(field) }),
       },
     });
     box.addEventListener("keydown", (event) => {
@@ -1841,7 +1851,7 @@ export class AttrManageModal extends Modal {
     });
     const cancel = actions.createEl("button", {
       type: "button",
-      text: "취소",
+      text: t("cancel"),
       attr: {
         "data-focus": `field-remove-confirm-${field.id}`,
         "aria-describedby": messageId,
@@ -1852,7 +1862,7 @@ export class AttrManageModal extends Modal {
     const remove = actions.createEl("button", {
       type: "button",
       cls: "mod-warning",
-      text: "빼기",
+      text: t("remove"),
       attr: { "aria-describedby": messageId },
     });
     remove.disabled = this.pending;
@@ -1872,7 +1882,7 @@ export class AttrManageModal extends Modal {
       origin === "detail" ? "detail-remove" : `field-remove-${id}`;
     this.confirmFieldRemove = null;
     const saved = await this.runSchema(
-      "빼기",
+      t("remove"),
       (group) => {
         deactivateField(
           this.settings(),
@@ -1900,7 +1910,7 @@ export class AttrManageModal extends Modal {
       this.applyFocus();
       return;
     }
-    new Notice(`「${name}」 속성을 뺐어요. 노트의 값도 함께 정리해요.`);
+    new Notice(t("removedPropertyValueItsNoteValuesWillAlso", { arg1: name }));
   }
 
   private openDetail(field: FieldDef, returnKey: string): void {
@@ -1940,14 +1950,14 @@ export class AttrManageModal extends Modal {
       const open = row.createEl("button", {
         type: "button",
         cls: "charinfo-attr-modal__fold charinfo-attr-modal__add-open",
-        attr: { "data-focus": "add-field-open", "aria-label": "속성 추가" },
+        attr: { "data-focus": "add-field-open", "aria-label": t("addProperty") },
       });
       const icon = open.createSpan({
         cls: "charinfo-attr-modal__add-icon",
         attr: { "aria-hidden": "true" },
       });
       setIcon(icon, "plus");
-      open.createSpan({ text: "속성 추가" });
+      open.createSpan({ text: t("addProperty") });
       open.disabled = this.pending;
       open.addEventListener("click", () => {
         this.addingField = true;
@@ -1967,9 +1977,9 @@ export class AttrManageModal extends Modal {
       type: "text",
       cls: "charinfo-attr-modal__row-input",
       attr: {
-        placeholder: "이름",
+        placeholder: t("name"),
         spellcheck: "false",
-        "aria-label": "새 속성 이름",
+        "aria-label": t("newPropertyName"),
         "data-focus": "add-field-name",
       },
     });
@@ -1984,7 +1994,7 @@ export class AttrManageModal extends Modal {
     });
     const type = typeWrap.createEl("select", {
       cls: "charinfo-attr-modal__select charinfo-attr-modal__add-type",
-      attr: { "aria-label": "속성 종류" },
+      attr: { "aria-label": t("propertyType") },
     });
     for (const choice of FIELD_TYPE_CHOICES) {
       type.createEl("option", { value: choice.type, text: choice.label });
@@ -2008,8 +2018,8 @@ export class AttrManageModal extends Modal {
       cls:
         "clickable-icon charinfo-icon-btn charinfo-attr-modal__add-submit",
       attr: {
-        "aria-label": "속성 추가",
-        title: "속성 추가",
+        "aria-label": t("addProperty"),
+        title: t("addProperty"),
         "data-focus": "add-field-submit",
       },
     });
@@ -2024,8 +2034,8 @@ export class AttrManageModal extends Modal {
       cls:
         "clickable-icon charinfo-icon-btn charinfo-attr-modal__row-remove charinfo-attr-modal__add-cancel",
       attr: {
-        "aria-label": "속성 추가 취소",
-        title: "취소",
+        "aria-label": t("cancelAddingProperty"),
+        title: t("cancel"),
         "data-focus": "add-field-cancel",
       },
     });
@@ -2044,7 +2054,7 @@ export class AttrManageModal extends Modal {
       if (!label || this.pending) return;
       const fieldType = this.addFieldType;
       void this.runSchema(
-        "추가",
+        t("add"),
         (group) => {
           addCustomField(
             this.settings(),
@@ -2145,7 +2155,7 @@ export class AttrManageModal extends Modal {
     if (!field) {
       root.createDiv({
         cls: "charinfo-attr-modal__hint",
-        text: "이 속성을 찾지 못했어요.",
+        text: t("couldNotFindThisProperty"),
       });
       return;
     }
@@ -2155,7 +2165,7 @@ export class AttrManageModal extends Modal {
     const nameRow = rows.createDiv({ cls: "charinfo-attr-modal__detail-row" });
     nameRow.createSpan({
       cls: "charinfo-attr-modal__detail-label",
-      text: "속성 이름",
+      text: t("propertyName"),
     });
     if (this.renameFieldId === field.id) {
       this.renderNameInput(nameRow, field);
@@ -2168,12 +2178,12 @@ export class AttrManageModal extends Modal {
         type: "button",
         cls: "charinfo-attr-modal__detail-value",
         text: this.fieldName(field),
-        attr: { title: "이름 바꾸기", "data-focus": "detail-name" },
+        attr: { title: t("rename"), "data-focus": "detail-name" },
       });
       name.disabled = this.pending;
       name.addEventListener("click", () => {
         this.renameFieldId = field.id;
-        this.renameDraft = this.fieldName(field);
+        this.renameDraft = fieldLabel(field, this.settings().propertyDisplayNames);
         this.focusKey = `field-name-${field.id}`;
         this.redraw();
       });
@@ -2186,7 +2196,7 @@ export class AttrManageModal extends Modal {
     const typeRow = rows.createDiv({ cls: "charinfo-attr-modal__detail-row" });
     typeRow.createSpan({
       cls: "charinfo-attr-modal__detail-label",
-      text: "속성 종류",
+      text: t("propertyType"),
     });
     this.renderTypeControl(typeRow, field, "detail-type", "detail");
     if (canRetypeFieldId(field.id)) {
@@ -2207,7 +2217,7 @@ export class AttrManageModal extends Modal {
     if (this.isAxisField(field) && this.routes().switchable) {
       root.createDiv({
         cls: "charinfo-attr-modal__hint charinfo-attr-modal__ownership",
-        text: `이름과 선택 항목은 모든 그룹이 함께 써요. 종류는 「${scopeLabel(this.group)}」에서만 바뀌어요.`,
+        text: t("namesAndOptionsAreSharedAcrossAllGroups", { arg1: displayScopeLabel(this.group) }),
       });
     }
 
@@ -2225,8 +2235,8 @@ export class AttrManageModal extends Modal {
       type: "button",
       cls: "charinfo-attr-modal__danger-row",
       attr: {
-        "aria-label": `${this.fieldName(field)} 목록에서 빼기`,
-        title: "속성 빼기 (노트의 값도 지워져요)",
+        "aria-label": t("removeValueFromList", { arg1: this.fieldName(field) }),
+        title: t("removePropertyAlsoDeletesValuesFromNotes"),
         "data-focus": "detail-remove",
       },
     });
@@ -2235,7 +2245,7 @@ export class AttrManageModal extends Modal {
       attr: { "aria-hidden": "true" },
     });
     setIcon(icon, "trash-2");
-    btn.createSpan({ text: "속성 빼기" });
+    btn.createSpan({ text: t("removeProperty") });
     btn.disabled = this.pending;
     btn.addEventListener("click", () => {
       void this.requestFieldRemoval(field, "detail");
@@ -2256,12 +2266,12 @@ export class AttrManageModal extends Modal {
     const head = root.createDiv({ cls: "charinfo-attr-modal__section-head" });
     head.createSpan({
       cls: "charinfo-attr-modal__section-title",
-      text: "선택 항목",
+      text: t("options"),
     });
     head.createSpan({
       cls: "charinfo-attr-modal__section-count",
       text: String(options.length),
-      attr: { "aria-label": `선택 항목 ${options.length}개` },
+      attr: { "aria-label": t("valueOptions", { arg1: options.length }) },
     });
 
     const list = root.createDiv({ cls: "charinfo-attr-modal__list" });
@@ -2274,7 +2284,7 @@ export class AttrManageModal extends Modal {
     const add = list.createEl("button", {
       type: "button",
       cls: "charinfo-attr-modal__option-add" + layout.className,
-      attr: { "data-focus": "option-add", "aria-label": "선택 항목 추가" },
+      attr: { "data-focus": "option-add", "aria-label": t("addOption") },
     });
     const content = add.createSpan({
       cls: "charinfo-attr-modal__option-add-content",
@@ -2284,7 +2294,7 @@ export class AttrManageModal extends Modal {
       attr: { "aria-hidden": "true" },
     });
     setIcon(icon, "plus");
-    content.createSpan({ text: "선택 항목 추가" });
+    content.createSpan({ text: t("addOption") });
     add.disabled = this.pending;
     add.addEventListener("click", () => {
       this.optionCreating = true;
@@ -2317,9 +2327,9 @@ export class AttrManageModal extends Modal {
       type: "text",
       cls: "charinfo-attr-modal__row-input",
       attr: {
-        placeholder: "새 선택 항목 이름",
+        placeholder: t("newOptionName"),
         spellcheck: "false",
-        "aria-label": "새 선택 항목 이름",
+        "aria-label": t("newOptionName"),
         "data-focus": "option-name",
       },
     });
@@ -2330,8 +2340,8 @@ export class AttrManageModal extends Modal {
       type: "button",
       cls: "clickable-icon charinfo-icon-btn charinfo-attr-modal__add-submit",
       attr: {
-        "aria-label": "선택 항목 추가",
-        title: "선택 항목 추가",
+        "aria-label": t("addOption"),
+        title: t("addOption"),
         "data-focus": "option-submit",
       },
     });
@@ -2342,8 +2352,8 @@ export class AttrManageModal extends Modal {
       type: "button",
       cls: "clickable-icon charinfo-icon-btn charinfo-attr-modal__option-remove",
       attr: {
-        "aria-label": "선택 항목 추가 취소",
-        title: "취소",
+        "aria-label": t("cancelAddingOption"),
+        title: t("cancel"),
       },
     });
     setIcon(cancel, "x");
@@ -2352,7 +2362,7 @@ export class AttrManageModal extends Modal {
     const commit = () => {
       this.optionDraft = input.value;
       if (!this.optionDraft.trim()) {
-        new Notice("이름을 입력해 주세요.");
+        new Notice(t("enterAName"));
         input.focus();
         return;
       }
@@ -2412,8 +2422,8 @@ export class AttrManageModal extends Modal {
         type: "button",
         cls: "clickable-icon charinfo-icon-btn charinfo-attr-modal__grip",
         attr: {
-          "aria-label": `${option.label} 순서 바꾸기`,
-          title: "드래그하거나 Alt+↑/↓로 순서 바꾸기",
+          "aria-label": t("reorderValue", { arg1: option.label }),
+          title: t("dragOrUseAltToReorder2"),
           "aria-keyshortcuts": "Alt+ArrowUp Alt+ArrowDown",
           "data-focus": `option-handle-${option.id}`,
         },
@@ -2443,7 +2453,7 @@ export class AttrManageModal extends Modal {
         cls: "charinfo-attr-modal__row-input",
         attr: {
           spellcheck: "false",
-          "aria-label": "선택 항목 이름",
+          "aria-label": t("optionName"),
           "data-focus": `option-edit-${option.id}`,
         },
       });
@@ -2476,7 +2486,7 @@ export class AttrManageModal extends Modal {
         cls: "charinfo-attr-modal__row-label charinfo-attr-modal__option-name",
         text: option.label,
         attr: {
-          title: option.color !== null ? "이름과 색 바꾸기" : "이름 바꾸기",
+          title: option.color !== null ? t("changeNameAndColor") : t("rename"),
           "aria-expanded": "false",
           "data-focus": `option-${option.id}`,
         },
@@ -2498,7 +2508,7 @@ export class AttrManageModal extends Modal {
       this.axisId === "status" &&
       option.id === this.settings().defaultStatusId
     ) {
-      row.createSpan({ cls: "charinfo-attr-modal__badge", text: "기본" });
+      row.createSpan({ cls: "charinfo-attr-modal__badge", text: t("default") });
     } else {
       row.createSpan({ cls: "charinfo-attr-modal__badge" });
     }
@@ -2507,8 +2517,8 @@ export class AttrManageModal extends Modal {
       type: "button",
       cls: "clickable-icon charinfo-icon-btn charinfo-attr-modal__option-remove",
       attr: {
-        "aria-label": `${option.label} 목록에서 빼기`,
-        title: "목록에서 빼기 (카드에 저장된 값은 그대로 남아요)",
+        "aria-label": t("removeValueFromList", { arg1: option.label }),
+        title: t("removeFromListSavedCardValuesWillBe"),
         "data-focus": `option-remove-${option.id}`,
       },
     });
@@ -2551,7 +2561,7 @@ export class AttrManageModal extends Modal {
     if (place === "after") insertAt += 1;
     order.splice(insertAt, 0, fromId);
     void this.runSchema(
-      "순서",
+      t("order"),
       (group) => {
         reorderFieldOptions(
           this.settings(),
@@ -2610,14 +2620,14 @@ export class AttrManageModal extends Modal {
     const label = raw.trim();
     if (!label) {
       this.focusKey = `option-edit-${option.id}`;
-      new Notice("이름을 입력해 주세요.");
+      new Notice(t("enterAName"));
       this.applyFocus();
       return;
     }
     this.optionEditDraft = label;
     if (this.isAxisField(field)) {
       const axisId = this.axisId;
-      void this.run("이름", axisId, async () => {
+      void this.run(t("name"), axisId, async () => {
         await this.plugin.commitSettings((s) => {
           this.patchOption(s, axisId, option.id, { label });
         });
@@ -2625,7 +2635,7 @@ export class AttrManageModal extends Modal {
       return;
     }
     this.optionExpandedId = "";
-    void this.runSchema("이름", (group) => {
+    void this.runSchema(t("name"), (group) => {
       renameFieldOption(
         this.settings(),
         this.ctx.library,
@@ -2641,14 +2651,14 @@ export class AttrManageModal extends Modal {
   private async commitOptionCreate(field: FieldDef): Promise<void> {
     const label = this.optionDraft.trim();
     if (!label) {
-      new Notice("이름을 입력해 주세요.");
+      new Notice(t("enterAName"));
       return;
     }
     if (this.isAxisField(field)) {
       const axisId = this.axisId;
       const id = suggestStatusId(label, axisFor(this.settings(), axisId).options);
       const next: StatusDef = { id, label, color: "gray" };
-      await this.run("추가", axisId, async () => {
+      await this.run(t("add"), axisId, async () => {
         await this.plugin.commitSettings((s) => {
           this.pushOption(s, axisId, next);
         });
@@ -2660,7 +2670,7 @@ export class AttrManageModal extends Modal {
       });
       return;
     }
-    const saved = await this.runSchema("추가", (group) => {
+    const saved = await this.runSchema(t("add"), (group) => {
       addFieldOption(
         this.settings(),
         this.ctx.library,
@@ -2690,11 +2700,11 @@ export class AttrManageModal extends Modal {
     if (this.isAxisField(field)) {
       if (this.axisId === "status") {
         if (this.settings().statuses.length <= 1) {
-          new Notice("고를 수 있는 값이 하나는 필요해요.");
+          new Notice(t("atLeastOneSelectableValueIsRequired"));
           return;
         }
         if (option.id === this.settings().defaultStatusId) {
-          new Notice("새 카드 기본값으로 쓰는 중이에요. 다른 기본값을 고른 뒤에 빼 주세요.");
+          new Notice(t("thisIsTheDefaultForNewCardsChoose"));
           return;
         }
       }
@@ -2712,7 +2722,7 @@ export class AttrManageModal extends Modal {
       if (library > 0) {
         this.confirmDelete = {
           id: option.id,
-          message: `‘${option.label}’을 쓰는 카드가 모든 아카이브 합쳐 ${library}장 있어요. 이 아카이브에는 ${archive}장 있어요. 목록에서만 빠지고, 카드에 저장된 값은 그대로 남아요. 카드는 회색 ‘${option.id}’으로 보일 수 있어요.`,
+          message: t("valueCardsAcrossAllArchivesUseValueValue", { arg1: option.label, arg2: library, arg3: archive, arg4: option.id }),
         };
         this.optionExpandedId = "";
         this.redraw();
@@ -2725,7 +2735,7 @@ export class AttrManageModal extends Modal {
     if (used > 0) {
       this.confirmDelete = {
         id: option.id,
-        message: `‘${option.label}’을 쓰는 카드가 이 그룹에 ${used}장 있어요. 목록에서만 빠지고, 카드에 저장된 값은 그대로 남아요. 카드는 회색 ‘${option.id}’으로 보일 수 있어요.`,
+        message: t("valueCardsInThisGroupUseValueOnly", { arg1: option.label, arg2: used, arg3: option.id }),
       };
       this.optionExpandedId = "";
       this.redraw();
@@ -2755,7 +2765,7 @@ export class AttrManageModal extends Modal {
     const actions = box.createDiv({
       cls: "charinfo-attr-modal__confirm-actions",
     });
-    const cancel = actions.createEl("button", { type: "button", text: "취소" });
+    const cancel = actions.createEl("button", { type: "button", text: t("cancel") });
     cancel.addEventListener("click", () => {
       this.confirmDelete = null;
       this.focusKey = `option-${option.id}`;
@@ -2764,7 +2774,7 @@ export class AttrManageModal extends Modal {
     const del = actions.createEl("button", {
       type: "button",
       cls: "mod-warning",
-      text: "빼기",
+      text: t("remove"),
     });
     del.disabled = this.pending;
     del.addEventListener("click", () => void this.deleteOption(field, option.id));
@@ -2775,7 +2785,7 @@ export class AttrManageModal extends Modal {
       this.confirmDelete = null;
       this.optionExpandedId = "";
       await this.runSchema(
-        "빼기",
+        t("remove"),
         (group) => {
           removeFieldOption(
             this.settings(),
@@ -2791,7 +2801,7 @@ export class AttrManageModal extends Modal {
       return;
     }
     const axisId = this.axisId;
-    await this.run("빼기", axisId, async () => {
+    await this.run(t("remove"), axisId, async () => {
       await this.plugin.commitSettings((s) => {
         if (axisId === "status") {
           if (s.statuses.length <= 1) return;
@@ -2819,10 +2829,10 @@ export class AttrManageModal extends Modal {
    * check, so the state survives a monochrome or colour-blind read.
    */
   private renderColorRow(drawer: HTMLElement, option: LedgerOption): void {
-    drawer.createDiv({ cls: "charinfo-attr-modal__editor-label", text: "색상" });
+    drawer.createDiv({ cls: "charinfo-attr-modal__editor-label", text: t("colors") });
     const swatches = drawer.createDiv({
       cls: "charinfo-attr-modal__swatches",
-      attr: { role: "radiogroup", "aria-label": "색" },
+      attr: { role: "radiogroup", "aria-label": t("color") },
     });
     for (const token of this.colorPresets(option)) {
       const active = option.color === token.id;
@@ -2833,8 +2843,8 @@ export class AttrManageModal extends Modal {
           token.id +
           (active ? " is-active" : ""),
         attr: {
-          title: token.label,
-          "aria-label": token.label,
+          title: displayColorLabel(token.id, token.label),
+          "aria-label": displayColorLabel(token.id, token.label),
           role: "radio",
           "aria-checked": active ? "true" : "false",
           "data-focus": `swatch-${option.id}-${token.id}`,
@@ -2862,7 +2872,7 @@ export class AttrManageModal extends Modal {
       cls:
         "charinfo-attr-modal__swatch is-multicolor" +
         (custom ? " is-active is-picked" : ""),
-      attr: { title: "색 직접 고르기" },
+      attr: { title: t("chooseACustomColor") },
     });
     if (custom && option.color) {
       face.style.setProperty("--charinfo-swatch-picked", option.color);
@@ -2876,7 +2886,7 @@ export class AttrManageModal extends Modal {
       type: "color",
       cls: "charinfo-attr-modal__swatch-input",
       attr: {
-        "aria-label": "색 직접 고르기",
+        "aria-label": t("chooseACustomColor"),
         "data-focus": `custom-${option.id}`,
       },
     });
@@ -2916,7 +2926,7 @@ export class AttrManageModal extends Modal {
     color: StatusColorToken,
   ): Promise<void> {
     const axisId = this.axisId;
-    await this.run("색", axisId, async () => {
+    await this.run(t("color"), axisId, async () => {
       await this.plugin.commitSettings((s) => {
         this.patchOption(s, axisId, option.id, { color });
       });
@@ -2936,7 +2946,7 @@ export class AttrManageModal extends Modal {
     const line = drawer.createDiv({ cls: "charinfo-attr-modal__setting-line" });
     line.createSpan({
       cls: "charinfo-attr-modal__setting-label",
-      text: "새 카드 기본값",
+      text: t("defaultForNewCards"),
     });
     const btn = line.createEl("button", {
       type: "button",
@@ -2944,8 +2954,8 @@ export class AttrManageModal extends Modal {
         "charinfo-attr-modal__check" + (isDefault ? " is-active" : ""),
       attr: {
         "aria-pressed": isDefault ? "true" : "false",
-        "aria-label": "새 카드 기본값",
-        title: "새 카드에 미리 넣을 상태",
+        "aria-label": t("defaultForNewCards"),
+        title: t("statusToPrefillInNewCards"),
         "data-focus": `default-${option.id}`,
       },
     });
@@ -2956,11 +2966,11 @@ export class AttrManageModal extends Modal {
     btn.disabled = this.pending;
     btn.addEventListener("click", () => {
       if (isDefault) {
-        new Notice("기본값은 하나가 필요해요. 다른 값을 기본값으로 골라 주세요.");
+        new Notice(t("oneDefaultValueIsRequiredChooseAnotherValue"));
         return;
       }
       this.focusKey = `default-${option.id}`;
-      void this.run("기본값", "status", async () => {
+      void this.run(t("defaultValue"), "status", async () => {
         await this.plugin.commitSettings((s) => {
           s.defaultStatusId = option.id;
         });
@@ -2981,7 +2991,7 @@ export class AttrManageModal extends Modal {
     const fold = root.createEl("button", {
       type: "button",
       cls: "charinfo-attr-modal__fold",
-      text: `${this.leftoverOpen ? "▾" : "▸"} ${axis ? "이 아카이브" : "이 그룹"}에서 목록에 없는 값 · ${leftovers.length}개`,
+      text: t("valueValuesOutsideTheListInValueValue", { arg1: this.leftoverOpen ? "▾" : "▸", arg2: axis ? t("thisArchive") : t("thisGroup"), arg3: leftovers.length }),
       attr: { "aria-expanded": this.leftoverOpen ? "true" : "false" },
     });
     fold.addEventListener("click", () => {
@@ -2994,7 +3004,7 @@ export class AttrManageModal extends Modal {
       row.createSpan({ text: id, cls: "is-ghost" });
       const add = row.createEl("button", {
         type: "button",
-        text: "목록에 넣기",
+        text: t("addToList"),
       });
       add.disabled = this.pending;
       add.addEventListener("click", () => void this.adopt(id, field));
@@ -3052,7 +3062,7 @@ export class AttrManageModal extends Modal {
     line.removeClass("is-error");
     line.removeClass("is-empty");
     if (this.pending) {
-      line.setText("저장 중…");
+      line.setText(t("saving"));
       return;
     }
     if (this.saveError && (!this.retry || this.retryBelongsHere())) {
@@ -3062,7 +3072,7 @@ export class AttrManageModal extends Modal {
       const retry = line.createEl("button", {
         type: "button",
         cls: "charinfo-attr-modal__retry",
-        text: "다시 시도",
+        text: t("tryAgain"),
       });
       retry.addEventListener("click", () => {
         const job = this.retry;
@@ -3070,7 +3080,7 @@ export class AttrManageModal extends Modal {
         if (job.scope === "schema" && job.group !== this.group) {
           this.retry = null;
           this.saveError = "";
-          new Notice("현재 그룹에서 다시 시도할 작업이 없어요.");
+          new Notice(t("thereIsNoActionToRetryInThe"));
           this.paintSave();
           return;
         }
@@ -3085,7 +3095,7 @@ export class AttrManageModal extends Modal {
   private showSaveNotice(): void {
     this.saveNotice?.hide();
     window.clearTimeout(this.saveTimer);
-    const notice = new Notice("저장했어요.", 1600);
+    const notice = new Notice(t("saved"), 1600);
     this.saveNotice = notice;
     this.saveTimer = window.setTimeout(() => {
       this.saveTimer = 0;
@@ -3128,7 +3138,7 @@ export class AttrManageModal extends Modal {
       // A group operation that already knows what went wrong says it verbatim —
       // a count the user needs must not flatten into "저장하지 못했어요".
       const spoken = blocked || error instanceof GroupOperationError;
-      this.saveError = spoken ? (error as Error).message : "저장하지 못했어요.";
+      this.saveError = spoken ? (error as Error).message : t("couldNotSave");
       if (blocked) this.retry = null;
       new Notice(this.saveError);
       console.error(error);
@@ -3191,7 +3201,7 @@ export class AttrManageModal extends Modal {
 
   private async adopt(id: string, field: FieldDef): Promise<void> {
     if (!this.isAxisField(field)) {
-      await this.runSchema("넣기", (group) => {
+      await this.runSchema(t("include"), (group) => {
         adoptFieldOption(
           this.settings(),
           this.ctx.library,
@@ -3206,10 +3216,15 @@ export class AttrManageModal extends Modal {
     }
     const axisId = this.axisId;
     const next: StatusDef = { id, label: id, color: "gray" };
-    await this.run("넣기", axisId, async () => {
+    await this.run(t("include"), axisId, async () => {
       await this.plugin.commitSettings((s) => {
         this.pushOption(s, axisId, next);
       });
     });
   }
+}
+
+/** Translate built-in UI labels while preserving user-renamed fields. */
+function axisLabel(...args: Parameters<typeof rawAxisLabel>): string {
+  return displayPropertyLabel(args[0], rawAxisLabel(...args));
 }

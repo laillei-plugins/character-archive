@@ -1,3 +1,5 @@
+import { isLanguage, readObsidianLanguage, t, uiLanguage, type Language } from "./i18n";
+import * as Obsidian from "obsidian";
 import {
   Plugin,
   Platform,
@@ -63,7 +65,6 @@ import {
 import { CharinfoSettingTab } from "./ui/SettingTab";
 import {
   commandById,
-  OPEN_GALLERY_NAME,
   toggleActiveEditMode,
 } from "./ui/commandSurface";
 import { GalleryView, VIEW_TYPE_CHARINFO_GALLERY } from "./views/GalleryView";
@@ -227,14 +228,14 @@ export default class CharinfoPlugin extends Plugin {
       this.refreshSchemaRoots({ scanNew: true });
     });
 
-    this.addRibbonIcon("layout-grid", OPEN_GALLERY_NAME, () => {
+    const ribbon = this.addRibbonIcon("layout-grid", t("openGallery"), () => {
       this.openLastUsedOrDefaultGallery();
     });
 
     const openGallery = commandById("open-gallery")!;
-    this.addCommand({
+    const openCommand = this.addCommand({
       id: openGallery.id,
-      name: openGallery.name,
+      name: t("openGallery"),
       callback: () => {
         this.openLastUsedOrDefaultGallery();
       },
@@ -243,9 +244,9 @@ export default class CharinfoPlugin extends Plugin {
     // The gallery the user is in, or nothing: an edit toggle that also flipped
     // background galleries would change screens nobody is looking at.
     const toggleEdit = commandById("toggle-edit-mode")!;
-    this.addCommand({
+    const editCommand = this.addCommand({
       id: toggleEdit.id,
-      name: toggleEdit.name,
+      name: t("toggleGalleryEditMode"),
       checkCallback: (checking) =>
         toggleActiveEditMode(
           checking,
@@ -253,7 +254,25 @@ export default class CharinfoPlugin extends Plugin {
         ),
     });
 
-    this.addSettingTab(new CharinfoSettingTab(this.app, this));
+    const settingTab = new CharinfoSettingTab(this.app, this);
+    this.addSettingTab(settingTab);
+    // Obsidian may prefix returned command names with the plugin name.
+    const openPrefix = openCommand.name.slice(0, -t("openGallery").length);
+    const editPrefix = editCommand.name.slice(0, -t("toggleGalleryEditMode").length);
+    this.register(uiLanguage.subscribe(() => {
+      openCommand.name = openPrefix + t("openGallery");
+      editCommand.name = editPrefix + t("toggleGalleryEditMode");
+      ribbon.setAttribute("aria-label", t("openGallery"));
+      if (settingTab.containerEl.isShown()) settingTab.display();
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_CHARINFO_GALLERY)) {
+        if (leaf.view instanceof GalleryView) {
+          // Respect the view's in-flight write guards; refresh paints after they settle.
+          void leaf.view.refresh().catch((error) => {
+            console.error("[charinfo] Language refresh failed", error);
+          });
+        }
+      }
+    }));
 
     this.registerEvent(
       this.app.metadataCache.on("changed", (file) => {
@@ -271,7 +290,7 @@ export default class CharinfoPlugin extends Plugin {
           void this.followLibraryFolderRename(file.path, oldPath).catch((error) => {
             console.error(error);
             new Notice(
-              "폴더 이름을 따라가지 못했어요 — 설정의 「카드가 있는 폴더」를 확인해 주세요.",
+              t("couldNotFollowTheFolderRenameCheckFolder"),
             );
           });
           return;
@@ -443,7 +462,7 @@ export default class CharinfoPlugin extends Plugin {
       if (malformed) {
         // Not transient — preserve the file, say so once, and retry only on the
         // next modification or archive scan.
-        this.reportHealFailure(path, new Error("frontmatter YAML 파싱 실패"), 1);
+        this.reportHealFailure(path, new Error(t("couldNotParseFrontmatterYaml")), 1);
       }
     }
     if (bits.includes("content")) {
@@ -765,7 +784,7 @@ export default class CharinfoPlugin extends Plugin {
     if (this.healFailureNoticed.has(path)) return;
     this.healFailureNoticed.add(path);
     const basename = (path.split("/").pop() ?? path).replace(/\.md$/i, "");
-    new Notice(`속성 복구 실패 · ${basename}`);
+    new Notice(t("couldNotRestorePropertiesValue", { arg1: basename }));
   }
 
   onunload(): void {
@@ -869,7 +888,7 @@ export default class CharinfoPlugin extends Plugin {
   async openGalleryPageAsMarkdown(file?: TFile | null): Promise<void> {
     const target = file ?? (await resolveGalleryPageFile(this));
     if (!target) {
-      new Notice("갤러리 노트를 찾지 못했어요.");
+      new Notice(t("couldNotFindTheGalleryNote"));
       return;
     }
     this.allowMarkdownOnce.add(target.path);
@@ -914,10 +933,10 @@ export default class CharinfoPlugin extends Plugin {
         void this.openLibraryFolderGallery(clicked).catch((error: unknown) => {
           console.error(error);
           if (error instanceof AutoRevealRestoreError) {
-            new Notice("폴더 자동 열기 설정을 되돌리지 못했어요.");
+            new Notice(t("couldNotRestoreTheFolderAutoOpenSetting"));
             return;
           }
-          new Notice("보관함 갤러리를 열지 못했어요.");
+          new Notice(t("couldNotOpenTheVaultGallery"));
         });
       },
       true,
@@ -1082,7 +1101,7 @@ export default class CharinfoPlugin extends Plugin {
     await this.refreshGalleriesAfterLibraryFolderRename();
     if (followError) throw followError;
     if (rewrittenNotes > 0) {
-      new Notice(`이미지 다시 연결됨 · 노트 ${rewrittenNotes}개`);
+      new Notice(t("imagesReconnectedValueNotes", { arg1: rewrittenNotes }));
     }
   }
 
@@ -1282,7 +1301,7 @@ export default class CharinfoPlugin extends Plugin {
 
     return this.enqueueCharacterNameWork(file, async () => {
       if (this.unloaded) {
-        return { ok: false, name: expectedName, path: file.path, error: "플러그인이 닫혔어요." };
+        return { ok: false, name: expectedName, path: file.path, error: t("thePluginHasClosed") };
       }
       const observed = await this.readCharacterName(file);
       if (!observed || observed.name !== normalizeCharacterName(expectedName)) {
@@ -1290,7 +1309,7 @@ export default class CharinfoPlugin extends Plugin {
           ok: false,
           name: observed?.name ?? file.basename,
           path: file.path,
-          error: "이름이 다른 곳에서 바뀌었어요. 다시 열고 시도해 주세요.",
+          error: t("theNameChangedElsewhereReopenAndTryAgain"),
         };
       }
 
@@ -1314,7 +1333,7 @@ export default class CharinfoPlugin extends Plugin {
             ok: false,
             name: observed.name,
             path: file.path,
-            error: `노트 이름을 바꾸지 못했어요: ${error instanceof Error ? error.message : String(error)}`,
+            error: t("couldNotRenameTheNoteValue", { arg1: error instanceof Error ? error.message : String(error) }),
           };
         }
       }
@@ -1352,7 +1371,7 @@ export default class CharinfoPlugin extends Plugin {
             ok: false,
             name,
             path: file.path,
-            error: `파일명은 바뀌었지만 이름 속성을 저장하지 못했어요: ${error instanceof Error ? error.message : String(error)}`,
+            error: t("theFileWasRenamedButTheNameProperty", { arg1: error instanceof Error ? error.message : String(error) }),
           };
         }
       }
@@ -1361,7 +1380,7 @@ export default class CharinfoPlugin extends Plugin {
           ok: false,
           name,
           path: file.path,
-          error: "파일명은 바뀌었지만 이름이 다시 수정됐어요. 최신 값을 확인해 주세요.",
+          error: t("theFileWasRenamedButTheNameChanged"),
         };
       }
       return { ok: true, name, path: file.path };
@@ -1454,7 +1473,7 @@ export default class CharinfoPlugin extends Plugin {
           ? characterNameProblemMessage(problem)
           : characterNameProblemMessage("collision");
         await this.restoreNameToFilename(file, candidate);
-        new Notice(`${message} 파일명에 맞춰 이름을 되돌렸어요.`);
+        new Notice(t("valueRestoredTheNameToMatchTheFile", { arg1: message }));
         return;
       }
 
@@ -1462,12 +1481,12 @@ export default class CharinfoPlugin extends Plugin {
       try {
         await this.renameCharacterFile(file, targetPath);
         this.characterNameBaseline.set(file, candidate);
-        new Notice("이름과 노트 파일명을 바꿨어요.");
+        new Notice(t("changedTheNameAndNoteFileName"));
       } catch (error) {
         this.internalCharacterRename.delete(file);
         await this.restoreNameToFilename(file, candidate);
         new Notice(
-          `노트 이름을 바꾸지 못해 이름 속성을 되돌렸어요: ${error instanceof Error ? error.message : String(error)}`,
+          t("couldNotRenameTheNoteSoTheName", { arg1: error instanceof Error ? error.message : String(error) }),
         );
       }
     });
@@ -1485,7 +1504,7 @@ export default class CharinfoPlugin extends Plugin {
       });
     } catch (error) {
       console.error("[charinfo] 이름 속성 되돌리기 실패", error);
-      new Notice("이름 속성을 되돌리지 못했어요. 파일명을 기준으로 다시 확인해 주세요.");
+      new Notice(t("couldNotRestoreTheNamePropertyCheckIt"));
     }
   }
 
@@ -1516,10 +1535,10 @@ export default class CharinfoPlugin extends Plugin {
           fm.이름 = newName;
           changed = true;
         });
-        if (changed) new Notice("노트 파일명에 맞춰 이름을 바꿨어요.");
+        if (changed) new Notice(t("changedTheNameToMatchTheNoteFile"));
       } catch (error) {
         console.error("[charinfo] 파일명 → 이름 동기화 실패", error);
-        new Notice("파일명은 바뀌었지만 이름 속성을 저장하지 못했어요.");
+        new Notice(t("theFileWasRenamedButTheNameProperty2"));
       }
     });
   }
@@ -1603,7 +1622,15 @@ export default class CharinfoPlugin extends Plugin {
   async loadSettings(): Promise<void> {
     const stored = await this.loadData();
     this.hadStoredSettings = stored !== null && stored !== undefined;
-    this.settings = migrateSettings(stored);
+    this.settings = migrateSettings(stored, () => readObsidianLanguage(
+      Obsidian,
+      () => window.localStorage.getItem("language"),
+    ));
+    if (!isLanguage(stored?.language)) {
+      // Persist the install decision before any later reload can re-detect it.
+      await this.saveData(this.settings);
+    }
+    uiLanguage.set(this.settings.language);
   }
 
   /** Open this release's Markdown note once for updates, never first installs. */
@@ -1674,6 +1701,12 @@ export default class CharinfoPlugin extends Plugin {
     }
   }
 
+  /** Phase 1B's stock dropdown calls this; failed saves keep the current UI. */
+  async setLanguage(language: Language): Promise<void> {
+    if (!isLanguage(language)) throw new Error("Unsupported UI language");
+    await this.commitSettings((settings) => { settings.language = language; });
+  }
+
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
     // Library folder moved → rebuild the root registry and scan what is new.
@@ -1682,6 +1715,7 @@ export default class CharinfoPlugin extends Plugin {
       this.knownLibraryFolder = library;
       this.refreshSchemaRoots({ scanNew: true });
     }
+    uiLanguage.set(this.settings.language);
   }
 
   private settingsWrite: Promise<void> = Promise.resolve();
@@ -1728,7 +1762,7 @@ export default class CharinfoPlugin extends Plugin {
   private openLastUsedOrDefaultGallery(): void {
     void this.activateLastUsedOrDefaultGallery().catch((error) => {
       console.error("[charinfo] 갤러리 열기 실패", error);
-      new Notice("갤러리를 열지 못했어요.");
+      new Notice(t("couldNotOpenTheGallery"));
     });
   }
 

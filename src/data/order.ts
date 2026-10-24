@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: native Node TS tests require explicit extensions.
+import { t } from "../i18n/index.ts";
 import type { App, TFile } from "obsidian";
 import type { CharacterRecord } from "./CharacterStore";
 import type { SortMode } from "../settings";
@@ -285,10 +287,10 @@ export async function renameGenre(
       const stranded = await rollbackGenre(app, written, prev);
       throw new Error(
         [
-          `「${next}」로 바꾸는 중 ${record.path} 저장에 실패했어요`,
+          t("couldNotSaveValueWhileRenamingToValue", { arg1: next, arg2: record.path }),
           stranded.length
-            ? `되돌리지 못한 노트 ${stranded.length}개: ${stranded.join(", ")}`
-            : "바뀐 노트는 되돌렸어요",
+            ? t("couldNotRestoreValueNotesValue", { arg1: stranded.length, arg2: stranded.join(", ") })
+            : t("changedNotesWereRestored"),
           error instanceof Error ? error.message : String(error),
         ].join(" · "),
       );

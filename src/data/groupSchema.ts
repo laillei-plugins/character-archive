@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: native Node TS tests require explicit extensions.
+import { t } from "../i18n/index.ts";
 /**
  * 그룹 속성 — 정하기와 채우기.
  *
@@ -25,9 +27,7 @@
  * Scopes are stored as **arrays**: library / archive / group are user strings
  * and must never become object keys. Lookups scan, or build a `Map` at read time.
  *
- * This file imports nothing — `node --test` runs it straight from TypeScript
- * (see `tests/group-schema.test.ts`). Keep it that way: a relative import
- * without a `.ts` extension cannot load under Node's test runner.
+ * Runtime imports use explicit `.ts` extensions for the native Node test runner.
  */
 
 /** Must match `propertySchema.CHARACTER_KIND`. */
@@ -439,9 +439,9 @@ export function fieldLabel(
 
 /** Short type mark for Book rows. */
 export function fieldTypeMark(type: FieldType): string {
-  if (type === "select") return "선택";
-  if (type === "multi-select") return "여러 값";
-  return "글";
+  if (type === "select") return t("select");
+  if (type === "multi-select") return t("multipleValues");
+  return t("text");
 }
 
 /* -------------------------------------------------------------- the baseline */
@@ -586,7 +586,7 @@ export function renameGroupScope(
   to: string,
 ): void {
   if (!normalizeGroupKey(from)) {
-    throw new Error("기본은 그룹이 아니라서 이름을 바꿀 수 없어요.");
+    throw new Error(t("theDefaultRouteIsNotAGroupAnd"));
   }
   renameGroupRoute(store, library, archive, from, to);
 }
@@ -609,11 +609,11 @@ export function renameGroupRoute(
   const arc = normalizeArchiveKey(archive);
   const prev = normalizeGroupKey(from);
   const next = normalizeGroupKey(to);
-  if (!next) throw new Error("이름을 입력해 주세요.");
+  if (!next) throw new Error(t("enterAName"));
   if (prev === next) return;
 
   const collision = findGroupSchema(store, lib, arc, next);
-  if (collision) throw new Error(`그룹 「${next}」가 이미 있어요.`);
+  if (collision) throw new Error(t("groupValueAlreadyExists", { arg1: next }));
 
   const source = findGroupSchema(store, lib, arc, prev);
   if (!source) {
@@ -728,7 +728,7 @@ export function renameArchiveScope(
       normalizeArchiveKey(row.archive) === next,
   );
   if (schemaClash || ledgerClash || visibilityClash || orderClash) {
-    throw new Error(`아카이브 「${next}」가 이미 있어요`);
+    throw new Error(t("archiveValueAlreadyExists", { arg1: next }));
   }
 
   store.groupSchemas = store.groupSchemas.map((record) =>

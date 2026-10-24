@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: native Node TS tests require explicit extensions.
+import { t } from "../i18n/index.ts";
 /**
  * Obsidian-free Markdown image-embed layer.
  *
@@ -406,7 +408,7 @@ export function planEmbedRestore(
   // An unfinished fenced block can swallow an appended image. Leave the note
   // untouched rather than claiming a successful restore in that case.
   if (!listEmbedIdentities(text, resolve).some((image) => embedKey(image) === removal.key)) {
-    throw new Error("노트가 바뀌어 되돌리지 못했어요. 노트에서 이미지를 다시 넣어 주세요.");
+    throw new Error(t("theNoteChangedSoThisCannotBeUndone"));
   }
   return { text, appended: true };
 }

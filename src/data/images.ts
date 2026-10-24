@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: native Node TS tests require explicit extensions.
+import { t } from "../i18n/index.ts";
 import { moveImageKey } from "./imageOrder";
 import { App, TFile, TFolder, normalizePath, getFrontMatterInfo, parseYaml } from "obsidian";
 import type { CharacterRecord } from "./CharacterStore";
@@ -444,7 +446,7 @@ export async function setCharacterCoverUrl(
   return withNoteImageWrite(file, async () => {
     const cleaned = url.trim();
     if (!isRemoteCoverUrl(cleaned)) {
-      throw new Error("커버 URL은 https:// 로 시작해야 해요.");
+      throw new Error(t("coverUrlsMustStartWithHttps"));
     }
     // Same rule as a vault cover: embed first, then pin.
     await ensureCoverEmbed(app, file, { syntax: "md", target: cleaned });
@@ -700,7 +702,7 @@ export async function removeNoteImage(app: App, file: TFile, key: string): Promi
     await app.vault.process(file, (markdown) => {
       const state = noteImageState(app, file, markdown);
       const protectedKey = state.images.length > 1 ? state.key : null;
-      if (protectedKey === target) throw new Error("현재 커버예요. 먼저 다른 이미지를 커버로 골라 주세요.");
+      if (protectedKey === target) throw new Error(t("thisIsTheCurrentCoverChooseAnotherCover"));
       const plan = planEmbedRemove(markdown, target, vaultImageResolver(app, file.path), protectedKey);
       removal = plan.removed.length ? plan : null;
       return plan.text;
@@ -717,12 +719,12 @@ export async function restoreNoteImage(app: App, file: TFile, removal: ImageRemo
       const plan = planEmbedRestore(markdown, removal, vaultImageResolver(app, file.path));
       const after = noteImageState(app, file, plan.text);
       if (!after.images.some((image) => coverRefKey(image) === removal.key)) {
-        throw new Error("이미지 파일을 찾을 수 없어 복원하지 못했어요.");
+        throw new Error(t("couldNotRestoreTheImageBecauseTheFile"));
       }
       // Restoring an old, currently missing pin must not unexpectedly replace
       // the user's present fallback cover after intervening frontmatter edits.
       if (before.key !== null && before.key !== after.key) {
-        throw new Error("커버가 바뀌어 되돌리지 못했어요. 노트에서 이미지를 다시 넣어 주세요.");
+        throw new Error(t("theCoverChangedSoThisCannotBeUndone"));
       }
       appended = plan.appended;
       return plan.text;

@@ -1,3 +1,7 @@
+// @ts-expect-error TS5097: native Node TS tests.
+import { displayPropertyLabel } from "../i18n/display.ts";
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 import {
   App,
   Modal,
@@ -15,7 +19,7 @@ import type {
 } from "../settings";
 import {
   FILTER_AXIS_IDS,
-  axisLabel,
+  axisLabel as rawAxisLabel,
   getFilterAxis,
   resetChipFilters,
   DEFAULT_WEB_SHARE_HOSTED_BASE_URL,
@@ -49,9 +53,9 @@ class StopHostedShareModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-    this.setTitle("공유 중지할까요?");
+    this.setTitle(t("stopSharing"));
     contentEl.createEl("p", {
-      text: `${this.label}의 공개 페이지를 서버에서 지웁니다. 이미 열린 사본은 잠시 남을 수 있어요.`,
+      text: t("thePublicPageForValueWillBeRemoved", { arg1: this.label }),
     });
     contentEl.createEl("p", {
       cls: "setting-item-description",
@@ -63,12 +67,12 @@ class StopHostedShareModal extends Modal {
     new Setting(contentEl)
       .addButton((button) => {
         cancelButton = button;
-        button.setButtonText("취소").onClick(() => this.close());
+        button.setButtonText(t("cancel")).onClick(() => this.close());
       })
       .addButton((button) => {
         stopButton = button;
         button
-          .setButtonText("공유 중지")
+          .setButtonText(t("stopSharing2"))
           .setWarning()
           .onClick(async () => {
             cancelButton?.setDisabled(true);
@@ -78,7 +82,7 @@ class StopHostedShareModal extends Modal {
               this.close();
             } catch (error) {
               console.error(error);
-              new Notice("멈추지 못했어요. 링크는 아직 열려 있어요.");
+              new Notice(t("couldNotStopSharingTheLinkIsStill"));
               cancelButton?.setDisabled(false);
               stopButton?.setDisabled(false);
             }
@@ -103,19 +107,32 @@ export class CharinfoSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
+    new Setting(containerEl)
+      .setName("Language / 언어")
+      .setDesc(t("languageSettingDescription"))
+      .addDropdown((dropdown) => dropdown
+        .addOption("en", "English")
+        .addOption("ko", "한국어")
+        .setValue(this.plugin.settings.language)
+        .onChange(async (value) => {
+          if (value !== "en" && value !== "ko") return;
+          await this.plugin.setLanguage(value);
+          this.display();
+        }));
+
     const glossary = containerEl.createDiv({
       cls: "setting-item-description charinfo-settings__glossary",
     });
-    glossary.createDiv({ text: "큰 묶음 = 갤러리 맨 위에 있는 이름" });
-    glossary.createDiv({ text: "작은 묶음 = 카드 줄 위에 있는 제목" });
+    glossary.createDiv({ text: t("archiveTheNameAboveTheGallery") });
+    glossary.createDiv({ text: t("groupTheHeadingAboveARowOfCards") });
     glossary.createDiv({
-      text: "창 = 같은 카드를 다른 탭으로 보는 것. 작은 묶음을 만들지 않아요.",
+      text: t("tabAnotherViewOfTheSameCardsIt"),
     });
 
     new Setting(containerEl)
-      .setName("카드가 있는 폴더")
+      .setName(t("folderContainingCards"))
       .setDesc(
-        "캐릭터 노트가 들어 있는 상자입니다. 여기를 바꾸면 카드가 안 보일 수 있어요.",
+        t("theLibraryContainingCharacterNotesChangingItMay"),
       )
       .addText((text) => {
         const input = text
@@ -144,7 +161,7 @@ export class CharinfoSettingTab extends PluginSettingTab {
             );
             if (n > 0) {
               new Notice(
-                `이미지 다시 연결됨 · 노트 ${n}개\n(${fromFolder} → ${toFolder})`,
+                t("imagesReconnectedValueNotesValueValue", { arg1: n, arg2: fromFolder, arg3: toFolder }),
               );
               this.plugin.refreshOpenGalleries();
             }
@@ -154,13 +171,13 @@ export class CharinfoSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("처음 보여줄 큰 묶음")
+      .setName(t("initialArchive"))
       .setDesc(
-        "갤러리를 열면 맨 위에 나올 이름입니다. 화면에 보이는 글자와 같아야 해요. 각 창은 마지막으로 고른 묶음을 따로 기억합니다.",
+        t("theArchiveShownWhenOpeningTheGalleryUse"),
       )
       .addText((text) =>
         text
-          .setPlaceholder("맨 위에 보일 이름")
+          .setPlaceholder(t("nameToShowAboveTheGallery"))
           .setValue(this.plugin.settings.activeGenre)
           .onChange(async (value) => {
             this.plugin.settings.activeGenre = value.trim();
@@ -170,11 +187,11 @@ export class CharinfoSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("새 카드 양식")
-      .setDesc("새 카드를 만들 때 쓰는 빈 노트. 비워 두면 플러그인 기본 양식.")
+      .setName(t("newCardTemplate"))
+      .setDesc(t("aBlankNoteUsedToCreateNewCards"))
       .addText((text) =>
         text
-          .setPlaceholder("비우면 플러그인 기본 템플릿")
+          .setPlaceholder(t("leaveBlankForTheBuiltInTemplate"))
           .setValue(this.plugin.settings.characterTemplatePath)
           .onChange(async (value) => {
             this.plugin.settings.characterTemplatePath = normalizePath(value.trim());
@@ -187,28 +204,28 @@ export class CharinfoSettingTab extends PluginSettingTab {
     );
     containerEl.createEl("p", {
       text: templateOverrides.length
-        ? `아카이브별로 다른 템플릿을 쓰는 곳: ${templateOverrides
+        ? t("perArchiveTemplateLocationsValue", { arg1: templateOverrides
             .map(([genre, path]) => `${genre} → ${path}`)
-            .join(", ")}`
-        : "큰 묶음마다 다른 양식을 쓰려면 여기에 경로가 나타납니다.",
+            .join(", ") })
+        : t("pathsForSeparateArchiveTemplatesAppearHere"),
       cls: "setting-item-description",
     });
 
     this.renderFilterSettings(containerEl);
 
-    new Setting(containerEl).setName("그림").setHeading();
+    new Setting(containerEl).setName(t("images")).setHeading();
     containerEl.createEl("p", {
-      text: "이미 넣은 그림은 그대로 둡니다. 새로 올리는 파일만 아래 위치에 저장됩니다.",
+      text: t("existingImagesStayUnchangedOnlyNewlyUploadedFiles"),
       cls: "setting-item-description",
     });
 
     new Setting(containerEl)
-      .setName("새 그림 위치")
-      .setDesc("보관함 폴더가 기본입니다. 바깥 폴더는 용량이 클 때만.")
+      .setName(t("newImageLocation"))
+      .setDesc(t("theVaultFolderIsTheDefaultUseAn"))
       .addDropdown((dropdown) =>
         dropdown
-          .addOption("vault", "보관함 폴더 (기본)")
-          .addOption("external", "바깥 폴더 (선택)")
+          .addOption("vault", t("vaultFolderDefault"))
+          .addOption("external", t("externalFolderOptional"))
           .setValue(this.plugin.settings.mediaRootMode)
           .onChange(async (value: string) => {
             this.plugin.settings.mediaRootMode = value as MediaRootMode;
@@ -219,15 +236,15 @@ export class CharinfoSettingTab extends PluginSettingTab {
 
     const imgurReady = isImgurPluginAvailable(this.app);
     new Setting(containerEl)
-      .setName("커버 / 파일 업로드")
+      .setName(t("coverFileUploads"))
       .setDesc(
         imgurReady
-          ? "커버 팝업은 파일/링크만 보여요. Imgur로 올릴지는 여기서만 고릅니다."
-          : "커버 팝업은 파일/링크만 보여요. Imgur 플러그인을 켜면 여기서 원격 업로드를 고를 수 있어요.",
+          ? t("theCoverPickerShowsFilesAndLinksOnly")
+          : t("theCoverPickerShowsFilesAndLinksOnly2"),
       )
       .addDropdown((dropdown) => {
-        dropdown.addOption("vault", "보관함 (기본)");
-        if (imgurReady) dropdown.addOption("imgur", "Imgur 플러그인");
+        dropdown.addOption("vault", t("vaultDefault"));
+        if (imgurReady) dropdown.addOption("imgur", t("imgurPlugin"));
         dropdown
           .setValue(
             this.plugin.settings.imageUploadDestination === "imgur" && imgurReady
@@ -242,8 +259,8 @@ export class CharinfoSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("보관함 안 그림 폴더")
-      .setDesc("새 그림 위치가 보관함일 때. 보관함 기준 상대 경로.")
+      .setName(t("imageFolderInVault"))
+      .setDesc(t("usedWhenSavingNewImagesInTheVault"))
       .addText((text) =>
         text
           .setPlaceholder("Character Archive")
@@ -257,9 +274,9 @@ export class CharinfoSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("바깥 그림 폴더")
+      .setName(t("externalImageFolder"))
       .setDesc(
-        "컴퓨터 전체 경로. 새 그림 위치를 바깥 폴더로 골랐을 때만 필요해요.",
+        t("fullPathOnYourComputerRequiredOnlyWhen"),
       )
       .addText((text) =>
         text
@@ -272,18 +289,18 @@ export class CharinfoSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("그림 폴더 만들기")
-      .setDesc("없으면 그림 폴더를 만듭니다.")
+      .setName(t("createImageFolder"))
+      .setDesc(t("createsTheImageFolderIfItDoesNot"))
       .addButton((button) =>
-        button.setButtonText("폴더 만들기").onClick(async () => {
+        button.setButtonText(t("createFolder")).onClick(async () => {
           await this.plugin.media.ensureVaultMediaFolder();
-          new Notice("그림 폴더를 준비했어요.");
+          new Notice(t("theImageFolderIsReady"));
         }),
       );
 
     new Setting(containerEl)
-      .setName("기본 편집 모드")
-      .setDesc("켜면 갤러리를 편집 모드로 엽니다. 끄면 읽기(드래그·일괄 편집 잠금).")
+      .setName(t("defaultEditMode"))
+      .setDesc(t("openTheGalleryInEditModeWhenEnabled"))
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.defaultEditMode).onChange(async (value) => {
           this.plugin.settings.defaultEditMode = value;
@@ -291,15 +308,15 @@ export class CharinfoSettingTab extends PluginSettingTab {
         }),
       );
 
-    new Setting(containerEl).setName("웹 공유").setHeading();
+    new Setting(containerEl).setName(t("webSharing")).setHeading();
     containerEl.createEl("p", {
-      text: "공유를 누를 때만 선택한 카드 정보와 표지를 기본 공개 서버에 올려 링크를 만들어요. 다른 서버를 쓸 때만 주소를 바꾸세요. GitHub는 선택이에요.",
+      text: t("onlyWhenYouShareSelectedCardDetailsAnd"),
       cls: "setting-item-description",
     });
 
     new Setting(containerEl)
-      .setName("공유 주소")
-      .setDesc("비우면 기본 공유 서버로 돌아가요. 끝의 / 는 빼 주세요.")
+      .setName(t("shareServerAddress"))
+      .setDesc(t("leaveBlankToUseTheDefaultShareServer"))
       .addText((text) =>
         text
           .setPlaceholder(DEFAULT_WEB_SHARE_HOSTED_BASE_URL)
@@ -314,8 +331,8 @@ export class CharinfoSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("업로드 열쇠 (선택)")
-      .setDesc("직접 운영한 공유 서버가 열쇠를 요구할 때만 입력하세요.")
+      .setName(t("uploadKeyOptional"))
+      .setDesc(t("enterOnlyIfYourOwnShareServerRequires"))
       .addText((text) => {
         text
           .setPlaceholder("optional")
@@ -329,13 +346,13 @@ export class CharinfoSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("기본 유지 기간")
-      .setDesc("링크가 얼마나 살아 있을지. 공유 창에서도 바꿀 수 있어요.")
+      .setName(t("defaultLinkLifetime"))
+      .setDesc(t("howLongTheLinkStaysAvailableYouCan"))
       .addDropdown((dropdown) =>
         dropdown
-          .addOption("7d", "7일")
-          .addOption("30d", "30일")
-          .addOption("permanent", "1년")
+          .addOption("7d", t("7Days"))
+          .addOption("30d", t("30Days"))
+          .addOption("permanent", t("1Year"))
           .setValue(this.plugin.settings.webShareHostedTtl)
           .onChange(async (value: string) => {
             this.plugin.settings.webShareHostedTtl =
@@ -348,24 +365,24 @@ export class CharinfoSettingTab extends PluginSettingTab {
 
     const ghReady = isGithubShareConfigured(this.plugin.settings);
     new Setting(containerEl)
-      .setName("GitHub 백업 연결")
+      .setName(t("githubBackupConnection"))
       .setDesc(
         ghReady
-          ? `연결됨 · ${this.plugin.settings.webShareGithubRepo || "—"}`
-          : "공유 주소 대신 내 GitHub에 올릴 때만 필요해요. 갤러리 → 지구본 → 「내 GitHub에 연결」.",
+          ? t("connectedValue", { arg1: this.plugin.settings.webShareGithubRepo || "—" })
+          : t("neededOnlyToPublishToYourGithubInstead"),
       )
       .addButton((btn) =>
-        btn.setButtonText(ghReady ? "연결 끊기" : "안내").onClick(async () => {
+        btn.setButtonText(ghReady ? t("disconnect") : t("help")).onClick(async () => {
           if (!ghReady) {
             new Notice(
-              "갤러리를 연 뒤 공유(지구본) → 아래쪽 「내 GitHub에 연결」을 누르세요.",
+              t("openTheGalleryThenChooseShareGlobeIcon"),
             );
             return;
           }
           this.plugin.settings.webShareGithubToken = "";
           this.plugin.settings.webShareGithubRepo = "";
           await this.plugin.saveSettings();
-          new Notice("GitHub 연결을 해제했어요.");
+          new Notice(t("disconnectedFromGithub"));
           this.display();
         }),
       );
@@ -390,15 +407,15 @@ export class CharinfoSettingTab extends PluginSettingTab {
         const character = key.startsWith(characterPrefix);
         const sourcePath = character ? key.slice(characterPrefix.length) : key;
         const filename = sourcePath.split("/").pop() || sourcePath;
-        const basename = filename.replace(/\.md$/i, "") || "이름 없는 노트";
+        const basename = filename.replace(/\.md$/i, "") || t("untitledNote");
         const parsedAt = Date.parse(state.at);
         return {
           key,
           state,
-          label: `${character ? "캐릭터" : "갤러리"} · ${basename}`,
+          label: `${character ? t("character") : t("gallery")} · ${basename}`,
           sourceStatus: this.app.vault.getAbstractFileByPath(sourcePath)
             ? ""
-            : "원본 노트 없음",
+            : t("sourceNoteMissing"),
           parsedAt: Number.isFinite(parsedAt) ? parsedAt : null,
           index,
         };
@@ -424,8 +441,8 @@ export class CharinfoSettingTab extends PluginSettingTab {
           at,
           htmlVersion: this.plugin.settings.webShareHtmlVersion,
         },
-        label: "이전 링크",
-        sourceStatus: "원본 노트 연결 안 됨",
+        label: t("previousLink"),
+        sourceStatus: t("sourceNoteNotLinked"),
         parsedAt: Number.isFinite(parsedAt) ? parsedAt : null,
         index: entries.length,
       });
@@ -448,8 +465,8 @@ export class CharinfoSettingTab extends PluginSettingTab {
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: entries.length
-        ? "노트를 옮기거나 지워도 여기서 공개 링크를 확인하고 멈출 수 있어요."
-        : "공개 중인 링크가 없어요.",
+        ? t("youCanCheckAndStopPublicLinksHere")
+        : t("thereAreNoActivePublicLinks"),
     });
 
     for (const entry of entries) {
@@ -461,14 +478,14 @@ export class CharinfoSettingTab extends PluginSettingTab {
         .setName(entry.label)
         .setDesc(description)
         .addButton((button) =>
-          button.setButtonText("복사").onClick(async () => {
+          button.setButtonText(t("copy")).onClick(async () => {
             const ok = await copyTextToClipboard(entry.state.url);
-            new Notice(ok ? "링크를 복사했어요." : "링크를 복사하지 못했어요.");
+            new Notice(ok ? t("linkCopied") : t("couldNotCopyTheLink"));
           }),
         )
         .addButton((button) => {
           button
-            .setButtonText("공유 중지")
+            .setButtonText(t("stopSharing2"))
             .setWarning()
             .setDisabled(
               !entry.state.id.trim() ||
@@ -492,7 +509,7 @@ export class CharinfoSettingTab extends PluginSettingTab {
     state: WebShareLastState,
   ): Promise<void> {
     const targetBaseUrl = hostedShareBaseFromUrl(state.url);
-    if (!targetBaseUrl) throw new Error("공유 링크 주소를 확인할 수 없어요.");
+    if (!targetBaseUrl) throw new Error(t("couldNotDetermineTheShareLinkAddress"));
     await deleteHostedShare({
       baseUrl: targetBaseUrl,
       id: state.id,
@@ -506,22 +523,22 @@ export class CharinfoSettingTab extends PluginSettingTab {
     if (key) clearWebShareForPage(this.plugin.settings, key);
     clearLastShareIfSameUrl(this.plugin.settings, state.url);
     await this.plugin.saveSettings();
-    new Notice("공유를 중지했어요. 이미 열린 사본은 잠시 남을 수 있어요.");
+    new Notice(t("sharingStoppedCopiesAlreadyOpenMayRemainBriefly"));
     this.display();
   }
 
   private renderFilterSettings(containerEl: HTMLElement): void {
-    new Setting(containerEl).setName("필터").setHeading();
+    new Setting(containerEl).setName(t("filters")).setHeading();
     containerEl.createEl("p", {
       cls: "setting-item-description",
-      text: "상태·관계 같은 이름과 값은 갤러리에서 연필을 켠 뒤 책 아이콘으로 바꿉니다. 여기는 기본값만 둡니다.",
+      text: t("toChangeLabelsSuchAsStatusAndRelationship"),
     });
 
     const axis = getFilterAxis(this.plugin.settings);
     new Setting(containerEl)
-      .setName("맨 위 칩이 거르는 항목")
+      .setName(t("propertyFilteredByTheChips"))
       .setDesc(
-        "On/Off 같은 칩이 어떤 칸을 보는지. 바꾸면 칩은 전체로 돌아갑니다.",
+        t("whichFieldChipsSuchAsOnOffFilter"),
       )
       .addDropdown((dropdown) => {
         for (const id of FILTER_AXIS_IDS) {
@@ -545,13 +562,13 @@ export class CharinfoSettingTab extends PluginSettingTab {
     if (axis.empty) {
       containerEl.createEl("p", {
         cls: "setting-item-description",
-        text: `«${axisLabel(this.plugin.settings.primaryFilterProperty, this.plugin.settings.propertyDisplayNames)}»에 고를 값이 없어요. 갤러리 편집 → 속성 관리에서 추가해 주세요.`,
+        text: t("valueHasNoOptionsAddThemInGallery", { arg1: axisLabel(this.plugin.settings.primaryFilterProperty, this.plugin.settings.propertyDisplayNames) }),
       });
     }
 
     new Setting(containerEl)
-      .setName("새 캐릭터 기본 상태")
-      .setDesc("새로 만든 카드에 처음 넣을 상태.")
+      .setName(t("defaultStatusForNewCharacters"))
+      .setDesc(t("theStatusInitiallySetOnNewlyCreatedCards"))
       .addDropdown((dropdown) => {
         for (const s of this.plugin.settings.statuses) {
           dropdown.addOption(s.id, s.label);
@@ -570,4 +587,9 @@ export function folderExists(app: App, folderPath: string): boolean {
   const path = normalizePath(folderPath);
   const abstract = app.vault.getAbstractFileByPath(path);
   return abstract instanceof TFolder;
+}
+
+/** Translate built-in UI labels while preserving user-renamed fields. */
+function axisLabel(...args: Parameters<typeof rawAxisLabel>): string {
+  return displayPropertyLabel(args[0], rawAxisLabel(...args));
 }

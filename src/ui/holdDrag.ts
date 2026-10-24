@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 /**
  * Lightweight reorder drag — prioritize 60fps ghost tracking.
  * Slot swaps are throttled; sibling FLIP is skipped (was the main jank source).
@@ -184,7 +186,7 @@ export function attachHoldDrag(
     } else {
       const empty = document.createElement("span");
       empty.className = "charinfo-card__cover-empty";
-      empty.textContent = "커버 없음";
+      empty.textContent = t("noCover");
       cover.appendChild(empty);
     }
     g.appendChild(cover);

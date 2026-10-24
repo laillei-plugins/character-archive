@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 import type { BatchDestinationRow } from "../data/batchGroupMove";
 
 /**
@@ -137,12 +139,12 @@ export class BatchGroupMoveDialog {
     const head = dialog.createDiv({ cls: "charinfo-batch-dialog__head" });
     head.createSpan({
       cls: "charinfo-batch-dialog__title",
-      text: "이동할 그룹",
+      text: t("destinationGroup"),
       attr: { id: titleId },
     });
     head.createSpan({
       cls: "charinfo-batch-dialog__count",
-      text: `${this.opts.selectedCount}명 선택`,
+      text: t("valueSelected", { arg1: this.opts.selectedCount }),
       attr: { id: descId },
     });
 
@@ -213,7 +215,7 @@ export class BatchGroupMoveDialog {
     this.dialog?.addClass("is-saving");
     this.dialog?.setAttribute("aria-busy", "true");
     this.savingLayer?.removeAttribute("aria-hidden");
-    this.savingText?.setText(`${this.opts.selectedCount}명의 그룹을 바꾸는 중…`);
+    this.savingText?.setText(t("changingTheGroupOfValueCharacters", { arg1: this.opts.selectedCount }));
     for (const button of this.rowButtons) button.disabled = true;
     if (this.createBtn) this.createBtn.disabled = true;
     if (this.backBtn) this.backBtn.disabled = true;
@@ -261,7 +263,7 @@ export class BatchGroupMoveDialog {
   private renderList(body: HTMLElement): void {
     const list = body.createDiv({
       cls: "charinfo-batch-dialog__list",
-      attr: { role: "radiogroup", "aria-label": "이동할 그룹" },
+      attr: { role: "radiogroup", "aria-label": t("destinationGroup") },
     });
     const rows = this.opts.rows;
     // A choice made before a walk into the create state survives the walk back.
@@ -300,7 +302,7 @@ export class BatchGroupMoveDialog {
       }
       button.createSpan({
         cls: "charinfo-batch-dialog__dest-total",
-        text: `${row.total}명`,
+        text: t("valueCharacters", { arg1: row.total }),
       });
       button.addEventListener("click", () => {
         if (this.saving) return;
@@ -333,11 +335,11 @@ export class BatchGroupMoveDialog {
     const text = button.createDiv({ cls: "charinfo-batch-dialog__create-text" });
     text.createSpan({
       cls: "charinfo-batch-dialog__create-name",
-      text: "새 그룹 만들기",
+      text: t("createANewGroup"),
     });
     text.createSpan({
       cls: "charinfo-batch-dialog__create-meta",
-      text: "이름을 정하고 바로 옮겨요",
+      text: t("nameItAndMoveRightAway"),
     });
     const chevron = button.createSpan({
       cls: "charinfo-batch-dialog__create-chevron",
@@ -363,7 +365,7 @@ export class BatchGroupMoveDialog {
     this.opts.setIcon(arrow, "arrow-left");
     back.createSpan({
       cls: "charinfo-batch-dialog__back-label",
-      text: "그룹 목록으로",
+      text: t("backToGroupList"),
     });
     back.addEventListener("click", () => {
       if (this.saving) return;
@@ -377,7 +379,7 @@ export class BatchGroupMoveDialog {
     const errorId = `charinfo-batch-new-error-${this.uid}`;
     form.createEl("label", {
       cls: "charinfo-batch-dialog__label",
-      text: "새 그룹 이름",
+      text: t("newGroupName"),
       attr: { for: inputId },
     });
     this.input = form.createEl("input", {
@@ -386,14 +388,14 @@ export class BatchGroupMoveDialog {
         id: inputId,
         type: "text",
         value: this.draft,
-        placeholder: "예: 조연",
+        placeholder: t("eGSupportingCast"),
         spellcheck: "false",
         "aria-describedby": `${hintId} ${errorId}`,
       },
     });
     form.createDiv({
       cls: "charinfo-batch-dialog__hint",
-      text: `새 그룹을 만들고 선택한 ${this.opts.selectedCount}명을 바로 옮겨요.`,
+      text: t("createAGroupAndMoveTheValueSelected", { arg1: this.opts.selectedCount }),
       attr: { id: hintId },
     });
     this.errorEl = form.createDiv({
@@ -411,14 +413,14 @@ export class BatchGroupMoveDialog {
     const foot = dialog.createDiv({ cls: "charinfo-batch-dialog__foot" });
     this.cancelBtn = foot.createEl("button", {
       cls: "charinfo-text-btn charinfo-batch-dialog__cancel",
-      text: "취소",
+      text: t("cancel"),
       attr: { type: "button" },
     });
     this.cancelBtn.addEventListener("click", () => this.cancel());
 
     this.confirmBtn = foot.createEl("button", {
       cls: "charinfo-text-btn mod-cta charinfo-batch-dialog__confirm",
-      text: `${this.opts.selectedCount}명 옮기기`,
+      text: t("moveValueCharacters", { arg1: this.opts.selectedCount }),
       attr: { type: "button" },
     });
     // Repeat-submit lock lives in `submit`: the click is spent the moment
@@ -474,8 +476,8 @@ export class BatchGroupMoveDialog {
       return {
         ok: false,
         message: row.eligible
-          ? "이미 있는 그룹이에요. 그룹 목록에서 선택해 주세요."
-          : `선택한 캐릭터가 이미 모두 ‘${name}’ 그룹에 있어요. 다른 이름을 입력해 주세요.`,
+          ? t("thisGroupAlreadyExistsChooseItFromThe")
+          : t("allSelectedCharactersAreAlreadyInValueEnter", { arg1: name }),
       };
     }
     const problem = this.opts.validateNewGroup(name);
@@ -489,11 +491,11 @@ export class BatchGroupMoveDialog {
     const confirm = this.confirmBtn;
     if (!confirm) return;
     if (this.mode === "list") {
-      confirm.setText(`${this.opts.selectedCount}명 옮기기`);
+      confirm.setText(t("moveValueCharacters", { arg1: this.opts.selectedCount }));
       confirm.disabled = this.saving || !this.chosen;
       return;
     }
-    confirm.setText(`만들고 ${this.opts.selectedCount}명 옮기기`);
+    confirm.setText(t("createAndMoveValueCharacters", { arg1: this.opts.selectedCount }));
     const verdict = this.createVerdict();
     confirm.disabled = this.saving || !verdict.ok;
     this.showError(verdict.message);

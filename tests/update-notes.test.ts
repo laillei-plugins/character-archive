@@ -12,6 +12,7 @@ import {
 } from "../src/data/updateNotes.ts";
 
 test("update notes open once for an existing install on the matching release", () => {
+  assert.equal(UPDATE_NOTES_VERSION, "0.1.30");
   assert.equal(
     shouldOpenUpdateNotes({
       installedVersion: UPDATE_NOTES_VERSION,
@@ -59,7 +60,7 @@ test("fresh installs and a different plugin version do not open this note", () =
 
 test("stored seen versions are normalized before comparison", () => {
   assert.equal(normalizeSeenUpdateNotesVersion(null), "");
-  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.29 "), "0.1.29");
+  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.30 "), "0.1.30");
   assert.equal(normalizeSeenUpdateNotesVersion(18), "");
 });
 
@@ -71,8 +72,18 @@ test("one update note keeps Korean before the equivalent English section", () =>
   const korean = UPDATE_NOTES_MARKDOWN.indexOf("## 업데이트 내용");
   const english = UPDATE_NOTES_MARKDOWN.indexOf("## What's new");
   assert.ok(korean >= 0 && english > korean);
-  assert.match(UPDATE_NOTES_MARKDOWN, /모든 그룹 접기/);
-  assert.match(UPDATE_NOTES_MARKDOWN, /Fold all/);
+  for (const label of [
+    "**무엇이 바뀌었나요**",
+    "**어떻게 쓰나요**",
+    "**어디에 있나요**",
+    "**What changed**",
+    "**How it works**",
+    "**Where to find it**",
+  ]) {
+    assert.ok(UPDATE_NOTES_MARKDOWN.includes(label));
+  }
+  assert.ok(UPDATE_NOTES_MARKDOWN.includes("Language / 언어"));
+  assert.ok(UPDATE_NOTES_MARKDOWN.includes("첫 번째 그룹 제목 줄"));
 });
 
 test("startup opens an existing note without overwriting it, then records seen", () => {

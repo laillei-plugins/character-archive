@@ -1,11 +1,14 @@
+// @ts-expect-error TS5097: native Node TS tests.
+import { displayPropertyLabel } from "../i18n/display.ts";
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t } from "../i18n/index.ts";
 import { App, Modal, Notice, Setting } from "obsidian";
 import type CharinfoPlugin from "../main";
-import { CREATE_GALLERY_NAME } from "./commandSurface";
 import { createGalleryPage } from "../page/galleryPage";
 import {
   FILTER_AXIS_IDS,
   axisFor,
-  axisLabel,
+  axisLabel as rawAxisLabel,
   type PrimaryFilterProperty,
 } from "../settings";
 
@@ -41,19 +44,19 @@ export class CreateGalleryModal extends Modal {
     contentEl.empty();
     contentEl.addClass("charinfo-create-gallery-modal");
     this.modalEl.addClass("charinfo-create-gallery-modal-shell");
-    this.setTitle(CREATE_GALLERY_NAME);
+    this.setTitle(t("createNewGallery"));
 
     contentEl.createDiv({
       cls: "setting-item-description",
-      text: "같은 카드를 보려면 폴더를 그대로 두세요. 카드를 따로 나누려면 아래에 새 폴더 이름을 적으세요.",
+      text: t("keepTheFolderUnchangedToSeeTheSame"),
     });
 
     new Setting(contentEl)
-      .setName("탭 이름")
-      .setDesc("파일 목록과 탭에 보이는 이름")
+      .setName(t("tabName"))
+      .setDesc(t("nameShownInTheFileListAndTab"))
       .addText((text) => {
         text
-          .setPlaceholder("탭에 보일 이름")
+          .setPlaceholder(t("nameToShowInTheTab"))
           .setValue(this.title)
           .onChange((value) => {
             this.title = value;
@@ -61,9 +64,9 @@ export class CreateGalleryModal extends Modal {
       });
 
     new Setting(contentEl)
-      .setName("카드가 있는 폴더")
+      .setName(t("folderContainingCards"))
       .setDesc(
-        "이 탭이 볼 카드 상자입니다. 그대로 두면 지금과 같은 카드예요. 나누고 싶으면 새 이름을 적으세요. 없는 폴더는 만들어 줍니다.",
+        t("theCardLibraryForThisTabKeepIt"),
       )
       .addText((text) => {
         text
@@ -75,13 +78,13 @@ export class CreateGalleryModal extends Modal {
       });
 
     new Setting(contentEl)
-      .setName("맨 위 작품 이름")
+      .setName(t("archiveNameAboveTheGallery"))
       .setDesc(
-        "갤러리 맨 위에 있는 그 이름입니다. 비우면 이름을 눌러 다른 작품으로 바꿀 수 있어요. 적으면 이 탭은 그 작품만 보고, 이름을 눌러도 바뀌지 않아요.",
+        t("theNameAboveTheGalleryLeaveBlankTo"),
       )
       .addText((text) => {
         text
-          .setPlaceholder("비우면 눌러서 바꿀 수 있음")
+          .setPlaceholder(t("leaveBlankToAllowSwitchingByClick"))
           .setValue(this.archive)
           .onChange((value) => {
             this.archive = value;
@@ -89,10 +92,10 @@ export class CreateGalleryModal extends Modal {
       });
 
     new Setting(contentEl)
-      .setName("이 창의 칩 (선택)")
-      .setDesc("맨 위 On/Off 칩이 무엇을 거를지. 비우면 설정을 따릅니다.")
+      .setName(t("filterChipsForThisTabOptional"))
+      .setDesc(t("whatTheOnOffChipsFilterLeaveBlank"))
       .addDropdown((dropdown) => {
-        dropdown.addOption("", "설정 기본값 따르기");
+        dropdown.addOption("", t("usePluginDefault"));
         for (const id of FILTER_AXIS_IDS) {
           dropdown.addOption(
             id,
@@ -112,7 +115,7 @@ export class CreateGalleryModal extends Modal {
 
     new Setting(contentEl).addButton((btn) =>
       btn
-        .setButtonText("만들기")
+        .setButtonText(t("create"))
         .setCta()
         .onClick(() => void this.submit()),
     );
@@ -128,11 +131,11 @@ export class CreateGalleryModal extends Modal {
     const options = axisFor(this.plugin.settings, axisId).options;
 
     new Setting(host)
-      .setName("처음 켤 칩 (선택)")
-      .setDesc("이 창을 처음 열 때 고를 칩. 비워도 됩니다.")
+      .setName(t("initialChipOptional"))
+      .setDesc(t("theChipSelectedWhenThisTabFirstOpens"))
       .addDropdown((dropdown) => {
-        dropdown.addOption("", "설정값 따르기");
-        dropdown.addOption("all", "전체");
+        dropdown.addOption("", t("followSettings"));
+        dropdown.addOption("all", t("all"));
         for (const option of options) {
           dropdown.addOption(option.id, option.label);
         }
@@ -165,8 +168,13 @@ export class CreateGalleryModal extends Modal {
       this.close();
     } catch (error) {
       new Notice(
-        `만들기 실패: ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotCreateValue", { arg1: error instanceof Error ? error.message : String(error) }),
       );
     }
   }
+}
+
+/** Translate built-in UI labels while preserving user-renamed fields. */
+function axisLabel(...args: Parameters<typeof rawAxisLabel>): string {
+  return displayPropertyLabel(args[0], rawAxisLabel(...args));
 }

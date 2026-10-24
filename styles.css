@@ -2131,8 +2131,49 @@ button.charinfo-gallery__genre:hover,
   padding-inline: 10px 8px;
 }
 
-.charinfo-gallery__fold-all.is-empty {
-  display: none;
+/*
+ * Fold all: an icon at the right end of the first group's header row, in line
+ * with the grid's right edge, so it adds no height above the cards.
+ */
+.charinfo-genre__header:has(.charinfo-gallery__fold-all) {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/*
+ * The glyph, not the hit box, lines up with the cards' right edge: the box
+ * ends at the edge, the svg is pushed past its own 4.7px side bearing, and the
+ * box clips that empty margin so nothing overflows the scrollport.
+ */
+.charinfo-genre__header .charinfo-gallery__fold-all {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  width: 20px;
+  height: var(--size-4-6, 24px);
+  min-width: 20px;
+  min-height: var(--size-4-6, 24px);
+  margin-block: calc(-1 * var(--charinfo-space-xxs));
+  overflow: hidden;
+}
+
+.charinfo-genre__header .charinfo-gallery__fold-all:hover {
+  background-color: transparent;
+}
+
+.charinfo-genre__header .charinfo-gallery__fold-all svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-right: -4.5px;
+}
+
+.charinfo-gallery.is-narrow .charinfo-genre__header .charinfo-gallery__fold-all {
+  width: var(--size-4-8, 32px);
+  height: var(--size-4-8, 32px);
+  min-width: var(--size-4-8, 32px);
+  min-height: var(--size-4-8, 32px);
+  margin-block: calc(-1 * var(--charinfo-space-xs));
 }
 
 .charinfo-genre.is-collapsed {

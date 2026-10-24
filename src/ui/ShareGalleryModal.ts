@@ -1,3 +1,5 @@
+// @ts-expect-error TS5097: explicit extension also supports the native Node TS tests.
+import { t, translate } from "../i18n/index.ts";
 import { Modal, Notice, type TFile } from "obsidian";
 import type CharinfoPlugin from "../main";
 import type { CharacterRecord } from "../data/CharacterStore";
@@ -245,11 +247,13 @@ export class ShareGalleryModal extends Modal {
     });
   }
 
-  private shareTitle(): string {
+  private shareTitle(mode: "ui" | "share" = "ui"): string {
     if (this.records.length === 1) return this.title;
     const archives = [...this.selectedArchives].filter(Boolean);
     if (archives.length === 1) return archives[0]!;
-    if (archives.length > 1) return `${archives[0]} 외 ${archives.length - 1}`;
+    if (archives.length > 1) return mode === "share"
+      ? translate("ko", "valueAndValueMore", { arg1: archives[0]!, arg2: archives.length - 1 })
+      : t("valueAndValueMore", { arg1: archives[0]!, arg2: archives.length - 1 });
     return this.title || "Character Archive";
   }
 
@@ -282,7 +286,7 @@ export class ShareGalleryModal extends Modal {
 
   /** Primary: our Cloudflare host — duration + one button. */
   private renderHosted(root: HTMLElement): void {
-    this.setTitle(this.records.length === 1 ? "캐릭터 공유" : "갤러리 공유");
+    this.setTitle(this.records.length === 1 ? t("shareCharacter") : t("shareGallery"));
     this.renderHostSwitcher(root);
     const configured = isHostedShareConfigured(
       this.plugin.settings.webShareHostedBaseUrl,
@@ -291,7 +295,7 @@ export class ShareGalleryModal extends Modal {
     if (!configured) {
       root.createDiv({
         cls: "charinfo-share-modal__lead",
-        text: "공유 주소가 올바르지 않아요. 설정에서 확인하세요.",
+        text: t("invalidShareServerAddressCheckSettings"),
       });
       this.statusEl = root.createDiv({ cls: "charinfo-share-modal__status" });
       this.renderAltMethods(root);
@@ -317,16 +321,16 @@ export class ShareGalleryModal extends Modal {
       cls: "charinfo-share-modal__lead",
       text: hasLiveLink
         ? stale
-          ? "이 공개 링크는 이전 형식이에요. 지금 형식으로 업데이트하거나 공유를 중지할 수 있어요."
-          : "공개 링크가 있어요. 내용을 바꾼 뒤 업데이트하거나, 공유를 중지할 수 있어요."
+          ? t("thisPublicLinkUsesAnOlderFormatUpdate")
+          : t("aPublicLinkExistsUpdateItAfterChanging")
         : lastUrl
-          ? "예전에 만든 링크는 이 기기에서 갱신·중지할 수 없어요. 새 링크를 만드세요."
-          : "넣을 아카이브·그룹과 범위를 고른 뒤 공유하세요.",
+          ? t("thisDeviceCannotUpdateOrStopTheOld")
+          : t("chooseArchivesGroupsAndContentToIncludeThen"),
     });
 
     root.createDiv({
       cls: "charinfo-share-modal__hint",
-      text: "공유하면 선택한 카드 정보와 표지가 공개 페이지로 올라가요. 링크가 있는 사람은 누구나 볼 수 있어요.",
+      text: t("sharingUploadsSelectedCardDetailsAndCoversTo"),
     });
 
     if (hasLiveLink && lastUrl) {
@@ -341,13 +345,13 @@ export class ShareGalleryModal extends Modal {
 
     const actions = root.createDiv({ cls: "charinfo-share-modal__actions" });
     if (hasLiveLink) {
-      this.renderPrimaryAction(actions, "이 링크 업데이트", () =>
+      this.renderPrimaryAction(actions, t("updateThisLink"), () =>
         void this.publish({ update: true }),
       );
     } else {
       this.renderPrimaryAction(
         actions,
-        lastUrl ? "새 링크 만들기" : "공유 링크 만들기",
+        lastUrl ? t("createNewLink") : t("createShareLink"),
         () => void this.publish(),
       );
     }
@@ -374,17 +378,17 @@ export class ShareGalleryModal extends Modal {
   private renderScopePickers(root: HTMLElement): void {
     const section = root.createDiv({ cls: "charinfo-share-modal__section" });
 
-    const archiveField = this.renderField(section, "아카이브");
+    const archiveField = this.renderField(section, t("archive"));
     this.archiveWrap = archiveField.createDiv({
       cls: "charinfo-share-modal__chips",
-      attr: { role: "group", "aria-label": "아카이브 선택" },
+      attr: { role: "group", "aria-label": t("selectArchives") },
     });
     this.paintArchiveChips();
 
-    const groupField = this.renderField(section, "그룹");
+    const groupField = this.renderField(section, t("group"));
     this.groupWrap = groupField.createDiv({
       cls: "charinfo-share-modal__chips",
-      attr: { role: "group", "aria-label": "그룹 선택" },
+      attr: { role: "group", "aria-label": t("selectGroups") },
     });
     this.paintGroupChips();
 
@@ -401,7 +405,7 @@ export class ShareGalleryModal extends Modal {
     if (archives.length === 0) {
       wrap.createSpan({
         cls: "charinfo-share-modal__chip is-muted",
-        text: "없음",
+        text: t("none"),
       });
       return;
     }
@@ -440,14 +444,14 @@ export class ShareGalleryModal extends Modal {
     if (entries.length === 0) {
       wrap.createSpan({
         cls: "charinfo-share-modal__chip is-muted",
-        text: "없음",
+        text: t("none"),
       });
       return;
     }
     const allOn = entries.every((e) => this.selectedGroups.has(e.key));
     const allBtn = wrap.createEl("button", {
       cls: "charinfo-share-modal__chip" + (allOn ? " is-active" : ""),
-      text: "모두",
+      text: t("all2"),
       attr: { type: "button", "aria-pressed": allOn ? "true" : "false" },
     });
     allBtn.addEventListener("click", () => {
@@ -481,7 +485,7 @@ export class ShareGalleryModal extends Modal {
     if (!this.scopeCountEl) return;
     const n = this.selectedRecords().length;
     this.scopeCountEl.setText(
-      n === 0 ? "선택된 카드가 없어요." : `${n}장 포함`,
+      n === 0 ? t("noCardsSelected") : t("valueCardsIncluded", { arg1: n }),
     );
     if (this.primaryBtn) {
       this.primaryBtn.disabled = this.busy || n === 0;
@@ -490,7 +494,7 @@ export class ShareGalleryModal extends Modal {
   }
 
   private renderAdvancedOptions(root: HTMLElement): void {
-    const imageField = this.renderField(root, "노트 이미지");
+    const imageField = this.renderField(root, t("noteImages"));
     const imageToggle = imageField.createEl("label", {
       cls: "charinfo-share-modal__image-toggle",
     });
@@ -499,14 +503,14 @@ export class ShareGalleryModal extends Modal {
     imageInput.addEventListener("change", () => {
       this.includeNoteImages = imageInput.checked;
     });
-    imageToggle.createSpan({ text: "추가한 이미지도 웹에 표시" });
+    imageToggle.createSpan({ text: t("showAddedImagesOnTheWebToo") });
 
     // Panel header chips are always visible — not buried behind a toggle.
     // (Users need to pick what the shared page shows on both hosted + GitHub.)
-    const field = this.renderField(root, "옆 패널에 보일 정보");
+    const field = this.renderField(root, t("informationInTheSidePanel"));
     this.headerChipsEl = field.createDiv({
       cls: "charinfo-share-modal__chip-groups",
-      attr: { role: "group", "aria-label": "옆 패널 헤더" },
+      attr: { role: "group", "aria-label": t("sidePanelHeadings") },
     });
     this.paintHeaderChips();
     void this.refreshHeaderChips();
@@ -558,7 +562,7 @@ export class ShareGalleryModal extends Modal {
     if (groups.length === 0) {
       root.createSpan({
         cls: "charinfo-share-modal__chip is-muted",
-        text: "헤더 없음",
+        text: t("noHeadings"),
       });
       return;
     }
@@ -566,7 +570,7 @@ export class ShareGalleryModal extends Modal {
     // Primary: one chip per hierarchy group (tap = toggle whole group).
     const primary = root.createDiv({
       cls: "charinfo-share-modal__chips charinfo-share-modal__chips--primary",
-      attr: { role: "group", "aria-label": "정보 그룹" },
+      attr: { role: "group", "aria-label": t("informationGroups") },
     });
 
     for (const group of groups) {
@@ -613,7 +617,7 @@ export class ShareGalleryModal extends Modal {
         cls: "charinfo-share-modal__chips charinfo-share-modal__chips--sub",
         attr: {
           role: "group",
-          "aria-label": `${group.label} 세부`,
+          "aria-label": t("valueDetails", { arg1: group.label }),
         },
       });
       for (const header of group.headers) {
@@ -687,10 +691,10 @@ export class ShareGalleryModal extends Modal {
   }
 
   private renderHostedTtl(root: HTMLElement): void {
-    const field = this.renderField(root, "유지 기간");
+    const field = this.renderField(root, t("lifetime"));
     this.durationRow = field.createDiv({
       cls: "charinfo-share-modal__seg",
-      attr: { role: "group", "aria-label": "링크 유지 기간" },
+      attr: { role: "group", "aria-label": t("linkLifetime") },
     });
     this.paintHostedTtl();
   }
@@ -700,9 +704,9 @@ export class ShareGalleryModal extends Modal {
     if (!row) return;
     row.empty();
     const options: { id: HostedShareTtl; label: string }[] = [
-      { id: "7d", label: "7일" },
-      { id: "30d", label: "30일" },
-      { id: "permanent", label: "1년" },
+      { id: "7d", label: t("7Days") },
+      { id: "30d", label: t("30Days") },
+      { id: "permanent", label: t("1Year") },
     ];
     for (const opt of options) {
       const selected = this.hostedTtl === opt.id;
@@ -737,19 +741,19 @@ export class ShareGalleryModal extends Modal {
         "charinfo-share-modal__section" +
         (ruled ? " charinfo-share-modal__section--ruled" : ""),
     });
-    const linkField = this.renderField(linkSection, "공개 링크");
+    const linkField = this.renderField(linkSection, t("publicLink"));
     this.renderLinkBlock(linkField, lastUrl, { labeled: false });
     if (canManage) {
       const stopBtn = linkSection.createEl("button", {
         cls: "charinfo-share-modal__danger",
-        text: "공유 중지",
+        text: t("stopSharing2"),
         attr: { type: "button" },
       });
       stopBtn.addEventListener("click", () => void this.stopSharing());
     } else {
       linkSection.createDiv({
         cls: "charinfo-share-modal__hint",
-        text: "이 링크는 업데이트할 수 없어요. 위에서 새 링크를 만드세요.",
+        text: t("thisLinkCannotBeUpdatedCreateANew"),
       });
     }
   }
@@ -757,13 +761,13 @@ export class ShareGalleryModal extends Modal {
   /** When GitHub is connected, let the user pick hosted vs GitHub explicitly. */
   private renderHostSwitcher(root: HTMLElement): void {
     if (!isGithubShareConfigured(this.plugin.settings)) return;
-    const field = this.renderField(root, "공유 방식");
+    const field = this.renderField(root, t("sharingMethod"));
     const row = field.createDiv({
       cls: "charinfo-share-modal__seg",
-      attr: { role: "group", "aria-label": "공유 방식" },
+      attr: { role: "group", "aria-label": t("sharingMethod") },
     });
     const options: { id: Panel; label: string }[] = [
-      { id: "hosted", label: "기본 링크" },
+      { id: "hosted", label: t("defaultLink") },
       { id: "github", label: "GitHub" },
     ];
     for (const opt of options) {
@@ -796,18 +800,18 @@ export class ShareGalleryModal extends Modal {
     const other = root.createDiv({
       cls: "charinfo-share-modal__section charinfo-share-modal__section--ruled",
     });
-    const otherField = this.renderField(other, "다른 방법 (선택)");
+    const otherField = this.renderField(other, t("otherMethodsOptional"));
     const gh = otherField.createEl("button", {
       cls: "charinfo-share-modal__alt",
       attr: { type: "button" },
     });
     gh.createDiv({
       cls: "charinfo-share-modal__alt-title",
-      text: "내 GitHub에 연결",
+      text: t("connectMyGithub"),
     });
     gh.createDiv({
       cls: "charinfo-share-modal__alt-desc",
-      text: "내 계정에 고정 주소로 올려 두고 싶을 때 (한 번만 설정)",
+      text: t("forAPermanentAddressUnderYourOwnAccount"),
     });
     gh.addEventListener("click", () => {
       this.sessionUrl = "";
@@ -844,7 +848,7 @@ export class ShareGalleryModal extends Modal {
     if (opts.labeled !== false) {
       block.createDiv({
         cls: "charinfo-share-modal__result-label",
-        text: "공개 링크",
+        text: t("publicLink"),
       });
     }
 
@@ -861,54 +865,54 @@ export class ShareGalleryModal extends Modal {
 
     const copyBtn = row.createEl("button", {
       cls: "charinfo-share-modal__copy",
-      text: "복사",
+      text: t("copy"),
       attr: { type: "button" },
     });
     copyBtn.addEventListener("click", () => void this.copyLink());
   }
 
   private renderGithubConnect(root: HTMLElement): void {
-    this.setTitle("내 GitHub 연결");
+    this.setTitle(t("myGithubConnection"));
     root.createDiv({
       cls: "charinfo-share-modal__lead",
-      text: "내 GitHub에 갤러리 페이지를 올려 두면, 바뀌지 않는 주소로 공유할 수 있어요. 아래는 한 번만 하면 됩니다.",
+      text: t("uploadYourGalleryPageToGithubToShare"),
     });
 
     const steps = root.createDiv({ cls: "charinfo-share-modal__steps" });
     steps.createDiv({
       cls: "charinfo-share-modal__steps-title",
-      text: "이렇게 하세요",
+      text: t("followTheseSteps"),
     });
     const list = steps.createEl("ol", { cls: "charinfo-share-modal__step-list" });
     list.createEl("li", {
-      text: "「GitHub에서 키 만들기」를 눌러 브라우저를 엽니다.",
+      text: t("clickCreateAGithubKeyToOpenYour"),
     });
     list.createEl("li", {
-      text: "초록 버튼 Generate token 을 누릅니다. (public_repo 칸이 이미 체크돼 있으면 그대로 두세요.)",
+      text: t("clickTheGreenGenerateTokenButtonLeavePublic"),
     });
     list.createEl("li", {
-      text: "화면에 나온 긴 글자(키)를 복사한 뒤, 아래 칸에 붙여넣고 「연결하기」를 누릅니다.",
+      text: t("copyTheLongKeyShownOnScreenPaste"),
     });
     steps.createDiv({
       cls: "charinfo-share-modal__steps-note",
-      text: "키는 GitHub가 한 번만 보여 줍니다. 이 앱 설정에만 저장되며, 다른 사람과 나누지 마세요.",
+      text: t("githubShowsTheKeyOnlyOnceItIs"),
     });
 
     const getKey = root.createEl("button", {
       cls: "mod-cta charinfo-share-modal__cta",
-      text: "GitHub에서 키 만들기",
+      text: t("createAGithubKey"),
       attr: { type: "button" },
     });
     getKey.addEventListener("click", () => {
       window.open(githubTokenCreateUrl(), "_blank");
     });
 
-    const tokenField = this.renderField(root, "복사한 키 붙여넣기");
+    const tokenField = this.renderField(root, t("pasteTheCopiedKey"));
     const paste = tokenField.createEl("input", {
       type: "password",
       cls: "charinfo-share-modal__token",
       attr: {
-        placeholder: "여기에 붙여넣기",
+        placeholder: t("pasteHere"),
         autocomplete: "off",
         spellcheck: "false",
       },
@@ -918,13 +922,13 @@ export class ShareGalleryModal extends Modal {
       this.pendingGithubToken = paste.value.trim();
     });
 
-    this.renderPrimaryAction(root, "연결하기", () => void this.saveGithubConnect());
+    this.renderPrimaryAction(root, t("connect"), () => void this.saveGithubConnect());
     this.statusEl = root.createDiv({ cls: "charinfo-share-modal__status" });
 
     const footer = root.createDiv({ cls: "charinfo-share-modal__footer" });
     const back = footer.createEl("button", {
       cls: "charinfo-share-modal__quiet",
-      text: "기본 공유로",
+      text: t("useDefaultSharing"),
       attr: { type: "button" },
     });
     back.addEventListener("click", () => {
@@ -937,7 +941,7 @@ export class ShareGalleryModal extends Modal {
     if (this.busy) return;
     this.busy = true;
     this.setBusyUi(true);
-    this.setStatus("연결 중…");
+    this.setStatus(t("connecting"));
     try {
       const token = this.pendingGithubToken.trim();
       const setup = await setupGithubShareFromToken(token);
@@ -949,17 +953,17 @@ export class ShareGalleryModal extends Modal {
       this.forceReconnect = false;
       new Notice(
         setup.createdRepo
-          ? `연결됐어요. 공유용 저장소도 만들어 두었습니다.\n${setup.repo}`
-          : `연결됐어요 · ${setup.repo}`,
+          ? t("connectedASharingRepositoryWasAlsoCreatedValue", { arg1: setup.repo })
+          : t("connectedValue2", { arg1: setup.repo }),
       );
       this.panel = "github";
       this.hostMode = "github";
       this.onOpen();
     } catch (error) {
       this.setStatus(
-        `연결에 실패했어요: ${error instanceof Error ? error.message : String(error)}`,
+        t("couldNotConnectValue", { arg1: error instanceof Error ? error.message : String(error) }),
       );
-      new Notice("연결에 실패했어요. 키를 다시 확인해 주세요.");
+      new Notice(t("couldNotConnectCheckTheKeyAgain"));
     } finally {
       this.busy = false;
       this.setBusyUi(false);
@@ -967,7 +971,7 @@ export class ShareGalleryModal extends Modal {
   }
 
   private renderGithubPublish(root: HTMLElement): void {
-    this.setTitle("GitHub로 공유");
+    this.setTitle(t("shareViaGithub"));
     this.renderHostSwitcher(root);
     const displayUrl = this.githubShareDisplayUrl();
     const hasPublished =
@@ -978,8 +982,8 @@ export class ShareGalleryModal extends Modal {
     root.createDiv({
       cls: "charinfo-share-modal__lead",
       text: hasPublished
-        ? "같은 GitHub 링크로 내용만 덮어씁니다. 받는 사람 주소를 바꿀 필요 없어요."
-        : "아래 주소가 고정 링크예요. 「GitHub에 올리기」로 바로 게시할 수 있어요.",
+        ? t("updatesTheContentAtTheSameGithubLink")
+        : t("theAddressBelowIsPermanentClickUploadTo"),
     });
 
     // Always show scope + panel chips on gallery share (and on character share
@@ -990,15 +994,15 @@ export class ShareGalleryModal extends Modal {
     this.renderAdvancedOptions(root);
 
     if (displayUrl) {
-      const linkField = this.renderField(root, "공개 링크");
+      const linkField = this.renderField(root, t("publicLink"));
       this.renderLinkBlock(linkField, displayUrl, { labeled: false });
       this.renderPrimaryAction(
         root,
-        hasPublished ? "이 링크 업데이트" : "GitHub에 올리기",
+        hasPublished ? t("updateThisLink") : t("uploadToGithub"),
         () => void this.publish(),
       );
     } else {
-      this.renderPrimaryAction(root, "GitHub에 올리기", () => void this.publish());
+      this.renderPrimaryAction(root, t("uploadToGithub"), () => void this.publish());
     }
 
     this.statusEl = root.createDiv({ cls: "charinfo-share-modal__status" });
@@ -1006,7 +1010,7 @@ export class ShareGalleryModal extends Modal {
     const footer = root.createDiv({ cls: "charinfo-share-modal__footer" });
     const reconnect = footer.createEl("button", {
       cls: "charinfo-share-modal__quiet",
-      text: "계정 다시 연결",
+      text: t("reconnectAccount"),
       attr: { type: "button" },
     });
     reconnect.addEventListener("click", () => {
@@ -1015,7 +1019,7 @@ export class ShareGalleryModal extends Modal {
     });
     const back = footer.createEl("button", {
       cls: "charinfo-share-modal__quiet",
-      text: "기본 공유로",
+      text: t("useDefaultSharing"),
       attr: { type: "button" },
     });
     back.addEventListener("click", () => {
@@ -1049,11 +1053,11 @@ export class ShareGalleryModal extends Modal {
   private async copyLink(): Promise<void> {
     const url = this.linkEl?.value.trim();
     if (!url) {
-      new Notice("아직 링크가 없어요.");
+      new Notice(t("thereIsNoLinkYet"));
       return;
     }
     const ok = await copyTextToClipboard(url);
-    new Notice(ok ? "링크 복사됨" : "복사 실패");
+    new Notice(ok ? t("linkCopied2") : t("copyFailed"));
   }
 
   private predictedGithubUrl(): string {
@@ -1077,7 +1081,7 @@ export class ShareGalleryModal extends Modal {
 
   private async buildHtml(): Promise<string> {
     const selected = this.selectedRecords();
-    const genre = this.shareTitle();
+    const genre = this.shareTitle("share");
     const present = [
       ...new Set(selected.map((r) => r.그룹.trim()).filter(Boolean)),
     ];
@@ -1095,7 +1099,7 @@ export class ShareGalleryModal extends Modal {
     // The source page's axis, not the global default.
     const axis = getFilterAxisForPage(this.plugin.settings, scope);
     const payload = await buildSharePayload(this.app, selected, {
-      title: this.shareTitle(),
+      title: this.shareTitle("share"),
       genre,
       chipFilter: this.plugin.settings.chipFilter,
       tagVocab: this.plugin.settings.tagVocab,
@@ -1126,7 +1130,7 @@ export class ShareGalleryModal extends Modal {
     if (this.busy) return;
     const selected = this.selectedRecords();
     if (selected.length === 0) {
-      new Notice("공유할 카드가 없어요. 아카이브·그룹을 선택하세요.");
+      new Notice(t("thereAreNoCardsToShareSelectArchives"));
       return;
     }
     const update = Boolean(opts.update);
@@ -1138,13 +1142,13 @@ export class ShareGalleryModal extends Modal {
         !pageShare.manageKey.trim() ||
         !hostedShareBaseFromUrl(pageShare.url)
       ) {
-        new Notice("업데이트할 링크 열쇠가 없어요. 새 링크를 만드세요.");
+        new Notice(t("theKeyToUpdateThisLinkIsMissing"));
         return;
       }
     }
     this.busy = true;
     this.setBusyUi(true);
-    this.setStatus(update ? "업데이트 중…" : "만드는 중…");
+    this.setStatus(update ? t("updating") : t("creating"));
     try {
       const html = await this.buildHtml();
       let url: string;
@@ -1152,7 +1156,7 @@ export class ShareGalleryModal extends Modal {
 
       if (this.hostMode === "hosted") {
         this.setStatus(
-          `${update ? "업데이트" : "올리는 중"}… ${Math.round(html.length / 1024)} KB`,
+          `${update ? t("updating2") : t("uploading")}… ${Math.round(html.length / 1024)} KB`,
         );
         const targetBaseUrl = update
           ? hostedShareBaseFromUrl(pageShare!.url)
@@ -1192,20 +1196,20 @@ export class ShareGalleryModal extends Modal {
         });
         const ttlLabel =
           result.ttl === "permanent"
-            ? "1년"
+            ? t("1Year")
             : result.ttl === "7d"
-              ? "7일"
-              : "30일";
+              ? t("7Days")
+              : t("30Days");
         note = update
-          ? "같은 링크 내용이 갱신됐어요."
-          : `링크 생성됨 · ${ttlLabel} 유지.`;
+          ? t("contentUpdatedAtTheSameLink")
+          : t("linkCreatedAvailableForValue", { arg1: ttlLabel });
       } else {
         if (!isGithubShareConfigured(this.plugin.settings)) {
-          throw new Error("먼저 GitHub를 연결하세요.");
+          throw new Error(t("connectGithubFirst"));
         }
         const slug = slugifyLinkName(this.linkSlug);
         const path = githubPathForSlug(slug);
-        this.setStatus(`올리는 중… ${Math.round(html.length / 1024)} KB`);
+        this.setStatus(t("uploadingValueKb", { arg1: Math.round(html.length / 1024) }));
         const result = await publishToGithubPages(html, {
           token: this.plugin.settings.webShareGithubToken,
           repo: this.plugin.settings.webShareGithubRepo,
@@ -1216,8 +1220,8 @@ export class ShareGalleryModal extends Modal {
         this.plugin.settings.webShareLinkSlug = slug;
         this.plugin.settings.webShareGithubPath = path;
         note = result.updated
-          ? `「${slug}」 갱신됨. 약 1분 후 새로고침.`
-          : `「${slug}」 게시됨.`;
+          ? t("valueUpdatedRefreshInAboutAMinute", { arg1: slug })
+          : t("valuePublished", { arg1: slug });
       }
 
       this.sessionUrl = url;
@@ -1232,23 +1236,23 @@ export class ShareGalleryModal extends Modal {
       await this.plugin.saveSettings();
 
       const ok = await copyTextToClipboard(url);
-      new Notice(ok ? (update ? "업데이트됨 · 링크 복사" : "링크 복사됨") : "게시 완료");
+      new Notice(ok ? (update ? t("updatedCopyLink") : t("linkCopied2")) : t("published"));
 
       if (this.panel === "hosted" || this.panel === "github") {
         this.busy = false;
         this.onOpen();
-        this.setStatus(ok ? `${note} 복사됨.` : note);
+        this.setStatus(ok ? t("valueCopied", { arg1: note }) : note);
       } else {
         this.contentEl.querySelector(".charinfo-share-modal__result")?.remove();
         this.renderLinkBlock(this.contentEl, url);
-        this.setStatus(ok ? `${note} 복사됨.` : note);
+        this.setStatus(ok ? t("valueCopied", { arg1: note }) : note);
       }
     } catch (error) {
       console.error(error);
       this.setStatus(
-        `실패: ${error instanceof Error ? error.message : String(error)}`,
+        t("failedValue", { arg1: error instanceof Error ? error.message : String(error) }),
       );
-      new Notice(update ? "업데이트 실패" : "웹 게시 실패");
+      new Notice(update ? t("updateFailed") : t("webPublishingFailed"));
     } finally {
       this.busy = false;
       this.setBusyUi(false);
@@ -1263,12 +1267,12 @@ export class ShareGalleryModal extends Modal {
     const manageKey = pageShare?.manageKey.trim() ?? "";
     const targetBaseUrl = hostedShareBaseFromUrl(pageShare?.url ?? "");
     if (!id || !manageKey || !targetBaseUrl) {
-      new Notice("중지할 링크 열쇠가 없어요.");
+      new Notice(t("theKeyToStopSharingThisLinkIs"));
       return;
     }
     this.busy = true;
     this.setBusyUi(true);
-    this.setStatus("공유 중지 중…");
+    this.setStatus(t("stoppingSharing"));
     try {
       await deleteHostedShare({
         baseUrl: targetBaseUrl,
@@ -1284,16 +1288,16 @@ export class ShareGalleryModal extends Modal {
       clearWebShareForPage(this.plugin.settings, this.pageSharePath());
       clearLastShareIfSameUrl(this.plugin.settings, pageShare?.url ?? "");
       await this.plugin.saveSettings();
-      new Notice("공유 중지됨 · 이미 열린 사본은 잠시 남을 수 있어요.");
+      new Notice(t("sharingStoppedCopiesAlreadyOpenMayRemainBriefly2"));
       this.busy = false;
       this.onOpen();
-      this.setStatus("공유가 중지됐어요. 캐시된 사본은 잠시 남을 수 있어요.");
+      this.setStatus(t("sharingStoppedCachedCopiesMayRemainBriefly"));
     } catch (error) {
       console.error(error);
       this.setStatus(
-        `실패: ${error instanceof Error ? error.message : String(error)}`,
+        t("failedValue", { arg1: error instanceof Error ? error.message : String(error) }),
       );
-      new Notice("공유 중지 실패");
+      new Notice(t("couldNotStopSharing"));
     } finally {
       this.busy = false;
       this.setBusyUi(false);
