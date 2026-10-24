@@ -9,6 +9,7 @@ Each card shows a cover, status, relationships, body text, and prompts. Open the
 ## What it does
 
 - **Gallery** — cards grouped by archive (top name) and group (row title).
+- **Fold groups** — click the count next to a group name to fold or unfold it, in read or edit mode. The toolbar button folds or unfolds every group. Folded groups stay folded next time.
 - **Cards** — cover and properties at a glance. Click a card to open the peek panel.
 - **Properties** — status, relation, bond, affiliation, tags. Rename visible labels in gallery edit → **Property manager** (book icon).
 - **Filters** — chips at the top (On / Off and other values).
