@@ -32,6 +32,9 @@ export interface ViewSettingsPopoverHandlers {
   onManageAttributes: () => void;
   batchAction: () => BatchActionDescriptor;
   activateBatchAction: () => void;
+  /** Fold-all row for the compact tier; null when there is no named group. */
+  foldAllAction: () => { label: string; icon: string } | null;
+  activateFoldAll: () => void;
   refresh: () => Promise<void>;
   isRefreshPending: () => boolean;
   onChange: () => void;
@@ -266,6 +269,15 @@ export class ViewSettingsPopover {
           pressed: descriptor.pressed,
           classes: descriptor.classes,
           activate: this.handlers.activateBatchAction,
+        });
+      }
+      const foldAll = this.handlers.foldAllAction();
+      if (foldAll) {
+        rows.push({
+          label: foldAll.label,
+          icon: foldAll.icon,
+          disabled: false,
+          activate: this.handlers.activateFoldAll,
         });
       }
     }

@@ -56,6 +56,10 @@ import {
   normalizeDeclaredArchives,
   type DeclaredArchive,
 } from "./data/archiveRegistry";
+import {
+  normalizeCollapsedGroups,
+  type CollapsedGroup,
+} from "./data/collapsedGroups";
 
 /** Vault-relative path normalize (no Obsidian import in settings). */
 function normalizePath(path: string): string {
@@ -234,6 +238,8 @@ export interface CharinfoSettings {
    * with no card; every other archive is still inferred from its cards.
    */
   declaredArchives: DeclaredArchive[];
+  /** Folded group sections per `(library, archive, group)`; absent = open. */
+  collapsedGroups: CollapsedGroup[];
   /**
    * Ephemeral UI per gallery note path (active archive when unpinned, status filter).
    */
@@ -371,6 +377,7 @@ export const DEFAULT_SETTINGS: CharinfoSettings = {
   },
   groupOrderByLibrary: {},
   declaredArchives: [],
+  collapsedGroups: [],
   galleryPageState: {},
   cardProperties: DEFAULT_CARD_PROPERTIES.map((p) => ({ ...p })),
   groupSchemas: [],
@@ -721,6 +728,9 @@ export function migrateSettings(
     // No backfill: an archive inferred from cards stays inferred.
     declaredArchives: normalizeDeclaredArchives(
       (src as { declaredArchives?: unknown }).declaredArchives,
+    ),
+    collapsedGroups: normalizeCollapsedGroups(
+      (src as { collapsedGroups?: unknown }).collapsedGroups,
     ),
     galleryPageState,
     imageUploadDestination,

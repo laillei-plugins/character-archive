@@ -59,7 +59,7 @@ test("fresh installs and a different plugin version do not open this note", () =
 
 test("stored seen versions are normalized before comparison", () => {
   assert.equal(normalizeSeenUpdateNotesVersion(null), "");
-  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.28 "), "0.1.28");
+  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.29 "), "0.1.29");
   assert.equal(normalizeSeenUpdateNotesVersion(18), "");
 });
 
@@ -71,14 +71,8 @@ test("one update note keeps Korean before the equivalent English section", () =>
   const korean = UPDATE_NOTES_MARKDOWN.indexOf("## 업데이트 내용");
   const english = UPDATE_NOTES_MARKDOWN.indexOf("## What's new");
   assert.ok(korean >= 0 && english > korean);
-  assert.match(
-    UPDATE_NOTES_MARKDOWN,
-    /새 아카이브 만들기/,
-  );
-  assert.match(
-    UPDATE_NOTES_MARKDOWN,
-    /Create archive/,
-  );
+  assert.match(UPDATE_NOTES_MARKDOWN, /모든 그룹 접기/);
+  assert.match(UPDATE_NOTES_MARKDOWN, /Fold all/);
 });
 
 test("startup opens an existing note without overwriting it, then records seen", () => {

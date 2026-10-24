@@ -2042,6 +2042,111 @@ button.charinfo-gallery__genre:hover,
   color: var(--charinfo-muted);
 }
 
+/*
+ * Count + chevron pill: the group's fold control, after the name.
+ * Scoped under the title row so Obsidian's `button:not(.clickable-icon)`
+ * fill and shadow never reach it. One chevron rotates: right = folded,
+ * down = open, so the glyph keeps the same centre in both states.
+ */
+.charinfo-genre__title-row .charinfo-genre__fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  height: 20px;
+  min-height: 20px;
+  margin: 0;
+  padding: 0 5px 0 7px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--charinfo-muted);
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.charinfo-genre__title-row .charinfo-genre__fold:hover {
+  background: var(--background-modifier-hover);
+  box-shadow: none;
+  color: var(--text-normal);
+}
+
+.charinfo-genre__title-row .charinfo-genre__fold:focus-visible {
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+
+.charinfo-genre__title-row .charinfo-genre__fold.is-collapsed {
+  border-color: var(--background-modifier-border-hover);
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.charinfo-genre__fold .charinfo-genre__count {
+  display: block;
+  font-size: inherit;
+  line-height: 1;
+  color: inherit;
+}
+
+.charinfo-genre__fold-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  transform: rotate(90deg);
+  transition: transform 120ms ease-out;
+}
+
+/*
+ * The right-pointing glyph is half as wide, so its box narrows (the svg
+ * stays centred and overflows evenly): both gaps match the open state.
+ */
+.charinfo-genre__fold.is-collapsed .charinfo-genre__fold-icon {
+  width: 9px;
+  transform: none;
+}
+
+.charinfo-genre__fold-icon svg {
+  display: block;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.25px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .charinfo-genre__fold-icon {
+    transition: none;
+  }
+}
+
+.charinfo-gallery.is-narrow .charinfo-genre__title-row .charinfo-genre__fold {
+  height: 28px;
+  min-height: 28px;
+  padding-inline: 10px 8px;
+}
+
+.charinfo-gallery__fold-all.is-empty {
+  display: none;
+}
+
+.charinfo-genre.is-collapsed {
+  margin-bottom: var(--charinfo-space-base);
+}
+
+.charinfo-genre.is-collapsed .charinfo-genre__header {
+  margin-bottom: 0;
+}
+
+.charinfo-genre.is-collapsed > .charinfo-grid {
+  display: none;
+}
+
 .charinfo-genre__rename {
   flex: 0 0 var(--size-4-8, 32px);
   align-self: center;

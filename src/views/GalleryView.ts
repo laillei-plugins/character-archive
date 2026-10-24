@@ -204,6 +204,7 @@ import {
   groupRenameSuccessMessage,
   normalizeRenameInput,
 } from "../data/groupRename";
+import { isGroupCollapsed, setGroupCollapsed } from "../data/collapsedGroups";
 
 export const VIEW_TYPE_CHARINFO_GALLERY = "charinfo-gallery";
 
@@ -282,6 +283,7 @@ export class GalleryView extends FileView {
   editMode = false;
   searchQuery = "";
   private searchExpanded = false;
+  private foldAllBtn: HTMLElement | null = null;
   records: CharacterRecord[] = [];
   selected: CharacterRecord | null = null;
   private searchInput: HTMLInputElement | null = null;
@@ -3696,6 +3698,17 @@ export class GalleryView extends FileView {
       this.openAttrManage();
     });
 
+    // Compact width moves it into 보기 with 공유 and 속성 관리.
+    this.foldAllBtn = actions.createEl("button", {
+      cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn charinfo-gallery__fold-all",
+      attr: { type: "button", "data-fold": "compact" },
+    });
+    this.paintFoldAll();
+    this.foldAllBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      void this.toggleAllGroupsCollapsed();
+    });
+
     const viewBtn = actions.createEl("button", {
       cls: "clickable-icon charinfo-icon-btn charinfo-gallery__icon-btn",
       attr: {
@@ -3758,6 +3771,11 @@ export class GalleryView extends FileView {
       },
       batchAction: () => this.batchActionDescriptor(),
       activateBatchAction: () => this.activateBatchAction(),
+      foldAllAction: () => this.foldAllState(),
+      activateFoldAll: () => {
+        this.viewMenu?.close();
+        void this.toggleAllGroupsCollapsed();
+      },
       refresh: () => this.requestManualRefresh(),
       isRefreshPending: () => this.refreshFlight.pending,
       onChange: () => {
@@ -3970,6 +3988,7 @@ export class GalleryView extends FileView {
       if (!rank.has(route)) rank.set(route, index);
     });
     const groups = this.store.groupByGroup(records, routeOrder.filter(Boolean));
+    const library = this.pageLibrary();
     const sections: { group: string; list: CharacterRecord[] }[] = [];
     const rendered = new Set<string>();
     for (const list of groups.values()) {
@@ -3994,6 +4013,13 @@ export class GalleryView extends FileView {
 
       if (rawGroup) {
         section.dataset.id = rawGroup;
+        const collapsed = isGroupCollapsed(
+          this.plugin.settings,
+          library,
+          genre,
+          rawGroup,
+        );
+        section.toggleClass("is-collapsed", collapsed);
         const heading = section.createDiv({ cls: "charinfo-genre__header" });
         const titleRow = heading.createDiv({ cls: "charinfo-genre__title-row" });
 
@@ -4012,9 +4038,24 @@ export class GalleryView extends FileView {
           text: rawGroup,
           attr: { title: rawGroup },
         });
-        titleRow.createSpan({
+        // The count is the fold control: one pill, so the name keeps its edge.
+        const fold = titleRow.createEl("button", {
+          cls: "charinfo-genre__fold",
+          attr: { type: "button" },
+        });
+        fold.createSpan({
           cls: "charinfo-genre__count",
           text: String(list.length),
+        });
+        fold.createSpan({
+          cls: "charinfo-genre__fold-icon",
+          attr: { "aria-hidden": "true" },
+        });
+        this.paintGroupFold(fold, rawGroup, collapsed);
+        fold.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          void this.toggleGroupCollapsed(section, fold, genre, rawGroup);
         });
 
         if (this.cardEditActive) {
@@ -4062,6 +4103,101 @@ export class GalleryView extends FileView {
         this.renderAddCard(grid, rawGroup);
       }
     }
+    this.paintFoldAll();
+  }
+
+  /** Chevron points down while open, right while folded. */
+  private paintGroupFold(
+    button: HTMLElement,
+    group: string,
+    collapsed: boolean,
+  ): void {
+    const label = collapsed ? `「${group}」 그룹 펼치기` : `「${group}」 그룹 접기`;
+    button.setAttribute("aria-expanded", String(!collapsed));
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", collapsed ? "펼치기" : "접기");
+    button.toggleClass("is-collapsed", collapsed);
+    const icon = button.querySelector(".charinfo-genre__fold-icon");
+    if (icon instanceof HTMLElement) {
+      // One glyph; CSS rotates it down while the group is open.
+      if (!icon.firstChild) setIcon(icon, "chevron-right");
+    }
+  }
+
+  /** Folds in place (no re-render) and remembers it for the next open. */
+  private async toggleGroupCollapsed(
+    section: HTMLElement,
+    button: HTMLElement,
+    archive: string,
+    group: string,
+  ): Promise<void> {
+    const collapsed = !section.hasClass("is-collapsed");
+    section.toggleClass("is-collapsed", collapsed);
+    this.paintGroupFold(button, group, collapsed);
+    setGroupCollapsed(
+      this.plugin.settings,
+      this.pageLibrary(),
+      archive,
+      group,
+      collapsed,
+    );
+    this.paintFoldAll();
+    await this.plugin.saveSettings();
+  }
+
+  /** Named groups this gallery can show: the fold-all target set. */
+  private foldableGroups(): string[] {
+    const groups = this.observedGroups().filter(Boolean);
+    if (this.editMode) {
+      for (const group of this.emptyPersistedGroups()) {
+        if (group && !groups.includes(group)) groups.push(group);
+      }
+    }
+    return groups;
+  }
+
+  /** Fold all while any group is open; unfold all once every one is folded. */
+  private foldAllState(): { allCollapsed: boolean; label: string; icon: string } | null {
+    const groups = this.foldableGroups();
+    if (groups.length === 0) return null;
+    const archive = this.activeArchive().trim();
+    const library = this.pageLibrary();
+    const allCollapsed = groups.every((group) =>
+      isGroupCollapsed(this.plugin.settings, library, archive, group),
+    );
+    return allCollapsed
+      ? { allCollapsed, label: "모든 그룹 펼치기", icon: "chevrons-up-down" }
+      : { allCollapsed, label: "모든 그룹 접기", icon: "chevrons-down-up" };
+  }
+
+  private paintFoldAll(): void {
+    const button = this.foldAllBtn;
+    if (!button?.isConnected) return;
+    const state = this.foldAllState();
+    button.toggleClass("is-empty", !state);
+    if (!state) return;
+    button.setAttribute("aria-label", state.label);
+    button.setAttribute("title", state.label);
+    setIcon(button, state.icon);
+  }
+
+  private async toggleAllGroupsCollapsed(): Promise<void> {
+    const state = this.foldAllState();
+    if (!state) return;
+    const archive = this.activeArchive().trim();
+    const library = this.pageLibrary();
+    for (const group of this.foldableGroups()) {
+      setGroupCollapsed(
+        this.plugin.settings,
+        library,
+        archive,
+        group,
+        !state.allCollapsed,
+      );
+    }
+    this.renderBody();
+    this.paintFoldAll();
+    await this.plugin.saveSettings();
   }
 
   private openGroupContextMenu(
