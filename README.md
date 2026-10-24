@@ -9,7 +9,8 @@ Each card shows a cover, status, relationships, body text, and prompts. Open the
 ## What it does
 
 - **Gallery** — cards grouped by archive (top name) and group (row title).
-- **Fold groups** — click the count next to a group name to fold or unfold it, in read or edit mode. The toolbar button folds or unfolds every group. Folded groups stay folded next time.
+- **Fold groups** — click the count next to a group name to fold or unfold it, in read or edit mode. The ⇕ icon at the right end of the first group's row folds or unfolds every group. Folded groups stay folded next time.
+- **Language** — English or 한국어 for buttons, menus, dialogs, settings and built-in field names: **Settings → Community plugins → Character Archive → Language / 언어** (first row). Notes and property names never change. Section headings inside notes, the new-character template and the Web share page stay Korean for now.
 - **Cards** — cover and properties at a glance. Click a card to open the peek panel.
 - **Properties** — status, relation, bond, affiliation, tags. Rename visible labels in gallery edit → **Property manager** (book icon).
 - **Filters** — chips at the top (On / Off and other values).
@@ -41,16 +42,16 @@ Embed the gallery on any note:
 
 ### Command palette names
 
-The plugin UI is currently Korean-labeled. The palette has two commands:
+The palette has two commands. Their names follow the **Language / 언어** setting:
 
-| English (this README) | In Obsidian |
+| English | 한국어 |
 | --- | --- |
-| Open last-used gallery | 갤러리 열기 |
+| Open gallery | 갤러리 열기 |
 | Toggle gallery edit mode | 갤러리 편집 켜기 / 끄기 |
 
-The edit toggle acts on the gallery you are in. Everything else lives in the gallery itself: add a card and create an archive in edit mode, share with the globe button, and make another gallery from the tab's **More options** menu (**새 갤러리 만들기**).
+The edit toggle acts on the gallery you are in. Everything else lives in the gallery itself: add a card and create an archive in edit mode, share with the globe button, and make another gallery from the tab's **More options** menu (**Create new gallery** / **새 갤러리 만들기**).
 
-Starter sample paths may use Korean names (`예시`, `첫 카드`). Section headings in the bundled template are also Korean.
+Starter sample paths use Korean names (`예시`, `첫 카드`). Section headings in the bundled template are Korean in both languages, because the gallery finds note sections by those headings.
 
 ## Install
 
