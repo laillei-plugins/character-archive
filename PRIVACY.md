@@ -2,6 +2,8 @@
 
 Character Archive is local-first. Ordinary gallery viewing, editing, filtering, grouping, and property management read and write files in your Obsidian vault. The plugin does not add analytics or telemetry.
 
+To skip unchanged notes when Obsidian starts, the plugin also keeps a small per-device record of checked note paths, file dates and sizes in Obsidian's local storage. That record stays on the device; it is not written to the vault or synced.
+
 ## When data leaves your device
 
 Network activity is limited to features you explicitly use:
