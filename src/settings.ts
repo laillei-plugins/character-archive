@@ -51,7 +51,6 @@ import {
   normalizeLastOpenedGalleryPath,
   remapLastOpenedGalleryPath,
 } from "./ui/libraryFolderOpen";
-import { normalizeSchemaScanCache, type SchemaScanCache } from "./data/schemaScanCache";
 import {
   declareArchive,
   normalizeDeclaredArchives,
@@ -186,8 +185,6 @@ export interface WebShareLastState {
 export interface CharinfoSettings {
   /** UI display only; resolved once on first load and persisted. */
   language: Language;
-  /** Successful per-note schema passes; lets routine app starts skip unchanged notes. */
-  schemaScanCache: SchemaScanCache;
   /** Latest bundled update note successfully opened, or silently seeded on install. */
   lastOpenedUpdateNotesVersion: string;
   /** Last gallery note the user actually opened. Empty = fall back to libraryFolder. */
@@ -363,7 +360,6 @@ export interface CharinfoSettings {
 
 export const DEFAULT_SETTINGS: CharinfoSettings = {
   language: "en",
-  schemaScanCache: { signature: "", files: {} },
   lastOpenedUpdateNotesVersion: "",
   lastOpenedGalleryPath: "",
   libraryFolder: "Character Archive",
@@ -603,7 +599,9 @@ export function migrateSettings(
   raw?: Partial<CharinfoSettings> | null,
   readDisplayLanguage: () => unknown = () => null,
 ): CharinfoSettings {
-  const src = (raw ?? {}) as Partial<CharinfoSettings>;
+  // Discard the old synced device cache in memory; the next normal save drops it.
+  const { schemaScanCache: _legacySchemaScanCache, ...src } = (raw ?? {}) as
+    Partial<CharinfoSettings> & { schemaScanCache?: unknown };
   let activeGenre =
     typeof src.activeGenre === "string" ? src.activeGenre.trim() : "";
   // Legacy storage label → current archive name
@@ -717,9 +715,6 @@ export function migrateSettings(
     ...DEFAULT_SETTINGS,
     ...src,
     language: resolveLanguage(raw, readDisplayLanguage),
-    schemaScanCache: normalizeSchemaScanCache(
-      (src as { schemaScanCache?: unknown }).schemaScanCache,
-    ),
     lastOpenedUpdateNotesVersion: normalizeSeenUpdateNotesVersion(
       src.lastOpenedUpdateNotesVersion,
     ),

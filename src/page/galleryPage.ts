@@ -320,6 +320,7 @@ export async function fileHasGalleryFrontmatter(
   plugin: CharinfoPlugin,
   file: TFile,
 ): Promise<boolean> {
+  if (file.extension !== "md") return false;
   if (isGalleryPage(file, plugin)) return true;
   const cache = plugin.app.metadataCache.getFileCache(file);
   if (cache) return cache.frontmatter?.charinfo === "gallery";

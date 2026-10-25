@@ -19,7 +19,14 @@ import {
   type CharinfoSettings,
 } from "./settings";
 import { CharacterStore } from "./data/CharacterStore";
-import { fileFingerprint, isStableSchemaScan, needsSchemaScan } from "./data/schemaScanCache";
+import {
+  fileFingerprint,
+  isStableSchemaScan,
+  loadDeviceSchemaScanCache,
+  needsSchemaScan,
+  saveDeviceSchemaScanCache,
+  type SchemaScanCache,
+} from "./data/schemaScanCache";
 import { healCollapsedImageEmbeds, healCharacterCardFields, healNaiPromptEmphasis, rewriteLibraryPathPrefix } from "./data/images";
 import {
   normalizeFolderPath,
@@ -159,6 +166,8 @@ export default class CharinfoPlugin extends Plugin {
   private schemaScanPending = new Set<string>();
   private schemaOutcomes = new Map<string, SchemaOutcome>();
   private schemaScanChain: Promise<void> = Promise.resolve();
+  private schemaScanCache: SchemaScanCache = { signature: "", files: {} };
+  private startupSchemaScanTimer: number | null = null;
   private knownLibraryFolder = "";
   private unloaded = false;
   /**
@@ -183,6 +192,7 @@ export default class CharinfoPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    this.schemaScanCache = loadDeviceSchemaScanCache(this.app);
     this.knownLibraryFolder = this.defaultLibraryRoot();
     // Coordinator + events only. The archive scan waits for layout ready.
     this.refreshSchemaRoots();
@@ -225,7 +235,15 @@ export default class CharinfoPlugin extends Plugin {
       // one non-blocking sequential archive scan per discovered root, with
       // zero gallery leaves open. Roots come from the metadata cache, which is
       // only trustworthy now — recompute before scanning.
-      this.refreshSchemaRoots({ scanNew: true });
+      // Mobile: let Obsidian and other plugins finish their own indexing first.
+      if (Platform.isMobile) {
+        this.startupSchemaScanTimer = window.setTimeout(() => {
+          this.startupSchemaScanTimer = null;
+          if (!this.unloaded) this.refreshSchemaRoots({ scanNew: true });
+        }, 3000);
+      } else {
+        this.refreshSchemaRoots({ scanNew: true });
+      }
     });
 
     const ribbon = this.addRibbonIcon("layout-grid", t("openGallery"), () => {
@@ -275,8 +293,10 @@ export default class CharinfoPlugin extends Plugin {
     }));
 
     this.registerEvent(
-      this.app.metadataCache.on("changed", (file) => {
-        void this.observeCharacterNameProperty(file);
+      this.app.metadataCache.on("changed", (file, _data, cache) => {
+        if (String(cache?.frontmatter?.kind ?? "").trim() === "character") {
+          void this.observeCharacterNameProperty(file);
+        }
         // A gallery note may have just repointed `library` — new root, new scan.
         if (isGalleryPage(file, this)) this.refreshSchemaRoots({ scanNew: true });
         if (!this.fileTouchesAnyOpenGallery(file.path)) return;
@@ -639,7 +659,7 @@ export default class CharinfoPlugin extends Plugin {
     if (this.unloaded) return;
     this.identityRoots = listGalleryLibraryIdentities(this);
     this.schemaRoots = dedupeOverlappingRoots(this.identityRoots);
-    if (!opts?.scanNew) return;
+    if (!opts?.scanNew || this.startupSchemaScanTimer !== null) return;
     const fresh: string[] = [];
     for (const root of this.schemaRoots) {
       if (this.scannedScanRoots.has(root)) continue;
@@ -681,8 +701,9 @@ export default class CharinfoPlugin extends Plugin {
   /**
    * Sequential archive scan — one note at a time through the same lane, so a
    * concurrent edit on a scanned path can never race the scan's own write.
-   * Successful file fingerprints persist; routine mobile launches only read
-   * notes changed since the last completed pass.
+   * Successful file fingerprints persist per device (local storage, never the
+   * synced data.json — mtimes differ between devices); routine launches only
+   * read notes changed since the last completed pass.
    *
    * The tally is console diagnostics; edits made while the scan runs count
    * toward it too, which is fine — nothing reads these numbers back.
@@ -695,7 +716,7 @@ export default class CharinfoPlugin extends Plugin {
       [...this.identityRoots].sort(),
       this.settings.groupSchemas,
     ]);
-    const stored = this.settings.schemaScanCache;
+    const stored = this.schemaScanCache;
     const files = stored.signature === signature ? { ...stored.files } : {};
     let cacheChanged = stored.signature !== signature;
 
@@ -761,9 +782,8 @@ export default class CharinfoPlugin extends Plugin {
       cacheChanged = true;
     }
     if (cacheChanged && !this.unloaded) {
-      await this.commitSettings((settings) => {
-        settings.schemaScanCache = { signature, files };
-      });
+      this.schemaScanCache = { signature, files };
+      saveDeviceSchemaScanCache(this.app, this.schemaScanCache);
     }
     console.info(
       `[charinfo] 속성 스캔 · 폴더 ${roots.join(", ")} · 확인 ${tally.scanned} · 보정 ${tally.patched} · YAML 손상 ${tally.malformed} · 실패 ${tally.failed}`,
@@ -791,6 +811,10 @@ export default class CharinfoPlugin extends Plugin {
     // Cancel queued work first: a stale timer after reload would fire a Notice
     // (and a write) for a plugin instance that no longer owns the vault.
     this.unloaded = true;
+    if (this.startupSchemaScanTimer !== null) {
+      window.clearTimeout(this.startupSchemaScanTimer);
+      this.startupSchemaScanTimer = null;
+    }
     for (const timer of this.noteChangeTimers.values()) {
       window.clearTimeout(timer);
     }
@@ -847,17 +871,20 @@ export default class CharinfoPlugin extends Plugin {
     // eslint-disable-next-line @typescript-eslint/no-this-alias -- leaf hook needs the plugin instance
     const plugin = this;
 
-    proto.openFile = async function (
+    let active = true;
+    const wrapper: typeof proto.openFile = async function (
       this: WorkspaceLeaf,
       file,
       openState,
     ) {
+      if (!active || plugin.unloaded) return original.call(this, file, openState);
       try {
         if (
           file instanceof TFile &&
           !plugin.allowMarkdownOnce.has(file.path) &&
           !plugin.isSidebarLeaf(this) &&
-          (await fileHasGalleryFrontmatter(plugin, file))
+          (await fileHasGalleryFrontmatter(plugin, file)) &&
+          active && !plugin.unloaded
         ) {
           await this.setViewState(
             {
@@ -869,7 +896,7 @@ export default class CharinfoPlugin extends Plugin {
           );
           return;
         }
-        if (file instanceof TFile) {
+        if (active && !plugin.unloaded && file instanceof TFile) {
           plugin.allowMarkdownOnce.delete(file.path);
         }
       } catch (error) {
@@ -877,9 +904,11 @@ export default class CharinfoPlugin extends Plugin {
       }
       return original.call(this, file, openState);
     };
+    proto.openFile = wrapper;
 
     this.register(() => {
-      proto.openFile = original;
+      active = false;
+      if (proto.openFile === wrapper) proto.openFile = original;
       plugin.openFileHookInstalled = false;
     });
   }
@@ -920,13 +949,14 @@ export default class CharinfoPlugin extends Plugin {
         const title = target.closest(".nav-folder-title");
         const folderPath =
           title instanceof HTMLElement ? title.getAttribute("data-path") : null;
-        const clicked = folderPath ? normalizePath(folderPath) : null;
+        if (!folderPath) return;
+        const clicked = normalizePath(folderPath);
         const kind = classifyLibraryFolderClick({
           isChevron: Boolean(target.closest(LIBRARY_FOLDER_CHEVRON_SELECTOR)),
           folderPath: clicked,
           libraryPaths: listGalleryLibraryIdentities(this),
         });
-        if (kind !== "title" || !clicked) return;
+        if (kind !== "title") return;
 
         event.preventDefault();
         event.stopPropagation();

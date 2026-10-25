@@ -1,4 +1,4 @@
-export const UPDATE_NOTES_VERSION = "0.1.30";
+export const UPDATE_NOTES_VERSION = "0.1.31";
 
 export function normalizeSeenUpdateNotesVersion(raw: unknown): string {
   return typeof raw === "string" ? raw.trim() : "";
@@ -43,64 +43,36 @@ kind: "character-archive-update"
 
 ## 업데이트 내용
 
-### A. English / 한국어 언어 옵션
+### 모바일 시작 속도 개선
 
 **무엇이 바뀌었나요**
 
-플러그인의 버튼, 메뉴, 대화상자, 설정과 기본 필드 이름을 English 또는 한국어로 볼 수 있어요. 노트와 속성 이름은 바뀌지 않아요. 기존 설치는 한국어로 유지되고, 새 설치는 Obsidian 자체가 한국어가 아니면 English로 시작해요.
+휴대폰에서 Obsidian을 열 때 Character Archive가 하는 일을 줄였어요. 캐릭터 노트가 아닌 노트는 더 이상 읽지 않고, 속성 확인 기록은 기기마다 따로 저장해서 Mac과 휴대폰이 iCloud로 서로 덮어쓰지 않아요. 화면은 바뀌지 않아요.
 
 **어떻게 쓰나요**
 
-드롭다운에서 언어를 선택하면 열려 있는 갤러리가 바로 바뀌어요. 노트 안의 섹션 제목과 웹 공유 페이지는 당분간 한국어로 유지돼요.
+따로 할 일은 없어요. 업데이트 후 각 기기에서 처음 열 때 한 번만 캐릭터 노트를 확인하고, 그다음부터는 바뀐 노트만 확인해요. 휴대폰에서는 이 확인이 앱이 열리고 3초 뒤에 시작돼요. 화면을 누를 때마다 전체 노트를 훑던 동작과, PDF·이미지를 열기 전에 파일 전체를 읽던 동작도 없앴어요.
 
 **어디에 있나요**
 
-설정 → 커뮤니티 플러그인 → Character Archive → Language / 언어 (첫 행)
-
-### B. 모두 접기 아이콘 이동
-
-**무엇이 바뀌었나요**
-
-모두 접기 / 펼치기 버튼이 툴바에서 첫 번째 그룹 제목 줄의 아이콘으로 이동했어요. 카드가 시작하는 위치는 같아요.
-
-**어떻게 쓰나요**
-
-아이콘을 누르면 모든 그룹이 접혀요. 모두 접힌 상태에서 같은 아이콘을 누르면 모두 펼쳐져요. 각 그룹의 숫자 필은 해당 그룹만 접어요. 접힌 상태는 기억돼요.
-
-**어디에 있나요**
-
-갤러리 → 첫 번째 그룹 제목 줄 오른쪽 끝의 ⇕ 아이콘
+설정 → 커뮤니티 플러그인 → Character Archive → 버전 0.1.31 (자동 적용, 별도 설정 없음)
 
 ---
 
 ## What's new
 
-### A. English / 한국어 language option
+### Faster mobile startup
 
 **What changed**
 
-The plugin's buttons, menus, dialogs, settings, and built-in field names can appear in English or Korean. Notes and property names do not change. Existing installs stay Korean; a new install starts in English unless Obsidian itself is set to Korean.
+Character Archive does less work when Obsidian opens on your phone. It no longer reads notes that are not character notes, and its property-check record is now stored per device, so your Mac and phone stop overwriting each other through iCloud. Nothing on screen changes.
 
 **How it works**
 
-Choose a language from the dropdown, and open galleries switch right away. Section headings inside notes and the web share page stay Korean for now.
+Nothing to do. After the update, each device checks your character notes once on first launch, then only notes that changed. On phones that check starts 3 seconds after the app opens. Taps no longer scan every note, and PDFs and images are no longer read in full before they open.
 
 **Where to find it**
 
-Settings → Community plugins → Character Archive → Language / 언어 (first row)
-
-### B. Fold-all icon moved
-
-**What changed**
-
-The fold all / unfold all button is now an icon on the first group's header row instead of the toolbar. The cards start at the same place.
-
-**How it works**
-
-Click it to fold every group. When all groups are folded, the same icon unfolds them all. Each group's own count pill still folds only that group. The folded state is remembered.
-
-**Where to find it**
-
-Gallery → right end of the first group's title row (⇕ icon)
+Settings → Community plugins → Character Archive → version 0.1.31 (applies automatically, no setting)
 
 `;

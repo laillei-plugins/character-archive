@@ -4,6 +4,54 @@ export interface SchemaScanCache {
   files: Record<string, string>;
 }
 
+const DEVICE_CACHE_KEY = "character-archive:schema-scan-cache";
+
+interface DeviceStorageApp {
+  loadLocalStorage?: (key: string) => unknown;
+  saveLocalStorage?: (key: string, value: unknown) => void;
+}
+
+type FallbackStorage = Pick<Storage, "getItem" | "setItem">;
+
+/** Older Obsidian versions expose appId at runtime, outside the public types. */
+function fallbackCacheKey(app: DeviceStorageApp): string {
+  const appId = (app as { appId?: unknown }).appId;
+  if (typeof appId !== "string" || !appId) {
+    throw new Error("Vault identity unavailable for device cache");
+  }
+  return `${DEVICE_CACHE_KEY}:${appId}`;
+}
+
+export function loadDeviceSchemaScanCache(
+  app: DeviceStorageApp,
+  storage: () => FallbackStorage = () => window.localStorage,
+): SchemaScanCache {
+  try {
+    const raw = typeof app.loadLocalStorage === "function"
+      ? app.loadLocalStorage(DEVICE_CACHE_KEY)
+      : JSON.parse(storage().getItem(fallbackCacheKey(app)) ?? "null");
+    return normalizeSchemaScanCache(raw);
+  } catch {
+    return normalizeSchemaScanCache(null);
+  }
+}
+
+export function saveDeviceSchemaScanCache(
+  app: DeviceStorageApp,
+  cache: SchemaScanCache,
+  storage: () => FallbackStorage = () => window.localStorage,
+): void {
+  try {
+    if (typeof app.saveLocalStorage === "function") {
+      app.saveLocalStorage(DEVICE_CACHE_KEY, cache);
+    } else {
+      storage().setItem(fallbackCacheKey(app), JSON.stringify(cache));
+    }
+  } catch {
+    // Cache persistence is optional; never fail a scan or write synced settings.
+  }
+}
+
 export function normalizeSchemaScanCache(raw: unknown): SchemaScanCache {
   if (!raw || typeof raw !== "object") return { signature: "", files: {} };
   const value = raw as Record<string, unknown>;

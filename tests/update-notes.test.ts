@@ -12,7 +12,7 @@ import {
 } from "../src/data/updateNotes.ts";
 
 test("update notes open once for an existing install on the matching release", () => {
-  assert.equal(UPDATE_NOTES_VERSION, "0.1.30");
+  assert.equal(UPDATE_NOTES_VERSION, "0.1.31");
   assert.equal(
     shouldOpenUpdateNotes({
       installedVersion: UPDATE_NOTES_VERSION,
@@ -60,7 +60,7 @@ test("fresh installs and a different plugin version do not open this note", () =
 
 test("stored seen versions are normalized before comparison", () => {
   assert.equal(normalizeSeenUpdateNotesVersion(null), "");
-  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.30 "), "0.1.30");
+  assert.equal(normalizeSeenUpdateNotesVersion(" 0.1.31 "), "0.1.31");
   assert.equal(normalizeSeenUpdateNotesVersion(18), "");
 });
 
@@ -82,8 +82,8 @@ test("one update note keeps Korean before the equivalent English section", () =>
   ]) {
     assert.ok(UPDATE_NOTES_MARKDOWN.includes(label));
   }
-  assert.ok(UPDATE_NOTES_MARKDOWN.includes("Language / 언어"));
-  assert.ok(UPDATE_NOTES_MARKDOWN.includes("첫 번째 그룹 제목 줄"));
+  assert.ok(UPDATE_NOTES_MARKDOWN.includes("설정 → 커뮤니티 플러그인 → Character Archive"));
+  assert.ok(UPDATE_NOTES_MARKDOWN.includes("Settings → Community plugins → Character Archive"));
 });
 
 test("startup opens an existing note without overwriting it, then records seen", () => {
